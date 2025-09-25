@@ -116,148 +116,73 @@ LiMing@ifugle.onaliyun.com
 
 
 
+# 功能
 
+## 信息采集
 
-# 云效账号开通流程
+> 基于AI的底层能力，通过采集单位的基础信息，ai推荐行业，场所，设备，用来初始化制度，职责，风险点。实现一起安的开通，并为单位提供定制化的初始化基础数据
 
-https://ifugle.yuque.com/gs11fm/newbie/ennxt0zg8406ksd9?singleDoc# 
+- 版本1：先是第一步先是信息采集，第二步再是填写手机号码验证码提交（不需要校验手机号，任何人都能填写，om后端审核）
 
-<img src="https://cdn.nlark.com/yuque/0/2025/jpeg/2813699/1750129309878-c158c495-7ca7-431e-bec0-a375150d2409.jpeg" alt="img" style="zoom:33%;" />
+- 版本2：将手机号码验证码提交提到最前面，且只允许白名单的手机号（是否为**三元**，企业安全负责人/消防负责/法人）
 
-# 信息
+  - 手机号登录校验
 
-## git
+    <img src="img/公司/fugle/image-20250905112640927.png" alt="image-20250905112640927" style="zoom:50%;" />
 
-管理后台仓库：dsb-admin： https://codeup.aliyun.com/ifugle/dsb/front/dsb-admin/commits/release%2Fpre/
+- 版本3：单位类别，开始只有场所和企业，后面基于这两种扩展为
 
-mobile-apps仓库： https://codeup.aliyun.com/ifugle/dsb/front/mobile-apps
+  - 生产加工企业（包含加工、组装、制造）有厂房、车间，从事原料加工、组装、制造
+  - 仓储物流
+    有仓库或货物周转配送场所
+  - 办公类企业
+    在写字楼办公，从事研发、设计、咨询、技术服务
+  - 园区
+    为小微企业提供经营场地、公共设施与配套服务的各类园区
+  - 园区+生产加工企业
+    既包含入驻的企业也涵盖园区主体开展投资与生产
+  - 不属于以上选项（场所）
 
-## 语雀
+- 版本3：手机号登录之后立即注册一起安企业，并进行免登操作，后续的信息采集页面需要提供登录信息token
 
-语雀文档：https://ifugle.yuque.com/gs11fm/qv79be
+  - 只要注册一起安企业后，可以进入一起安小程序进行信息收集
 
-## 账号
+- 版本4：接入信息确认（ai推荐行业，场所，设备，用来初始化制度，职责，风险点），形成4步
 
-月维共享账号：https://moonvy.com/project/4baf5e17-18d1-41f6-a287-1244ab7bbc76
+- 多端
 
-登录账号：dsb2020@ifugle.com
+  - 微信，h5，钉钉
 
-登录密码：ifugle2024
+- 用户体验
 
-## 测试地址访问
+  - 缓存
+    - 考虑用户中途会退出去，提供保存按钮。
 
-账号：13588328862（自己的账号）
+    - 问专家去企微，回去后自动跳到以前填写的页面
 
-测试验证码：2222
+  - 键盘
+    - 悬浮，防止内容高度压缩
 
+    - 滚动收起键盘
 
+    - 默认弹出键盘
 
-登录地址一般需要加个后缀：?fromQy=true
+    - 默认打开数字键盘，手机号，验证码，默认键盘是数字
 
-- 本地服务访问，通过whistle代理，访问下面的测试地址
+  - 底部按钮没有置于底部
+    - 方法一：通过设置100vh,flex布局自动撑开
+      - 但是100vh 不总是等于一屏幕的高度（浏览器地址栏和工具栏）。导致底部按钮不会吸顶到工具栏上
+    - 使用吸顶position: sticky;，
+    - 弹性滚动
 
-- 移动端：https://app-test.dingtax.cn/dsb/smzc/#/login?fromQyzz=1&backUrl=https%3A%2F%2Fapp-test.dingtax.cn%2Fdsb%2Fhome
-- pc端：https://app-test.dingtax.cn/dsb/dsb-new/#/login?fromQy=true
+- 小点
 
-## whistle代理
+  - 要素调整
+  - 文案调整
+  
+- pc嵌入iframe移动端
 
-https://juejin.cn/post/7003630513755799589
-
-代理配置如下
-
-```
-app-test.dingtax.cn localhost:9091
-app-test.dingtax.cn log://
-# app-gsnw.dingtax.cn localhost:8080
-# app-gsnw.dingtax.cn log://
-# app-pre.dingtax.cn localhost:9091
-# app-pre.dingtax.cn log://
-# app-test.dingtax.cn localhost:9091
-# app-test.dingtax.cn log://
-# # app-dsb.dingtax.cn localhost:9091
-# app-dsb.dingtax.cn log://
-# api-gsnw.dingtax.cn localhost:9091
-# api-gsnw.dingtax.cn log://
-# # app.dingtax.cn localhost:9091
-# app.dingtax.cn log://
-```
-
-
-
-# 规范
-
-- 工时提交地址（每天都要记录）：https://devops.aliyun.com/projex/project/e4cc4abdc9380fbaf7ac3fb415/req#viewIdentifier=d7f112f9d023e2108fa1b0d8&openWorkitemIdentifier=ffc6adaa2a9eda05390eef1aae
-- 前端代码规范：https://ifugle.yuque.com/gs11fm/qv79be/ro9aifm52dlm7ac5#q9Vrt
-
-# 项目知识点
-
-## 环境
-
-- node14
-  - mobile-apps
-  - dsb-admin
-
-## 安装
-
-- 熟悉项目的根目录README.md
-
-- 每个项目都有packages子仓库，需要执行下面命令。
-
-  ````
-  ```bash
-  $ git submodule update --init --recursive
-  // 更新
-  $ git submodule update --remote
-  ```
-  ````
-
-- 执行npm i下载依赖
-  - admin
-    - @fed依赖需要单独拷贝到node_module中，需要先删除package.json中fed的依赖配置，再执行下载
-
-## 组件
-
-- 签名：fullScreenSign.vue
-- 选择人员：src\apps\xxts\components\dt-multiple-tree.vue
-
-## 工具方法
-
-### 获取文件下载域名
-
-**cxFilesBackEndUrl**
-
-```
- window.open(`${cxFilesBackEndUrl()}${row.pgwjUrl}`, "_blank");
-```
-
-
-
-## 一起安
-
-- 当前是园区企业选择的jclb非100时、认为是对自己企业的检查
-  当前是园区企业选择的jclb是100时、任务是对承租企业的检查
-- jclb
-
-  - 100=对入驻企业的检查
-
-  - 字段增加50=入驻企业
-- wczt 
-
-  - 完成状态集合:10=进行中,20=已完成,40=已取消，50超时未检查
-- clzt　
-
-  - 处理状态:0=未处理,10=处理中,20=处理完成	
-- czzt
-  - 10=搬迁,20=清退（倒闭）
-- ywlx === 100日常检查
-
-  - 101专项检查
-- xczqsz === 20 按月
-- qylx === 20 园区企业
-- fxdj|风险等级:10=重大风险,20=较大风险,30=一般风险,40=低风险||false|string(byte)||
-- qycslx|企业场所类型:10=企业,20=消防场所,30=消防重点企业,40=九小场所,50=一般单位||false|string(byte)||
-- qylx|企业类型:10=一般企业,20=园区企业||false|string(byte)
-- rylxDm|申请人角色:1=法定代表人,3=安全管理员,4=其他安全员,5=消防安全负责人,6=消防安全管理人,7=安全负责人,8=普通员工||false|string||
+  移动端不用登陆就能调用接口原因：**Cookie的作用域由Domain和Path属性定义，端口号和协议不参与作用域判断**
 
 # 痛点
 
@@ -548,3 +473,128 @@ https://blog.csdn.net/yuleiming21/article/details/134165195
   - 完成同意，重复加入页面的组件
   - 开发审核表单页面
 
+# 日报
+
+- 1周
+
+  - 8.25，26：监管明细图表展示
+
+  - 8.27，8.28：an登录页面样式，协议
+
+  - 8.30：公共页面新建模板功能
+
+  - 基础信息tab顺序调整，风险分级管控颜色，文案调整，“检查单位”文案更新为“被检查单位”
+
+- 2
+  - 9.1：新增检查表模板弹框重构
+  - 9.2：入驻单位消防类型优化
+  - 9.3-9.4：
+  
+    - 1、PC登录的协议校验提示
+  
+      2、管理后台的三方登录账号管理校验
+  
+      3、危化品优化，监督类型支持多选；包装方式优化
+  - 
+
+
+
+# v2.2.5方案
+
+| **文档编号**：     |                             |
+| ------------------ | --------------------------- |
+| **需求名称**：     | 单位注册+信息收集v2.2.5方案 |
+| **需求ID**：       |                             |
+| **前端 Owner**：   | 木昸，志明                  |
+| **文档状态**：     | ✅ 评审中                    |
+| **最后更新时间**： |                             |
+
+## 1. 需求概述
+
+### 业务目标
+
+单位注册+信息收集重构，提高用户体验，提高信息采集的准确度，减少商务的工作量
+
+### 任务描述
+
+- 引导页重构
+- 单位注册
+  - 根据白名单数据，判断出来是否为企业/园区/场所
+  - 添加加油站类别
+  - 类别折叠
+  - 问专家
+- 信息采集
+  - 生产性企业中的完善其他信息放在收集的最后
+- 信息确认
+  - 原先的多个条件选择拆分为多个页面选择，提高选项的数量
+  - 行业类别添加危险化学品，是否有仓库，类别可多选
+- 查看搜索支持语义搜索
+- 微信小程序，修改为所有人可见，可以填写的身份新增安全管理员/消防安全管理人
+- 电脑端支持信息采集
+
+## 2. 技术实现
+
+### 2.1 模块目录结构与组件拆分
+
+#### 示意图
+
+#### 目录
+
+##### 原目录
+
+![image-20250908160759488.png](https://cdn.nlark.com/yuque/0/2025/png/2813699/1757319386217-df0365ac-98c1-4dad-86e7-90b3eef187b6.png?x-oss-process=image%2Fformat%2Cwebp)
+
+##### 新目录
+
+
+
+#### 组件职责划分
+
+- 
+
+### 2.2 通信
+
+- eventbus
+- localstorage
+
+### 2.3 接口与数据定义
+
+#### API 设计
+
+| 方法 | URL  | 描述 |
+| ---- | ---- | ---- |
+
+### 2.4 非功能性需求（NFR）
+
+#### **性能**
+
+#### **兼容性**
+
+#### **可用性**
+
+#### **安全性**
+
+## 3. 风险评估与应对
+
+| 风险 | 可能性 | 影响 | 应对措施 |
+| ---- | ------ | ---- | -------- |
+
+------
+
+## 4. 工作量评估（PERT）
+
+| 估算类型  | 人日 |
+| --------- | ---- |
+| 乐观 O    | 1    |
+| 悲观 P    | 2    |
+| 最可能 M  | 1.5  |
+| 最终 PERT | 1.5  |
+
+**拆分明细**
+
+- 开发：
+- 自测 & 联调：
+- Code Review & 修改：
+- 缓冲时间：
+
+## 测试要点

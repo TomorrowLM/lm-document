@@ -83,7 +83,7 @@ https://juejin.cn/post/7285540804734468150#heading-0
 - 更新期：组件在创建后再次渲染的过程。
 - 卸载期：组件在使用完后被销毁的过程。
 
-![image.png](img/前端/react/0fb3cd2923f04e4c8dc58243522ff666~tplv-k3u1fbpfcp-zoom-1.image)
+![img](img/前端/react/6df08ee6e7a72d4ae31e561afef66f57.png)
 
 ## 组件初始化阶段
 
@@ -203,13 +203,7 @@ componentDidUpdate(prevProps, prevState, snapshot) {
 
 ## 新旧生命周期对比
 
-![react生命周期(旧的).png](https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/a6ef1112dec04128956abf40c6f3dd6b~tplv-k3u1fbpfcp-jj-mark:3024:0:0:0:q75.awebp#?w=841&h=670&s=44022&e=png&b=f9f8f8)
-
 ![react生命周期(新).png](img/前端/react/40b4f2d0b995423184a0840446)
-
-
-
-![image-20200528113856923](https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/6/13/172acf9ceebe696c~tplv-t2oaga2asx-zoom-in-crop-mark:1304:0:0:0.awebp)
 
 当组件实例被创建并插入 DOM 中时，其生命周期调用顺序如下：
 
@@ -353,7 +347,7 @@ class MyComponent extends React.Component {
 
 > getSnapshotBeforeUpdate代替了旧的componentWillUpdate。
 
-`getSnapshotBeforeUpdate(nextProps,prevState)`：它在组件更新（即将应用新props或state并重新渲染）之前触发。它允许你**捕获组件更新前**的一些信息（例如，滚动位置），并在组件更新后使用这些信息。
+`getSnapshotBeforeUpdate(nextProps,prevState)`：它在组件更新之前触发。它允许你**捕获组件更新前**的一些信息（例如，滚动位置），并在组件更新后使用这些信息。
 
 示例中，`getSnapshotBeforeUpdate()` 用于捕获滚动位置，然后在`componentDidUpdate()` 中使用snapshot来恢复滚动位置，以确保用户在滚动列表时不会在更新后失去滚动位置。
 
@@ -1470,7 +1464,7 @@ function App () {
 export default App
 ```
 
-### findDOMNode()
+### ~~findDOMNode()~~
 
 当组件加载到页面上之后（mounted），你都可以通过 `react-dom` 提供的 `findDOMNode()` 方法拿到组件对应的 DOM 元素。
 
@@ -2870,6 +2864,8 @@ useLockBodyScroll
 
 # 状态管理器
 
+
+
 ## 区别
 
 https://blog.csdn.net/weixin_45644335/article/details/138888155
@@ -2911,6 +2907,200 @@ hox
   - 不适用于非 React 项目：Hox 是专为 React 设计的，无法在非 React 项目中使用。
 
 
+
+## Context+useReducer
+
+useReducer 本身是组件级别的状态管理，但通过 React Context 可以将其提升为全局状态管理。
+
+### 1. 创建全局状态上下文
+
+javascript
+
+```
+import React, { createContext, useContext, useReducer } from 'react';
+
+// 初始状态
+const initialState = {
+  user: null,
+  theme: 'light',
+  cart: [],
+  notifications: []
+};
+
+// reducer 函数
+function appReducer(state, action) {
+  switch (action.type) {
+    case 'SET_USER':
+      return { ...state, user: action.payload };
+    case 'SET_THEME':
+      return { ...state, theme: action.payload };
+    case 'ADD_TO_CART':
+      return { ...state, cart: [...state.cart, action.payload] };
+    case 'REMOVE_FROM_CART':
+      return { ...state, cart: state.cart.filter(item => item.id !== action.payload) };
+    case 'ADD_NOTIFICATION':
+      return { ...state, notifications: [...state.notifications, action.payload] };
+    case 'CLEAR_NOTIFICATION':
+      return { ...state, notifications: state.notifications.filter(n => n.id !== action.payload) };
+    default:
+      return state;
+  }
+}
+
+// 创建 Context
+const AppStateContext = createContext();
+const AppDispatchContext = createContext();
+
+// Provider 组件
+export function AppProvider({ children }) {
+  const [state, dispatch] = useReducer(appReducer, initialState);
+
+  return (
+    <AppStateContext.Provider value={state}>
+      <AppDispatchContext.Provider value={dispatch}>
+        {children}
+      </AppDispatchContext.Provider>
+    </AppStateContext.Provider>
+  );
+}
+
+// 自定义 Hook - 获取状态
+export function useAppState() {
+  const context = useContext(AppStateContext);
+  if (!context) {
+    throw new Error('useAppState must be used within AppProvider');
+  }
+  return context;
+}
+
+// 自定义 Hook - 获取 dispatch
+export function useAppDispatch() {
+  const context = useContext(AppDispatchContext);
+  if (!context) {
+    throw new Error('useAppDispatch must be used within AppProvider');
+  }
+  return context;
+}
+```
+
+### 2. 在应用顶层使用 Provider
+
+javascript
+
+```
+import React from 'react';
+import ReactDOM from 'react-dom';
+import { AppProvider } from './AppState';
+import App from './App';
+
+ReactDOM.render(
+  <React.StrictMode>
+    <AppProvider>
+      <App />
+    </AppProvider>
+  </React.StrictMode>,
+  document.getElementById('root')
+);
+```
+
+### 3. 在组件中使用全局状态
+
+javascript
+
+```
+import React from 'react';
+import { useAppState, useAppDispatch } from './AppState';
+
+function Header() {
+  const { user, theme } = useAppState();
+  const dispatch = useAppDispatch();
+
+  const toggleTheme = () => {
+    dispatch({
+      type: 'SET_THEME',
+      payload: theme === 'light' ? 'dark' : 'light'
+    });
+  };
+
+  return (
+    <header style={{ background: theme === 'light' ? '#fff' : '#333' }}>
+      <h1>Welcome, {user?.name || 'Guest'}</h1>
+      <button onClick={toggleTheme}>
+        Switch to {theme === 'light' ? 'Dark' : 'Light'} Mode
+      </button>
+    </header>
+  );
+}
+
+function Cart() {
+  const { cart } = useAppState();
+  const dispatch = useAppDispatch();
+
+  const removeFromCart = (productId) => {
+    dispatch({ type: 'REMOVE_FROM_CART', payload: productId });
+  };
+
+  return (
+    <div>
+      <h2>Shopping Cart ({cart.length} items)</h2>
+      {cart.map(item => (
+        <div key={item.id}>
+          {item.name} - ${item.price}
+          <button onClick={() => removeFromCart(item.id)}>Remove</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+### 与专业状态库的对比
+
+#### useReducer + Context 的优势：
+
+javascript
+
+```
+// 1. 零依赖，React 内置
+// 2. 学习成本低
+// 3. 适合中小型应用
+// 4. 类型安全（配合 TypeScript）
+```
+
+#### 局限性：
+
+javascript
+
+```
+// 1. 性能问题：任何状态变化都会导致所有订阅组件重渲染
+// 2. 缺乏中间件生态系统
+// 3. 调试工具支持有限
+// 4. 异步处理需要手动实现
+```
+
+### 何时选择 useReducer + Context
+
+#### 适合的场景：
+
+javascript
+
+```
+// 中小型应用
+// 状态结构相对简单
+// 不需要复杂的时间旅行调试
+// 团队已经熟悉 React Hooks
+```
+
+#### 不适合的场景：
+
+javascript
+
+```
+// 大型复杂应用
+// 需要高性能优化
+// 需要丰富的中间件支持
+// 需要高级调试功能
+```
 
 ## Redux
 

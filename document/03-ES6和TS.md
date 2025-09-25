@@ -8469,6 +8469,34 @@ let obj: Foo = { bar: 'value' }; // 使用Foo类型定义一个对象
 
 在这个例子中，`import type { Foo } from './someTypes';`仅导入Foo类型的声明。
 
+### `Partial` 
+
+`Partial<T>` 是 TypeScript 内置的**实用类型**，它可以将类型 `T` 的所有属性都变为**可选**的。
+
+```
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  age: number;
+  createdAt: Date;
+}
+
+// 使用 Partial 创建所有属性可选的新类型
+type PartialUser = Partial<User>;
+
+// 等价于：
+interface PartialUser {
+  id?: string;
+  name?: string;
+  email?: string;
+  age?: number;
+  createdAt?: Date;
+}
+```
+
+
+
 ## 基础类型
 
 ### 布尔值
@@ -8711,14 +8739,10 @@ function handleRequest(method: HttpMethod) {
 
 ### 类型断言
 
-类型断言（Type Assertion）可以用来手动指定一个值的类型。
+类型断言（type assertiions）也可称作类型转换（type casting），本质上是对 TypeScript 类型系统的人为干预：
 
-通过*类型断言*这种方式可以告诉编译器，“相信我，我知道自己在干什么”。 它没有运行时的影响，只是在编译阶段起作用。 **类型断言会假设程序员，已经进行了必须的检查，让TypeScript跳过类型检测。**
-
-```
-语法：<类型>值 或 值 as 类型
-在 tsx 语法（React 的 jsx 语法的 ts 版）中必须用后一种
-```
+1. **强制对类型的断言统一使用 `as Type` 风格而非 `<Type>` ，后者容易与 `JSX` 产生混淆。**
+2. 对象字面量禁止类型断言，断言成 any 除外，对象字面量应该直接声明。
 
 类型断言有两种形式。 其一是“尖括号”语法：
 
@@ -9464,11 +9488,7 @@ console.log(myFavoriteNumber.length); // 编译时报错
 
 ### 概念
 
-枚举的主要用途是为变量提供一组**预定义的值集合**。
-
-在日常生活中也很常见，例如表示星期的SUNDAY、MONDAY、TUESDAY、WEDNESDAY、THURSDAY、
-
-FRIDAY、SATURDAY就可以看成是一个枚举。
+枚举的主要用途是为变量提供一组**预定义的值集合**。在日常生活中也很常见，例如表示星期的SUNDAY、MONDAY、TUESDAY、WEDNESDAY、THURSDAY、FRIDAY、SATURDAY就可以看成是一个枚举。
 
 枚举的说明与结构和联合相似，其形式为：
 
@@ -9623,9 +9643,256 @@ export const PUT_WAY_LABEL = {
 }
 ```
 
-## TypeScript 命名空间
+### **不推荐使用数字作为枚举的 key**
 
-> 命名空间一个最明确的目的就是解决重名问题。
+**不推荐使用数字作为枚举的 key**。这是 TypeScript 允许但不推荐的做法，会带来类型安全问题和维护困难。
+
+#### ✅ 1. **可读性差**
+
+数字作为枚举 key 会让代码难以理解，无法直观表达含义。
+
+TypeScript
+
+复制
+
+```ts
+enum Direction {
+  0 = 'North', // 不直观
+  1 = 'South',
+  2 = 'East',
+  3 = 'West',
+}
+```
+
+你在使用时只能看到：
+
+TypeScript
+
+复制
+
+```ts
+Direction[0] // 谁知道这是 North？
+```
+
+相比之下，字符串 key 更语义化：
+
+TypeScript
+
+复制
+
+```ts
+enum Direction {
+  North = 0,
+  South = 1,
+  East = 2,
+  West = 3,
+}
+Direction.North // 清晰明了
+```
+
+------
+
+#### ✅ 2. **容易与枚举值混淆**
+
+如果 key 和 value 都是数字，TypeScript 会**双向映射**，容易引起误用。
+
+TypeScript
+
+复制
+
+```ts
+enum Status {
+  0 = 1,
+  1 = 2,
+}
+
+console.log(Status[0]); // 1
+console.log(Status[1]); // 2
+console.log(Status[1]); // 看起来像是 key=1，实际上是 value=2
+```
+
+这种“key 和 value 都是数字”的设计会让调试变得困难。
+
+## 模块化
+
+> 模块化一个最明确的目的就是解决重名问题。
+
+**自定义 TypeScript 模块（module）和命名空间（namespace）已经不再推荐使用，首选 ES2015 的模块语法来导入导出。**此规则仍然允许定义外部的模块或命名空间。
+
+| 特性           | `declare namespace` | `declare module`        |
+| :------------- | :------------------ | :---------------------- |
+| **用途**       | 声明全局命名空间    | 声明外部模块            |
+| **导入方式**   | 全局可用            | 需要 import             |
+| **现代推荐**   | 不推荐（遗留代码）  | 推荐                    |
+| **文件扩展名** | 不支持              | 支持（*.css, *.json等） |
+| **模块解析**   | 全局作用域          | 模块解析系统            |
+| **典型场景**   | UMD库全局变量       | CommonJS/ES6模块        |
+
+### 相同点
+
+#### 1. 都用于声明模块化的结构
+
+typescript
+
+```
+// 使用 declare namespace
+declare namespace MyLibrary {
+  interface Config {
+    timeout: number;
+  }
+  function initialize(config: Config): void;
+}
+
+// 使用 declare module
+declare module "my-library" {
+  interface Config {
+    timeout: number;
+  }
+  function initialize(config: Config): void;
+}
+```
+
+#### 2. 都支持嵌套声明
+
+typescript
+
+```
+// namespace 嵌套
+declare namespace MyApp {
+  namespace Utils {
+    function formatDate(date: Date): string;
+  }
+}
+
+// module 嵌套（较少使用，但语法支持）
+declare module "my-app" {
+  module Utils {
+    function formatDate(date: Date): string;
+  }
+}
+```
+
+#### 3. 都可以合并声明
+
+typescript
+
+```
+// namespace 声明合并
+declare namespace MyLib {
+  interface User {
+    name: string;
+  }
+}
+
+declare namespace MyLib {
+  interface User {
+    age: number; // 合并到之前的 User 接口
+  }
+  function getUser(): User;
+}
+
+// module 声明合并
+declare module "my-lib" {
+  interface User {
+    name: string;
+  }
+}
+
+declare module "my-lib" {
+  interface User {
+    age: number; // 合并到之前的 User 接口
+  }
+  function getUser(): User;
+}
+```
+
+### 主要区别
+
+#### 1. 用途和语义不同
+
+typescript
+
+```
+// declare namespace - 用于声明全局命名空间（主要用于UMD库）
+declare namespace jQuery {
+  function ajax(url: string): void;
+  interface AjaxSettings {
+    method: string;
+  }
+}
+
+// declare module - 用于声明外部模块（主要用于CommonJS/ES6模块）
+declare module "jquery" {
+  function ajax(url: string): void;
+  interface AjaxSettings {
+    method: string;
+  }
+  export = jQuery; // 通常配合 export
+}
+```
+
+#### 2. 导入方式不同
+
+typescript
+
+```
+// namespace - 全局可用，无需导入
+// （在全局声明文件中）
+jQuery.ajax('/api'); // 直接使用
+
+// module - 需要导入
+import * as $ from "jquery";
+$.ajax('/api');
+```
+
+#### 3. 文件扩展名处理
+
+typescript
+
+```
+// module 支持文件扩展名和通配符
+declare module "*.css" {
+  const content: string;
+  export default content;
+}
+
+declare module "*.json" {
+  const value: any;
+  export default value;
+}
+
+// namespace 不支持这种模式
+```
+
+#### 4. 现代 TypeScript 的推荐用法
+
+typescript
+
+```
+// 现代做法：使用 ES6 模块语法
+declare module "my-module" {
+  export interface Options {
+    enabled: boolean;
+  }
+  export function init(options: Options): void;
+}
+
+// 而不是传统的 namespace
+declare namespace MyModule { // ❌ 不推荐在现代代码中使用
+  interface Options {
+    enabled: boolean;
+  }
+  function init(options: Options): void;
+}
+```
+
+### `declare` 
+
+`declare` 关键字用于告诉 TypeScript 编译器某个实体已经存在（在外部定义），不需要在编译后的 JavaScript 中生成对应的代码。
+
+「实体」指的是变量，函数，类，Interfaces，Type等
+
+### namespace
 
 假设这样一种情况，当一个班上有两个名叫小明的学生时，为了明确区分它们，我们在使用名字之外，不得不使用一些额外的信息，比如他们的姓（王小明，李小明），或者他们父母的名字等等。
 
@@ -9673,6 +9940,8 @@ namespace Drawing {
     }
 }
 ```
+
+
 
 ## 函数
 
