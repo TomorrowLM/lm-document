@@ -474,6 +474,52 @@ var a3 = deepClone(a3); // 深拷贝方法
 a3.b.c === a1.b.c // false 新对象跟原对象不共享内存
 ```
 
+### 拷贝场景
+
+#### 哪些不能拷进去
+
+```
+const problemTypes = {
+  function: () => console.log('hello'), // ❌ 丢失
+  symbol: Symbol('unique'),  // ❌ 丢失
+  bigint: 123n,              // ❌ 报错
+};
+```
+
+**完全无法拷贝的内容：**
+
+- `undefined` (JSON 方法)
+- `Function` 函数
+- `Symbol` 符号
+- `BigInt` 大整数
+- 循环引用 (需要特殊处理)
+- DOM 节点
+- 系统对象 (window, document 等)
+- 函数闭包状态
+
+#### 对象拷贝
+
+```
+const problemObjects = {
+  date: new Date('2023-01-01'),     // ❌ 转为字符串
+  regex: /abc/gi,                   // ❌ 转为 {}
+  map: new Map([['key', 'value']]), // ❌ 转为 {}
+  set: new Set([1, 2, 3]),          // ❌ 转为 {}
+  weakMap: new WeakMap(),           // ❌ 转为 {}
+  weakSet: new WeakSet(),           // ❌ 转为 {}
+  math: Math,                       // ❌ 转为 {}
+  promise: Promise.resolve(),       // ❌ 转为 {}
+};
+```
+
+**部分支持的内容：**
+
+- `Date` 对象 (转为字符串或需要特殊处理)
+- `RegExp` 正则表达式 (需要特殊处理)
+- `Map`/`Set` (需要特殊处理)
+- 原型链属性
+- 不可枚举属性
+
 ### 实现浅拷贝
 
 #### Object.assign()
@@ -518,7 +564,7 @@ console.log(arr); // [ 1, 3, { username: 'wade' } ]
 
 ### 实现深拷贝
 
-#### JSON.parse(JSON.stringify())
+#### JSON
 
 JSON.parse(JSON.stringify(xxx))
 
@@ -8321,16 +8367,40 @@ const sayHello = (name: string | undefined) => { /* ... */ };
 
 以上示例中 `name` 的类型是 `string | undefined` 意味着可以将 `string` 或 `undefined` 的值传递给 `sayHello` 函数。
 
+**使用联合类型加上字面量类型**
+
+```
+interface Res {
+  code: 10000 | 10001 | 50000;
+  status: "success" | "failure";
+  data: any;
+}
+```
+
+![image.png](https://p3-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/a428d95d0eee4c269302df47bf45e7b3~tplv-k3u1fbpfcp-jj-mark:2268:0:0:0:q75.awebp)
+
 ### typeof
 
 在TypeScript中，`typeof`运算符可以获取一个值的类型。这与JavaScript中的`typeof`运算符不同，JavaScript中的`typeof`返回的是字符串，而TypeScript中的`typeof`返回的是类型的描述。例如：
 
 ```
-const a = { x: 0 };
-type T0 = typeof a; // { x: number }
-type T1 = typeof a.x; // number
+const str = "linbudu";
 
-const b: T0 = { x: '1'};
+const obj = { name: "linbudu" };
+
+const nullVar = null;
+const undefinedVar = undefined;
+
+const func = (input: string) => {
+  return input.length > 10;
+}
+
+type Str = typeof str; // "linbudu"
+type Obj = typeof obj; // { name: string; }
+type Null = typeof nullVar; // null
+type Undefined = typeof undefined; // undefined
+type Func = typeof func; // (input: string) => boolean
+
 ```
 
 ### keyof
@@ -8495,9 +8565,92 @@ interface PartialUser {
 }
 ```
 
+### **Omit**
 
+```
+Omit<Type, Keys>
+```
+
+- `Type`：原始类型
+- `Keys`：要排除的属性名（字符串字面量或联合类型）
+
+```
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  password: string;
+  createdAt: Date;
+}
+
+// 排除 password 属性
+type UserWithoutPassword = Omit<User, 'password'>;
+// 等价于：{ id: number; name: string; email: string; createdAt: Date; }
+
+// 排除多个属性
+type PublicUser = Omit<User, 'password' | 'email'>;
+// 等价于：{ id: number; name: string; createdAt: Date; }
+```
+
+实际应用场景
+
+- **创建安全的 API 响应类型**
+
+  ```
+  // 从完整的用户类型中排除敏感信息
+  type SafeUser = Omit<User, 'password' | 'internalId'>;
+  
+  function getUserProfile(userId: number): SafeUser {
+    const user = getUserFromDB(userId);
+    return user; // 自动排除敏感字段
+  }
+  ```
+
+  
+
+- **表单处理**
+
+  ```
+  interface Product {
+    id: number;
+    name: string;
+    price: number;
+    createdAt: Date;
+  }
+  
+  // 创建新产品时不需要 id 和 createdAt
+  type CreateProductDto = Omit<Product, 'id' | 'createdAt'>;
+  // 等价于：{ name: string; price: number; }
+  
+  const newProduct: CreateProductDto = {
+    name: "Laptop",
+    price: 999
+  };
+  ```
+
+- **组件 Props**
+
+  ```
+  interface ButtonProps {
+    type: 'button' | 'submit' | 'reset';
+    disabled: boolean;
+    onClick: () => void;
+    className: string;
+    // ... 其他很多属性
+  }
+  
+  // 创建链接按钮，排除原生 button 的 type 属性
+  type LinkButtonProps = Omit<ButtonProps, 'type'> & {
+    href: string;
+    target?: '_blank' | '_self';
+  };
+  ```
+
+  
 
 ## 基础类型
+
+
 
 ### 布尔值
 
@@ -8634,7 +8787,7 @@ create(undefined); // Error
 
 ### Any
 
-有时候，**我们会想要为那些在编程阶段还不清楚类型的变量指定一个类型。 这些值可能来自于动态的内容，比如来自用户输入或第三方代码库**。 这种情况下，我们不希望类型检查器对这些值进行检查而是直接让它们通过编译阶段的检查。 那么我们可以使用 `any`类型来标记这些变量：
+有些时候，我们的 TS 代码并不需要十分精确严格的类型标注。比如 console.log 方法就能够接受任意类型的参数，不管你是数组、字符串、对象或是其他的，统统来者不拒。可以使用 `any`类型来标记这些变量：
 
 ```ts
 let notSure: any = 4;
@@ -8681,6 +8834,47 @@ something = 7;
 something.setName('Tom');
 ```
 
+### unknown
+
+unknown 类型和 any 类型有些类似，一个 unknown 类型的变量可以再次赋值为任意其它类型，但只能赋值给 any 与 unknown 类型的变量：
+
+```
+let unknownVar: unknown = "linbudu";
+
+unknownVar = false;
+unknownVar = "linbudu";
+unknownVar = {
+  site: "juejin"
+};
+
+unknownVar = () => { }
+
+const val1: string = unknownVar; // Error
+const val2: number = unknownVar; // Error
+const val3: () => {} = unknownVar; // Error
+const val4: {} = unknownVar; // Error
+
+const val5: any = unknownVar;
+const val6: unknown = unknownVar;
+
+```
+
+unknown 和 any 的一个主要差异体现在赋值给别的变量时，any 就像是 **“我身化万千无处不在”** ，所有类型都把它当自己人。而 unknown 就像是 **“我虽然身化万千，但我坚信我在未来的某一刻会得到一个确定的类型”** ，只有 any 和 unknown 自己把它当自己人。简单地说，any 放弃了所有的类型检查，而 unknown 并没有。这一点也体现在对 unknown 类型的变量进行属性访问时：
+
+```typescript
+let unknownVar: unknown;
+
+unknownVar.foo(); // 报错：对象类型为 unknown
+```
+
+要对 unknown 类型进行属性访问，需要进行类型断言（别急，马上就讲类型断言！），即“虽然这是一个未知的类型，但我跟你保证它在这里就是这个类型！”：
+
+```typescript
+let unknownVar: unknown;
+
+(unknownVar as { foo: () => {} }).foo();
+```
+
 ### Void空值
 
 某种程度上来说，`void`类型像是与`any`类型相反，它表示没有任何类型。 当一个函数没有返回值时，你通常会见到其返回值类型是 `void`：
@@ -8698,6 +8892,19 @@ let unusable: void = undefined;
 ```
 
 ### Never
+
+#### never和void
+
+void 作为类型表示一个空类型，代表“这里有类型，但是个空类型”。
+
+**never 类型不携带任何的类型信息，因此会在联合类型中被直接移除**
+
+```
+type UnionWithNever = "linbudu" | 599 | true | void | never;
+
+```
+
+将鼠标悬浮在类型别名之上，你会发现这里显示的类型是`"linbudu" | 599 | true | void`。never 类型被直接无视掉了，而 void 仍然存在。
 
 #### never类型的定义和用途
 
@@ -8865,6 +9072,18 @@ myFavoriteNumber = 7;
 ```
 
 ## 自定义类型
+
+### 字面量类型
+
+**字面量类型（Literal Types）**，它代表着比原始类型更精确的类型，同时也是原始类型的子类型
+
+字面量类型主要包括**字符串字面量类型**、**数字字面量类型**、**布尔字面量类型**和**对象字面量类型**，它们可以直接作为类型标注：
+
+```typescript
+const str: "linbudu" = "linbudu";
+const num: 599 = 599;
+const bool: true = true;
+```
 
 ### type 与 interface 的区别
 
@@ -9133,9 +9352,10 @@ let mySquare = createSquare({ colour: "red", width: 100 });
   }
   ```
 
-  
 
-#### 可索引的类型
+#### 索引类型
+
+##### 可索引的类型
 
 它描述了对象索引的类型，还有相应的索引返回值类型。 
 
@@ -9183,6 +9403,71 @@ interface ReadonlyStringArray {
 }
 let myArray: ReadonlyStringArray = ["Alice", "Bob"];
 myArray[2] = "Mallory"; // 你不能设置`myArray[2]`，因为索引签名是只读的。
+```
+
+##### 索引类型查询
+
+索引类型查询，也就是 keyof 操作符。严谨地说，它可以将对象中的所有键转换为对应字面量类型，然后再组合成联合类型。注意，**这里并不会将数字类型的键名转换为字符串类型字面量，而是仍然保持为数字类型字面量**。
+
+```
+interface Foo {
+  linbudu: 1,
+  599: 2
+}
+
+type FooKeys = keyof Foo; // "linbudu" | 599
+// 在 VS Code 中悬浮鼠标只能看到 'keyof Foo'
+// 看不到其中的实际值，你可以这么做：
+type FooKeys = keyof Foo & {}; // "linbudu" | 599
+
+```
+
+
+
+##### **索引类型访问**
+
+在 Ant Design (antd) 中，`TabsProps['items']` 是 TypeScript 的**索引访问类型**，用于获取 `TabsProps` 接口中 `items` 属性的具体类型。
+
+```
+import { Tabs } from 'antd';
+import type { TabsProps } from 'antd';
+
+// 获取 TabsProps 中 items 属性的类型
+type TabItemsType = TabsProps['items'];
+```
+
+##### 映射类型
+
+映射类型的主要作用即是**基于键名映射到键值类型**。概念不好理解，我们直接来看例子：
+
+```
+type Stringify<T> = {
+  [K in keyof T]: string;
+};
+
+```
+
+使用 keyof 获得这个对象类型的键名组成字面量联合类型，然后通过映射类型（即这里的 in 关键字）将这个联合类型的每一个成员映射出来，并将其键值类型设置为 string。
+
+具体使用的表现是这样的：
+
+```typescript
+interface Foo {
+  prop1: string;
+  prop2: number;
+  prop3: boolean;
+  prop4: () => void;
+}
+
+type StringifiedFoo = Stringify<Foo>;
+
+// 等价于
+interface StringifiedFoo {
+  prop1: string;
+  prop2: string;
+  prop3: string;
+  prop4: string;
+}
 ```
 
 #### 函数类型
@@ -9373,9 +9658,9 @@ square.penWidth = 5.0;
 
 ### 类型别名type 
 
-#### 泛型
+#### 工具类型-泛型
 
-同接口一样，类型别名也可以是泛型 - axios举例
+类型别名可以这么声明自己能够接受泛型（我称之为泛型坑位）。一旦接受了泛型，我们就叫它工具类型
 
 ```
 import type { AxiosResponse } from 'axios';
@@ -9503,9 +9788,10 @@ enum 枚举名{
 
 **为什么要用枚举？**
 
+- 更好的类型提示
+
 - 代码更清晰：使用枚举后，代码更具可读性。你可以清楚地看到每个方向对应的具体操作，而不必依赖字符串或数字。
-- 防止错误：枚举使得输入值更加有限，减少了拼写错误的可能性。例如，使用字符串时，容易出现拼写错误，而使用枚举则可以避免这种情况。
-- 易于维护：如果需要添加新的方向或修改现有的方向，只需在枚举中进行修改，而不需要在多个地方进行字符串替换。
+- 防止错误：**枚举使得常量被真正地约束在一个命名空间下，减少了拼写错误的可能性。**例如，用对象存储数据，使用对象某个属性时，容易出现拼写错误，而使用枚举则可以避免这种情况。
 
 ### 使用
 
@@ -9515,16 +9801,11 @@ enum 枚举名{
 enum xxx { ... }
 ```
 
-枚举的使用
-
 枚举的主要用途是为变量提供一组预定义的值集合。例如：
 
 ```
 let color: Color = Color.Red;
 ```
-
-
-枚举成员的访问
 
 可以通过枚举名称访问枚举成员：
 
@@ -9533,7 +9814,7 @@ console.log(Color.Red); // 输出"Red"
 console.log(Color[0]); // 输出 "Red"（反向映射）
 ```
 
-类型可以分成：
+### 枚举类型
 
 - 数字枚举
 - 字符串枚举
@@ -9651,10 +9932,6 @@ export const PUT_WAY_LABEL = {
 
 数字作为枚举 key 会让代码难以理解，无法直观表达含义。
 
-TypeScript
-
-复制
-
 ```ts
 enum Direction {
   0 = 'North', // 不直观
@@ -9666,19 +9943,11 @@ enum Direction {
 
 你在使用时只能看到：
 
-TypeScript
-
-复制
-
 ```ts
 Direction[0] // 谁知道这是 North？
 ```
 
 相比之下，字符串 key 更语义化：
-
-TypeScript
-
-复制
 
 ```ts
 enum Direction {
@@ -9694,13 +9963,20 @@ Direction.North // 清晰明了
 
 #### ✅ 2. **容易与枚举值混淆**
 
-如果 key 和 value 都是数字，TypeScript 会**双向映射**，容易引起误用。
+枚举和对象的重要差异在于，**对象是单向映射的**，我们只能从键映射到键值。而**枚举是双向映射的**，即你可以从枚举成员映射到枚举值，也可以从枚举值映射到枚举成员：
 
-TypeScript
-
-复制
+但需要注意的是，仅有值为数字的枚举成员才能够进行这样的双向枚举，**字符串枚举成员仍然只会进行单次映射**
 
 ```ts
+enum Items {
+  Foo,
+  Bar,
+  Baz
+}
+
+const fooValue = Items.Foo; // 0
+const fooKey = Items[0]; // "Foo"
+
 enum Status {
   0 = 1,
   1 = 2,
@@ -9947,7 +10223,9 @@ namespace Drawing {
 
 ### 函数类型
 
-#### 为函数定义类型
+#### 类型定义
+
+函数类型包含两部分：参数类型和返回值类型
 
 ```ts
 // 函数声明
@@ -9958,24 +10236,26 @@ function add(x: number, y: number): number {
 let myAdd = function(x: number, y: number): number { return x + y; };
 ```
 
-**书写完整函数类型**
+**书写完整函数类型（不推荐）**
 
 ```ts
-let myAdd: (x: number, y: number) => number = function(x: number, y: number): number { return x + y; };
+let myAdd: (x: number, y: number) => number = function(x, y) { return x + y; };
 ```
 
-函数类型包含两部分：参数类型和返回值类型
+**type/interface声明**
 
 ```
-let myAdd: (baseValue: number, increment: number) => number = 
-	function(x: number, y: number): number { return x + y; };
+type FuncFoo = (name: string) => number
+
+const foo: FuncFoo = (name) => {
+  return name.length
+}
+
+interface FuncFooStruct {
+  (name: string): number
+}
+
 ```
-
-只要参数类型是匹配的，那么就认为它是有效的函数类型，**而不在乎参数名是否正确。**
-
-#### 推断类型
-
-
 
 #### 可选参数
 
@@ -10061,7 +10341,7 @@ push(a, 1, 2, 3);
 
 注意，rest 参数只能是最后一个参数，关于 rest 参数，可以参考 [ES6 中的 rest 参数](http://es6.ruanyifeng.com/#docs/function#rest参数)。
 
-### `this`
+### this
 
 学习如何在JavaScript里正确使用`this`就好比一场成年礼。 由于TypeScript是JavaScript的超集，TypeScript程序员也需要弄清 `this`工作机制并且当有bug的时候能够找出错误所在。 幸运的是，TypeScript能通知你错误地使用了 `this`的地方。 如果你想了解JavaScript里的 `this`是如何工作的，那么首先阅读Yehuda Katz写的[Understanding JavaScript Function Invocation and "this"](http://yehudakatz.com/2011/08/11/understanding-javascript-function-invocation-and-this/)。 Yehuda的文章详细的阐述了 `this`的内部工作原理，因此我们这里只做简单介绍。
 
@@ -10213,7 +10493,7 @@ class Handler {
 
 ### 重载
 
-重载允许一个函数接受不同数量或类型的参数时，作出不同的处理。
+**基于重载签名，我们能实现了将入参类型和返回值类型的可能情况进行关联，获得了更精确的类型标注能力。**
 
 比如，我们需要实现一个函数 `reverse`，输入数字 `123` 的时候，输出反转的数字 `321`，输入字符串 `'hello'` 的时候，输出反转的字符串 `'olleh'`。
 

@@ -1433,6 +1433,24 @@ Vue 实现了一套内容分发的 API，这套 API 的设计灵感源自 [Web C
 
 https://v2.cn.vuejs.org/v2/guide/components-slots.html#%E5%BA%9F%E5%BC%83%E4%BA%86%E7%9A%84%E8%AF%AD%E6%B3%95
 
+```
+//子组件
+<slot name="cell" :row="item"></slot>
+```
+
+```
+//父组件
+<template #cell="{ row }">
+ {{ row.shxydm }}
+</template>
+
+<template slot="cell" slot-scope="{ row }">
+	{{ row.nsrmc }}
+</template>
+```
+
+只要使用了数据传递 slot-scope="{ row }" 或者 #cell="{ row }"，$slots里面就是空的，插槽内容会被视为**作用域插槽**，不会出现在 `$slots` 中，而是出现在 `$scopedSlots` 中。
+
 #### 具名插槽
 
 有时我们需要多个插槽。例如对于一个带有如下模板的 `<base-layout>` 组件：

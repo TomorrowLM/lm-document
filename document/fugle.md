@@ -114,7 +114,35 @@ LiMing@ifugle.onaliyun.com
 
 ![image-20250624202058575](img/总结/image-20250624202058575.png)
 
+- table配置，操作项使用动态接口函数配置，动态切换接口函数，接口函数还是之前的接口
 
+  apiConfig 使用的是闭包中的旧值，而不是最新的状态值。这是因为 React 的闭包特性导致的
+
+  ```
+   const [apiConfig, setApiConfig] = React.useState(apis[activeTab.key]);
+    const apiConfigRef = React.useRef(apis[activeTab.key]);
+    
+    // 同步更新 ref
+    React.useEffect(() => {
+      apiConfigRef.current = apiConfig;
+    }, [apiConfig]);
+  ```
+
+  useRef 的特性：
+
+  - useRef 返回一个可变的 ref 对象，其 .current 属性被初始化为传入的参数
+  - ref 对象在组件的整个生命周期内保持不变
+  - 修改 .current 属性不会触发组件重新渲染
+  - 由于 ref 对象本身不变，所有引用它的地方都会访问到最新的 .current 值
+  解决方案机制：
+
+  1. 1.
+     我们创建 apiConfigRef 来跟踪最新的 apiConfig
+  2. 2.
+     使用 useEffect 在 apiConfig 变化时同步更新 apiConfigRef.current
+  3. 3.
+     在 onConfirm 回调中使用 apiConfigRef.current 而不是 apiConfig
+     这样无论何时调用 onConfirm ，它都能通过 apiConfigRef.current 访问到最新的 API 配置值，而不是创建回调时捕获的旧值。
 
 # 功能
 

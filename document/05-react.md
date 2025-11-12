@@ -1186,8 +1186,6 @@ class App extends Component {
 export default App;
 ```
 
-
-
 ### 使用场景
 
 - 对Dom元素的焦点控制、内容选择、控制
@@ -1250,14 +1248,21 @@ export default class MyInput extends React.Component {
 
 ### useRef
 
+#### 概念
+
 **只能在函数组件中使用**
+
+- 访问 DOM 元素
+- `useRef` 可以存储任何可变值
+  - useRef更新时不会导致组件重新渲染
+  - 更新时不会导致useRef存储的值被再次初始化。
+
+
+#### createRef和useRef区别
 
 useRef 用法类似于React.createRef()，区别：https://zhuanlan.zhihu.com/p/105276393
 
-作用
-
-- 访问 DOM 元素
-- `useRef` 可以存储任何可变值，且更新时不会导致组件重新渲染，或者导致useRef存储的值被再次初始化。**createRef 每次渲染都会返回一个新的引用，而 useRef 每次都会返回相同的引用**
+**createRef 每次渲染都会返回一个新的引用，而 useRef 每次都会返回相同的引用**
 
 ```jsx
 import React, { createRef, useEffect, useState } from "react";
@@ -1296,7 +1301,87 @@ export default Different;
 
 ```
 
+#### 解决闭包问题
 
+https://article.juejin.cn/post/7532261830022971407
+
+##### 什么是闭包陷阱
+
+- **闭包陷阱是指在函数组件中，一个函数（例如事件处理、setTimeout、setInterval、Promise 回调）捕获了定义它时所在作用域的变量（特别是状态或 props），但这个变量在后续的渲染中已经更新（函数组件和函数也会更新，<u>但旧的函数实例被外部系统引用，则不会被垃圾回收</u>），而该函数内部引用的仍然是其“过时”的旧值。**
+- **闭包问题发生在某些外部系统（定时器、事件监听器等）仍然持有对旧函数实例的引用，而没有及时更新到新函数。**
+
+```
+function Counter() {
+  const [count, setCount] = useState(0);
+  const handleClick = () => {
+    setCount(count + 1); // 依赖于当前渲染的 count
+  };
+
+  const handleAlert = () => {
+    setTimeout(() => {
+      alert('Current count: ' + count); // 🚨 陷阱所在！捕获的是定义时的 count
+    }, 3000);
+  };
+
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={handleClick}>Increment</button>
+      <button onClick={handleAlert}>Show Alert (in 3s)</button>
+    </div>
+  );
+}
+
+```
+
+**操作步骤与问题：**
+
+1. 初始渲染：`count = 0`。
+2. 点击 “Increment” 按钮 3 次，`count` 变为 3。
+3. 立即点击 “Show Alert” 按钮，并点击“Increment” 按钮 3 次
+4. 3 秒后，弹出的警告框显示的是 **`Current count: 3`**，而不是预期的 `6`！
+
+##### 案例
+
+protable中**Column**配置，操作项使用动态接口函数配置，tab切换时动态切换接口函数
+
+- 问题：接口函数还是之前的接口
+
+- 原因：apiConfig 使用的是闭包中的旧值，而不是最新的状态值。这是因为 **React 的闭包特性导致的**
+
+  ```
+  const [apiConfig, setApiConfig] = React.useState(apis[activeTab.key]);
+  ```
+
+- 解决：
+
+  ```
+  const [apiConfig, setApiConfig] = React.useState(apis[activeTab.key]);
+  const apiConfigRef = React.useRef(apis[activeTab.key]);
+  
+  // 同步更新 ref
+  React.useEffect(() => {
+  	apiConfigRef.current = apiConfig;
+  }, [apiConfig]);
+  ```
+
+  
+
+useRef 的特性：
+
+- useRef 返回一个可变的 ref 对象，其 .current 属性被初始化为传入的参数
+- ref 对象在组件的整个生命周期内保持不变
+- 修改 .current 属性不会触发组件重新渲染
+- 由于 ref 对象本身不变，所有引用它的地方都会访问到最新的 .current 值
+  解决方案机制：
+
+1. 1.
+   我们创建 apiConfigRef 来跟踪最新的 apiConfig
+2. 2.
+   使用 useEffect 在 apiConfig 变化时同步更新 apiConfigRef.current
+3. 3.
+   在 onConfirm 回调中使用 apiConfigRef.current 而不是 apiConfig
+   这样无论何时调用 onConfirm ，它都能通过 apiConfigRef.current 访问到最新的 API 配置值，而不是创建回调时捕获的旧值。
 
 ### forwardRef 转发/传递
 
@@ -1343,24 +1428,13 @@ const ref = React.createRef();
 一个常见的模式是为了抽象或修改子组件行为的高阶组件（HOC）。`forwardRef`可以用来确保 ref 可以传递给包装组件：
 
 ```
-function logProps(Component) {
-  class LogProps extends React.Component {
-    componentDidUpdate(prevProps) {
-      console.log("old props:", prevProps);
-      console.log("new props:", this.props);
-    }
-
-    render() {
-      const { forwardedRef, ...rest } = this.props;
-
-      // 将自定义的 prop 属性 "forwardedRef" 定义为 ref
-      return <Component ref={forwardedRef} {...rest} />;
-    }
-  }
-
-  // 注意：React.forwardRef 回调的第二个参数 "ref" 传递给了LogProps组件的props.forwardedRef
+const withLogger = (WrappedComponent) => {
   return React.forwardRef((props, ref) => {
-    return <LogProps {...props} forwardedRef={ref} />;
+    useEffect(() => {
+      console.log('Component mounted');
+    }, []);
+    
+    return <WrappedComponent {...props} ref={ref} />;
   });
 }
 ```
@@ -1392,11 +1466,12 @@ const ref = React.createRef();
 useImperativeHandle(ref, createHandle, [deps])
 ```
 
+- 参数1: 父组件传递的ref属性
+- 参数2: 返回一个对象, 以供给父组件中通过ref.current调用该对象中的方法
+
 useImperativeHandle使用简单总结:
 
 - 作用:  **减少暴露给父组件获取的DOM元素属性, 只暴露给父组件需要用到的DOM方法**
-- 参数1: 父组件传递的ref属性
-- 参数2: 返回一个对象, 以供给父组件中通过ref.current调用该对象中的方法
 
 ```jsx
 import React, { useRef, forwardRef, useImperativeHandle } from 'react'
@@ -1921,7 +1996,9 @@ const Child = React.memo(function Child({ onClick }) {
 });
 ```
 
+#### 强制渲染
 
+- 使用 key 属性强制重新渲染
 
 ## 内置组件
 
@@ -2163,19 +2240,21 @@ http://www.ruanyifeng.com/blog/2019/09/react-hooks.html
 
 ### 使用
 
+#### 基本使用
+
 ```
 const [state, setState] = useState(initialState);
 ```
 
-- `initialState`: 状态的初始值，可以是任何类型（数字、字符串、对象、数组等）
+- `initialState`: 状态的初始值，可以是任何类型（数字、字符串、对象、数组、函数等）
+  - 如果传递函数作为 `initialState`，则它将被视为 **初始化函数**。它应该是纯函数，不应该接受任何参数，并且应该返回一个任何类型的值。当初始化组件时，React 将调用你的初始化函数，并将其返回值存储为初始状态
+
 - `state`: 当前的状态值
 - `setState`: 更新状态的函数
 
-#### 更新状态的几种方式
+#### 更新状态方式
 
 1. **直接设置新值**:
-
-   javascript
 
    ```
    setCount(10);
@@ -2183,24 +2262,43 @@ const [state, setState] = useState(initialState);
 
 2. **基于前一个状态更新**:
 
-   javascript
-
    ```
    setCount(prevCount => prevCount + 1);
    ```
 
-3. **更新对象或数组**:
+   假设 `age` 为 `42`，这个处理函数三次调用 `setAge(age + 1)`：
 
-   javascript
+   ```
+   function handleClick() {
+     setAge(age + 1); // setAge(42 + 1)
+     setAge(age + 1); // setAge(42 + 1)
+     setAge(age + 1); // setAge(42 + 1)
+   }
+   ```
+
+   然而，点击一次后，`age` 将只会变为 `43` 而不是 `45`！这是因为调用 `set` 函数 [不会更新](https://react.docschina.org/learn/state-as-a-snapshot) 已经运行代码中的 `age` 状态变量。因此，每个 `setAge(age + 1)` 调用变成了 `setAge(43)`。
+
+   为了解决这个问题，**你可以向 `setAge` 传递一个 \*更新函数\***，而不是下一个状态：
+
+   ```
+   function handleClick() {
+     setAge(a => a + 1); // setAge(42 => 43)
+     setAge(a => a + 1); // setAge(43 => 44)
+     setAge(a => a + 1); // setAge(44 => 45)
+   }
+   ```
+
+3. **更新对象或数组**:
 
    ```
    const [user, setUser] = useState({ name: 'John', age: 30 });
-   
-   // 更新对象时需要展开旧状态
+   // 🚩 不要像下面这样改变一个对象：
+   user.age = 'Taylor';
+   // 通过创建一个新对象来替换整个对象
    setUser(prevUser => ({ ...prevUser, age: 31 }));
    ```
 
-#### mutation
+##### mutation
 
 在 React 中，"mutation"（突变）指的是直接修改数据或状态，而不是创建新的副本。理解这个概念对于正确管理 React 的状态非常重要。
 
@@ -2218,6 +2316,13 @@ Mutation 是指直接更改对象或数组的内容，而不是创建一个新�
 1. **展开运算符 (`...`)**：用于对象和数组的浅拷贝
 
 2. **数组方法**：`map`, `filter`, `concat`, `slice` 等不改变原数组的方法
+
+   | 避免使用 (会改变原始数组) | 推荐使用 (会返回一个新数组）  |                                                              |
+   | ------------------------- | ----------------------------- | ------------------------------------------------------------ |
+   | 添加元素                  | `push`，`unshift`             | `concat`，`[...arr]` 展开语法（[例子](https://react.docschina.org/learn/updating-arrays-in-state#adding-to-an-array)） |
+   | 删除元素                  | `pop`，`shift`，`splice`      | `filter`，`slice`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#removing-from-an-array)） |
+   | 替换元素                  | `splice`，`arr[i] = ...` 赋值 | `map`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#replacing-items-in-an-array)） |
+   | 排序                      | `reverse`，`sort`             | 先将数组复制一份（[例子](https://react.docschina.org/learn/updating-arrays-in-state#making-other-changes-to-an-array)） |
 
 3. **第三方库**：
 
@@ -2237,28 +2342,7 @@ Mutation 是指直接更改对象或数组的内容，而不是创建一个新�
      }));
      ```
 
-     
-
    - Immutable.js：提供持久化数据结构
-
-#### 更新 state 中的对象
-
-state 中可以保存任意类型的 JavaScript 值，包括对象。但是，你不应该直接修改存放在 React state 中的对象。相反，当你想要更新一个对象时，**你需要创建一个新的对象（或者将其拷贝一份），然后将 state 更新为此对象。**
-
-
-
-#### 更新数组
-
-在 JavaScript 中，数组只是另一种对象。[同对象一样](https://react.docschina.org/learn/updating-objects-in-state)，**你需要将 React state 中的数组视为只读的**。这意味着你不应该使用类似于 `arr[0] = 'bird'` 这样的方式来重新分配数组中的元素，也不应该使用会直接修改原始数组的方法，例如 `push()` 和 `pop()`。
-
-相反，每次要更新一个数组时，你需要把一个**新的数组**传入 state 的 setting 方法中。为此，你可以通过使用像 `filter()` 和 `map()` 这样不会直接修改原始值的方法，从原始数组生成一个新的数组。然后你就可以将 state 设置为这个新生成的数组。
-
-| 避免使用 (会改变原始数组) | 推荐使用 (会返回一个新数组）  |                                                              |
-| ------------------------- | ----------------------------- | ------------------------------------------------------------ |
-| 添加元素                  | `push`，`unshift`             | `concat`，`[...arr]` 展开语法（[例子](https://react.docschina.org/learn/updating-arrays-in-state#adding-to-an-array)） |
-| 删除元素                  | `pop`，`shift`，`splice`      | `filter`，`slice`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#removing-from-an-array)） |
-| 替换元素                  | `splice`，`arr[i] = ...` 赋值 | `map`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#replacing-items-in-an-array)） |
-| 排序                      | `reverse`，`sort`             | 先将数组复制一份（[例子](https://react.docschina.org/learn/updating-arrays-in-state#making-other-changes-to-an-array)） |
 
 ### 原理
 
@@ -2362,13 +2446,33 @@ batch批量处理：在每次执行 useState 的时候，组件都要重新 rend
   }
 ```
 
-### Tip
+### 避免重复创建初始状态 
 
-- react中useState更新了组件，但是页面上的组件没有刷新
+React 只在初次渲染时保存初始状态，后续渲染时将其忽略。
 
-  原因：useState更新的数据，是一个多层次的数据，[react](https://so.csdn.net/so/search?q=react)监听的时候，是浅层监听(默认开启 类 Object.is 的浅层比较，所以指向的地址不变)，所以不一定及时刷新页面
+```
+function TodoList() {
 
-  解决办法:深拷贝，把需要更新的数据深拷贝一份，再使用useState 存储，就能实现每次都及时更新页面
+  const [todos, setTodos] = useState(createInitialTodos());
+
+  // ...
+```
+
+尽管 `createInitialTodos()` 的结果仅用于初始渲染，但你仍然在每次渲染时调用此函数。如果它创建大数组或执行昂贵的计算，这可能会浪费资源。
+
+为了解决这个问题，你可以将它 **作为初始化函数传递给** `useState`：
+
+```
+function TodoList() {
+
+  const [todos, setTodos] = useState(createInitialTodos);
+
+  // ...
+```
+
+请注意，你传递的是 `createInitialTodos` **函数本身**，而不是 `createInitialTodos()` 调用该函数的结果。如果将函数传递给 `useState`，React 仅在初始化期间调用它。
+
+React 在开发模式下可能会调用你的 [初始化函数](https://react.docschina.org/reference/react/useState#my-initializer-or-updater-function-runs-twice) 两次，以验证它们是否是 [纯函数](https://react.docschina.org/learn/keeping-components-pure)。
 
 ## useContext():共享状态钩子
 
@@ -2765,7 +2869,8 @@ function useMemo<T>(factory: () => T, deps: DependencyList | undefined): T;
 
 ### useCallback
 
-父组件给子组件传递属性（**函数**），父组件重新渲染，会重新创建函数，对应函数地址改变，即传给子组件的属性发生了变化，导致子组件渲染。
+> 父组件给子组件传递属性（**函数**），父组件重新渲染并重新创建函数，对应函数地址改变，传给子组件的属性发生了变化，导致子组件渲染。
+>
 
 useCallback参数 
 
@@ -2786,7 +2891,7 @@ const [number,setNumber] = useState(0);
 
 const handleClick = useCallback(()=>{
    console.log(33)
-},[])
+},[])// 空依赖数组表示该函数只在组件挂载时创建
  return(
     <div>
       模块{number}
@@ -2847,6 +2952,59 @@ const handleClick = useCallback(()=>{
 ### useMemo
 
 > 类似于vue的computed
+
+- 性能优化 - 避免重复计算
+
+  ```
+  function ProductList({ products, filter }) {
+    const filteredProducts = useMemo(() => {
+      console.log('过滤产品...');
+      return products.filter(product => 
+        product.name.toLowerCase().includes(filter.toLowerCase())
+      );
+    }, [products, filter]); // 当 products 或 filter 变化时重新计算
+  
+    return (
+      <div>
+        {filteredProducts.map(product => (
+          <div key={product.id}>{product.name}</div>
+        ))}
+      </div>
+    );
+  }
+  ```
+
+- 避免子组件不必要渲染
+
+  ```
+  function ParentComponent() {
+    const [count, setCount] = useState(0);
+    const [user, setUser] = useState({ name: 'John', age: 30 });
+  
+    // 保持 userInfo 引用稳定
+    const userInfo = useMemo(() => ({
+      name: user.name,
+      age: user.age,
+      // 派生数据
+      isAdult: user.age >= 18,
+    }), [user.name, user.age]);
+  
+    return (
+      <div>
+        <button onClick={() => setCount(count + 1)}>计数: {count}</button>
+        {/* ChildComponent 只在 userInfo 实际变化时重渲染 */}
+        <ChildComponent userInfo={userInfo} />
+      </div>
+    );
+  }
+  
+  const ChildComponent = React.memo(({ userInfo }) => {
+    console.log('ChildComponent 渲染');
+    return <div>{userInfo.name} - {userInfo.age}</div>;
+  });
+  ```
+
+  
 
 ## 调试
 
@@ -4932,6 +5090,44 @@ export const MyComponent: FC<MyComponentProps> = props => {
   return <div>hello react</div>;
 };
 ```
+
+## forwardRef
+
+ **React**.**forwardRef**<**BasicLibTableRef**, **ComProps**>
+
+```
+// 定义 ref 的接口类型
+interface BasicLibTableRef {
+  proTableRef: ActionType | undefined;
+  setDataSource: React.Dispatch<React.SetStateAction<readonly DataSourceType[]>>;
+  dataSource: readonly DataSourceType[];
+}
+const BasicLibTable = React.forwardRef<BasicLibTableRef, ComProps>(({ columns }, ref) => {
+  const [editableKeys, setEditableRowKeys] = useState<React.Key[]>(() => []);
+  const [dataSource, setDataSource] = useState<readonly DataSourceType[]>(() => defaultData);
+  const actionRef = useRef<ActionType>();
+
+  // 2. 关键修复：将内部 actionRef 暴露为组件 ref 接口
+  React.useImperativeHandle(ref, () => ({
+    proTableRef: actionRef.current,
+    setDataSource: setDataSource,
+    dataSource: dataSource,
+  }));
+
+  useEffect(() => {
+    console.log('columns changed:', columns);
+    columns.push();
+    console.log('columns', columns);
+  }, []);
+
+  return (
+    <>
+    </>
+  );
+});
+```
+
+
 
 # NEXT
 
