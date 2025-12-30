@@ -1779,8 +1779,6 @@ function ThemedButton() {
 }
 ```
 
-
-
 #### 父组件重新渲染
 
 即使子组件的 props 没有变化，当父组件重新渲染时，默认情况下子组件也会重新渲染。
@@ -1922,79 +1920,52 @@ function shallowEqual(objA: mixed, objB: mixed): boolean {
 
 #### memo (用于函数组件)
 
-**针对函数组件的**,减少组件的不必要更新。 `React.memo` 仅检查 props 变更。如果函数组件被 `React.memo` 包裹，且其实现中拥有 [`useState`](https://zh-hans.reactjs.org/docs/hooks-state.html)，[`useReducer`](https://zh-hans.reactjs.org/docs/hooks-reference.html#usereducer) 或 [`useContext`](https://zh-hans.reactjs.org/docs/hooks-reference.html#usecontext) 的 Hook，当 state 或 context 发生变化时，它仍会重新渲染。 
+**`React.memo` 仅检查 props 变更。** 
 
-```js
-const TextCell = memo(function(props:any) {
-  console.log('我重新渲染了')
-  return (
-    <p onClick={props.click}>ffff</p>
-  )
-})
+https://blog.csdn.net/u013165804/article/details/143937372
 
-//父组件
-const fatherComponent = () => {
-const [number,setNumber] = useState(0);
- return(
-    <div>
-      模块{number}
-      <TextCell/>
-      <Button onClick={()=>setNumber(number => number + 1)}>加加加</Button>
-    </div>
-  )
-}
-```
+https://www.runoob.com/react/react-memo.html
 
-在这里如果没有用到memo 每次父组件重新setNumber,子组件都会重新渲染一次,加上了后**只会在初始化的时候渲染(useMemo会在页面初始化的时候执行一次,并把执行的结果缓存一份)**,减少了子组件渲染的次数
+#### useMemo
 
-默认情况下其只会对复杂对象做**浅层对比**，如果你想要控制对比过程，那么请将自定义的比较函数通过第二个参数传入来实现。 
+**useMemo(factory, [dependencies])** - 缓存计算值，以便在依赖项变化时避免重复计算。
 
-```jsx
-function MyComponent(props) {
-  /* 使用 props 渲染 */
-}
-function areEqual(prevProps, nextProps) {
-  /*
-  如果把 nextProps 传入 render 方法的返回结果与
-  将 prevProps 传入 render 方法的返回结果一致则返回 true，
-  否则返回 false
-  */
-}
-export default React.memo(MyComponent, areEqual);
-```
+实例
 
-#### useMemo 和 useCallback (优化性能)
+import React, { useMemo } from 'react';
 
-当父组件更新时，即使子组件使用`React.memo`进行了优化，**如果传递给子组件的函数props每次都是新创建的，子组件仍然会重新渲染**。
+**function** ExpensiveComponent({ data }) {
+ **const** expensiveValue = useMemo(() => {
+  **return** computeExpensiveValue(data);
+ }, [data]);
 
-核心问题：函数引用的变化
-
-解决：使用`useCallback`缓存函数
-
-在JavaScript中，函数是引用类型。每次父组件重新渲染时，如果直接在渲染函数中定义函数，会创建一个全新的函数引用：
-
-```
-function Parent() {
-  const [count, setCount] = useState(0);
-  
-  // 每次Parent渲染都会创建新的handleClick函数
-  const handleClick = () => {
-    console.log('Clicked');
-  };
-  
-  return (
-    <div>
-      <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>
-      <Child onClick={handleClick} /> {/* 每次都会重新渲染 */}
-    </div>
-  );
+ **return** <div>Expensive value: {expensiveValue}</div>;
 }
 
-const Child = React.memo(function Child({ onClick }) {
-  console.log('Child渲染了'); // 每次Parent更新都会打印
-  return <button onClick={onClick}>Click Me</button>;
-});
-```
+**useRef(initialValue)** - 创建一个持久化的引用，可用于访问 DOM 元素或缓存任何可变值。
+
+实例
+
+import React, { useRef, useEffect } from 'react';
+
+**function** TextInputWithFocusButton() {
+ **const** inputRef = useRef(**null**);
+
+ useEffect(() => {
+  inputRef.current.focus();
+ }, []);
+
+ **return** (
+  <>
+   <input ref={inputRef} type="text" />
+   <button onClick={() => inputRef.current.focus()}>Focus Input</button>
+  </>
+ );
+}
+
+#### useCallback
+
+**useCallback(callback, [dependencies])** - 缓存一个回调函数，以便在依赖项变化时避免重复创建。
 
 #### 强制渲染
 
@@ -5125,6 +5096,26 @@ const BasicLibTable = React.forwardRef<BasicLibTableRef, ComProps>(({ columns },
     </>
   );
 });
+```
+
+## **PropsWithChildren**
+
+**PropsWithChildren**：React 类型工具，作用是把 [children](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html)（类型为 [React.ReactNode](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html)，且可选）加入到一个已有的 props 类型里。等价于把 [children?: React.ReactNode](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 拼入你的 props 类型。
+
+```
+export type PulldownSearchProps = React.PropsWithChildren<{
+  fieldsConfig?: (FilterFormFieldConfig | FormFieldConfig)[];
+  total?: number; // 总记录数，仅展示用途
+  placeholder?: string; // 搜索框 placeholder
+  searchKey?: string; // 搜索字段的 key 名称，默认为 'searchKey'
+  // children?: React.ReactNode;
+  // 确认时回传整合后的筛选对象
+  onConfirm?: (value?: Record<string, any>) => void;
+  onSearch?: (value?: Record<string, any>) => void;
+  // 当子控件值变化时也会回调（行为可在组件内调整为仅在确认时回调）
+  onChange?: (value: Record<string, any>) => void;
+  onReset?: () => void;
+}>;
 ```
 
 

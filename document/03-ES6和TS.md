@@ -6468,6 +6468,10 @@ Promise.all([p1, p2])
 
 如果`p2`没有自己的`catch`方法，就会调用`Promise.all`
 
+##### allSettled
+
+想“无论成功失败都等全部结束” → 用 `Promise.allSettled`
+
 ##### race
 
 `Promise.race`方法同样是将多个Promise实例，包装成一个新的Promise实例。
@@ -8646,7 +8650,43 @@ type PublicUser = Omit<User, 'password' | 'email'>;
   };
   ```
 
-  
+
+### `Pick`
+
+`Pick` 是 TypeScript 中的一个内置实用类型，用于从现有类型中选择部分属性来创建新类型。
+
+```
+Pick<Type, Keys>
+```
+
+- `Type`: 源类型
+- `Keys`: 要选择的属性键（可以是字符串字面量或联合类型）
+
+```
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  age: number;
+  createdAt: Date;
+}
+
+// 只选择 id 和 name 属性
+type UserBasicInfo = Pick<User, 'id' | 'name'>;
+
+// 等价于：
+// type UserBasicInfo = {
+//   id: number;
+//   name: string;
+// }
+
+const user: UserBasicInfo = {
+  id: 1,
+  name: "Alice"
+};
+```
+
+
 
 ## 基础类型
 
