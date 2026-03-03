@@ -568,9 +568,56 @@ styled-components是一个第三方包，要安装。**Material框架**中的样
 
 ## css
 
+| 方案                                        | 原理                        | 优点                                                         | 缺点                                       | 适用场景                                     |
+| :------------------------------------------ | :-------------------------- | :----------------------------------------------------------- | :----------------------------------------- | :------------------------------------------- |
+| **CSS Modules**                             | 自动生成唯一类名，避免冲突  | 局部样式隔离，编译时生成，相对安全                           | 类名需要用驼峰或中括号访问                 | 组件库开发，中大型项目                       |
+| **CSS-in-JS** (styled-components / Emotion) | 在JS中写CSS，动态生成样式   | 动态样式能力强，可访问JS变量，无全局污染                     | 运行时性能开销，包体积增加，调试相对麻烦   | 需要高度动态主题的项目，或追求开发体验的团队 |
+| **Tailwind CSS**                            | 原子化CSS，通过类名组合样式 | 开发效率极高，一致性有保障，最终包体积小（未使用的样式会被Purge） | 类名多的时候可读性会下降，需要熟悉原子类名 | 追求开发效率的新项目，团队有规范意识的场景   |
+
+### **CSS Modules**
+
+```
+// Button.js
+import styles from './Button.module.css';
+
+function Button() {
+  return <button className={styles.primary}>点击</button>;
+}
+
+/* Button.module.css */
+.primary {
+  background: blue;
+  color: white;
+}
+```
+
+### **Tailwind CSS**
+
+如果你追求极致的开发效率和一致性，Tailwind会让你的开发体验上一个台阶。它特别适合团队协作，因为大家都用同一套设计系统，不用纠结类名怎么起。
+
+### **styled-components** 
+
+适合动态样式和组件化
+
+```
+import styled from 'styled-components';
+
+const Button = styled.button`
+  background: ${props => props.primary ? 'blue' : 'gray'};
+  color: white;
+  padding: 10px 20px;
+`;
+
+function App() {
+  return <Button primary>点击</Button>;
+}
+```
+
+
+
 ### class动态
 
-#### 方法1：使用内联样式
+#### 使用内联样式
 
 如果你的类名变化是基于某些条件，你可以直接在JSX中使用内联样式，并通过条件表达式来决定是否应用某个样式类。
 
@@ -584,7 +631,7 @@ const MyComponent = ({ isActive }) => {
 };
 ```
 
-#### 方法2：使用条件渲染
+#### 使用条件渲染
 
 对于更复杂的类名变化，你可以在JSX中直接使用条件渲染来添加或移除类名。
 
@@ -598,7 +645,32 @@ const MyComponent = ({ isActive }) => {
 };
 ```
 
-#### 方法3：使用`classnames`库
+#### 使用模板字符串
+
+如果你需要根据更复杂的逻辑动态生成类名，你可以使用ES6的模板字符串功能。
+
+```jsx
+const MyComponent = ({ status }) => {
+  const className = `status-${status}`; // 根据status动态生成类名
+  return (
+    <div className={className}>Status: {status}</div>
+  );
+};
+```
+
+#### 使用库
+
+`clsx` 是 `classnames` 的一个**现代、轻量、高性能的替代品**。如果你现在要开始一个新项目，**`clsx` 通常是更推荐的选择**。
+
+| 对比维度             | **clsx**                                                     | **classnames**                               |
+| :------------------- | :----------------------------------------------------------- | :------------------------------------------- |
+| **包大小 (gzip)**    | **极简 (约 239B)**                                           | 稍大 (约 1.5KB)                              |
+| **性能**             | **更快**，专为性能优化，在各类浏览器中均有优势               | 表现良好，但相对稍慢                         |
+| **API 与语法**       | **完全兼容** `classnames` 的日常用法                         | 经典的、功能全面的 API                       |
+| **对嵌套数组的处理** | **设计上只扁平化一层**。对于深层嵌套（超过3层）的数组，行为可能与 `classnames` 略有不同，但这在实际开发中极少遇到 | **递归扁平化**所有层级的嵌套数组，处理更彻底 |
+| **适用场景**         | **新项目首选**，对性能有要求，希望包体积尽可能小             | **维护旧项目**，或团队对深层嵌套有硬性要求   |
+
+##### classnames库
 
 `classnames`库可以帮助你更方便地处理多个条件，尤其是当你有多个类名需要基于多个条件变化时。首先，你需要安装`classnames`：
 
@@ -624,22 +696,18 @@ const MyComponent = ({ isActive, hasError }) => {
 };
 ```
 
-#### 方法4：使用模板字符串动态生成类名
+##### clsx库
 
-如果你需要根据更复杂的逻辑动态生成类名，你可以使用ES6的模板字符串功能。
+`clsx` 非常灵活，支持多种写法，可以应对各种复杂的类名组合场景。
 
-```jsx
-const MyComponent = ({ status }) => {
-  const className = `status-${status}`; // 根据status动态生成类名
-  return (
-    <div className={className}>Status: {status}</div>
-  );
-};
-```
-
-#### 方法5：使用CSS Modules或Styled Components
-
-对于更高级的样式需求，你可以使用CSS Modules或Styled Components来动态地应用样式。这些方法允许你以更组件化的方式处理样式。
+| 输入类型         | 语法示例                                        | 说明                                                         |
+| :--------------- | :---------------------------------------------- | :----------------------------------------------------------- |
+| **字符串**       | `clsx('foo', 'bar')`                            | 多个字符串会拼接起来，返回 `"foo bar"`。                     |
+| **对象**         | `clsx({ foo: true, bar: false })`               | 对象的键，只有当其值为 `true` 时才会被包含。返回 `"foo"`。   |
+| **对象（混合）** | `clsx({ foo: true }, { bar: true })`            | 支持传入多个对象参数，最终合并。返回 `"foo bar"`。           |
+| **数组**         | `clsx(['foo', 'bar'])`                          | 数组会被展开。返回 `"foo bar"`。                             |
+| **条件表达式**   | `clsx('foo', isActive && 'bar')`                | 利用逻辑与，当 `isActive` 为 `true` 时，`'bar'` 被包含。     |
+| **过滤假值**     | `clsx('foo', null, undefined, 0, false, 'bar')` | 所有假值（`null`, `undefined`, `false`, `0`, `NaN`, `''`）都会被自动忽略。返回 `"foo bar"`。 |
 
 #### 使用Styled Components:
 
@@ -665,36 +733,6 @@ const MyComponent = ({ isActive }) => {
 };
 ```
 
-### CSS 引入方式
-
-#### 在组件内直接使用
-
-#### 组件中引入.css 文件
-
-#### 引入.module.css 文件
-
-![image-20250506160420630](img/前端/react/image-20250506160420630.png)
-
-这种方式能够解决局部作用域问题，但也有一定的缺陷：
-
-不方便动态来修改某些样式，依然需要使用内联样式的方式；
-
-
-
-#### CSS in JS
-
-CSS-in-JS，是指一种模式，其中 CSS 由 JavaScript 生成而不是在外部文件中定义
-
-此功能并不是 React 的一部分，而是由第三方库提供，例如：
-
-- styled-components 
-- emotion 
-- glamorous
-
-下面主要看看 styled-components 的基本使用
-
-
-
 ## 表单和受控组件
 
 https://juejin.cn/post/6858276396968951822#heading-7
@@ -711,7 +749,7 @@ https://juejin.cn/post/6858276396968951822#heading-7
 
   - 性能弱，可控制强
 
-#### 受控组件
+### 受控组件
 
 ```tsx
 class TestComponent extends React.Component {
@@ -751,7 +789,7 @@ class TestComponent extends React.Component {
 
 ```
 
-#### 非受控组件
+### 非受控组件
 
 对于受控组件，我们需要为每个`状态更新`(例如`this.state.username`)编写一个`事件处理程序`(例如`this.setState({ username: e.target.value })`)。
 
@@ -783,7 +821,7 @@ export class UnControll extends Component {
 
 ```
 
-#### 特殊的文件file标签
+### 特殊的文件file标签
 
 **对于file类型的表单控件它始终是一个不受控制的组件，因为它的值只能由用户设置，而不是以编程方式设置。**
 
@@ -1073,125 +1111,276 @@ export default function About(props){
 
 
 
-## setState
+## 状态state
 
-https://juejin.cn/post/6850418109636050958
+### setState
 
-https://juejin.cn/post/6959885030063603743#heading-0
+1. ‌**传入对象**‌：将新状态与当前状态进行浅合并。
 
-https://juejin.cn/post/7062162951108558855
+   ```
+   javascriptCopy Code
+   
+   
+   
+   this.setState({ count: this.state.count + 1 });
+   ```
 
-### 回调函数
+2. ‌**传入函数**‌：当新状态依赖于旧状态时，推荐使用函数形式，确保获取到最新的状态值。
 
-setState提供了一个回调函数供开发者使用，在回调函数中，我们可以实时的获取到更新之后的数据。还是以刚才的例子做示范：
+   ```
+   javascriptCopy Codethis.setState((prevState) => ({
+     count: prevState.count + 1
+   }));
+   ```
+
+3. ‌**使用回调函数**‌：在状态更新并重新渲染后执行代码，确保获取到最新状态。
+
+   ```
+   javascriptCopy Codethis.setState({ count: this.state.count + 1 }, () => {
+     console.log('更新后的状态:', this.state.count);
+   });
+   ```
+
+### useState
+
+用于为函数组件引入状态（state）。纯函数不能有状态，所以把状态放在钩子里面。
+
+#### 基本使用
 
 ```
-state = {
-    number:1
-};
-componentDidMount(){
-    this.setState({number:3},()=>{
-        console.log(this.state.number)
-    })
-}
+const [state, setState] = useState(initialState);
 ```
 
-![img](https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/7/11/1733ca3cdfc5be38~tplv-t2oaga2asx-watermark.awebp)
+- `initialState`: 状态的初始值，可以是任何类型（数字、字符串、对象、数组、函数等）
+  - 如果传递函数作为 `initialState`，则它将被视为 **初始化函数**。它应该是纯函数，不应该接受任何参数，并且应该返回一个任何类型的值。当初始化组件时，React 将调用你的初始化函数，并将其返回值存储为初始状态
+
+- `state`: 当前的状态值
+- `setState`: 更新状态的函数
+
+#### 更新状态方式
+
+1. **直接设置新值**:
+
+   ```
+   setCount(10);
+   ```
+
+2. **基于前一个状态更新**:
+
+   ```
+   setCount(prevCount => prevCount + 1);
+   ```
+
+   假设 `age` 为 `42`，这个处理函数三次调用 `setAge(age + 1)`：
+
+   ```
+   function handleClick() {
+     setAge(age + 1); // setAge(42 + 1)
+     setAge(age + 1); // setAge(42 + 1)
+     setAge(age + 1); // setAge(42 + 1)
+   }
+   ```
+
+   然而，点击一次后，`age` 将只会变为 `43` 而不是 `45`！这是因为调用 `set` 函数 [不会更新](https://react.docschina.org/learn/state-as-a-snapshot) 已经运行代码中的 `age` 状态变量。因此，每个 `setAge(age + 1)` 调用变成了 `setAge(43)`。
+
+   为了解决这个问题，**你可以向 `setAge` 传递一个 \*更新函数\***，而不是下一个状态：
+
+   ```
+   function handleClick() {
+     setAge(a => a + 1); // setAge(42 => 43)
+     setAge(a => a + 1); // setAge(43 => 44)
+     setAge(a => a + 1); // setAge(44 => 45)
+   }
+   ```
+
+3. **更新对象或数组**:
+
+   ```
+   const [user, setUser] = useState({ name: 'John', age: 30 });
+   // 🚩 不要像下面这样改变一个对象：
+   user.age = 'Taylor';
+   // 通过创建一个新对象来替换整个对象
+   setUser(prevUser => ({ ...prevUser, age: 31 }));
+   ```
+
+##### mutation
+
+在 React 中，"mutation"（突变）指的是直接修改数据或状态，而不是创建新的副本。理解这个概念对于正确管理 React 的状态非常重要。
+
+Mutation 是指直接更改对象或数组的内容，而不是创建一个新的对象或数组。在 React 中，**直接突变状态是被禁止的**，因为这会导致不可预测的行为和性能问题。
+
+**为什么 React 反对 Mutation**
+
+1. **不可预测性**：直接突变可能导致组件不按预期重新渲染
+2. **性能优化**：React 依赖不可变性来高效地确定何时需要重新渲染
+3. **时间旅行调试**：像 Redux 这样的工具依赖不可变性来实现调试功能
+4. **并发模式**：React 的未来功能依赖于状态更新的可预测性
+
+**避免 Mutation 的工具**
+
+1. **展开运算符 (`...`)**：用于对象和数组的浅拷贝
+
+2. **数组方法**：`map`, `filter`, `concat`, `slice` 等不改变原数组的方法
+
+   | 避免使用 (会改变原始数组) | 推荐使用 (会返回一个新数组）  |                                                              |
+   | ------------------------- | ----------------------------- | ------------------------------------------------------------ |
+   | 添加元素                  | `push`，`unshift`             | `concat`，`[...arr]` 展开语法（[例子](https://react.docschina.org/learn/updating-arrays-in-state#adding-to-an-array)） |
+   | 删除元素                  | `pop`，`shift`，`splice`      | `filter`，`slice`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#removing-from-an-array)） |
+   | 替换元素                  | `splice`，`arr[i] = ...` 赋值 | `map`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#replacing-items-in-an-array)） |
+   | 排序                      | `reverse`，`sort`             | 先将数组复制一份（[例子](https://react.docschina.org/learn/updating-arrays-in-state#making-other-changes-to-an-array)） |
+
+3. **第三方库**：
+
+   - Immer：简化不可变更新逻辑
+
+     ```
+     import produce from 'immer';
+     
+     const [user, setUser] = useState({
+       name: 'Alice',
+       profile: { age: 25 }
+     });
+     
+     // 使用 Immer 可以"看似"直接修改，但实际上创建了新对象
+     setUser(produce(draft => {
+       draft.profile.age = 26;
+     }));
+     ```
+
+   - Immutable.js：提供持久化数据结构
+
+
 
 ### 执行机制
 
-**setState 只在合成事件和钩子函数中是“异步”的，在原生事件和 setTimeout 中都是同步的。**
+https://juejin.cn/post/6850418109636050958
 
-**合成事件：就是react 在组件中的onClick等都是属于它自定义的合成事件。**
+https://juejin.cn/post/7062162951108558855
 
-**原生事件：比如通过addeventListener添加的，dom中的原生事件。**
+#### 批处理
 
-#### 异步执行
+**批处理**是 React 将多个状态更新合并为一次重新渲染的优化机制（如果每次调用setState都会触发更新，那么性能消耗就大）。简单说：**多个 setState 调用 → 一次渲染更新**。**将 `setState()` 视为请求而不是立即更新组件的命令。** 
 
-这里的“异步”并不是说内部由异步代码实现，其实本身执行的过程和代码都是同步的**，只是合成事件和钩子函数的调用顺序在更新之前**，导致在合成事件和钩子函数中没法立马拿到更新后的值，形式了所谓的“异步”。
+| 特性       | React 17   | React 18+ |
+| :--------- | :--------- | :-------- |
+| 事件处理   | ✅ 批处理   | ✅ 批处理  |
+| Promise    | ❌ 不批处理 | ✅ 批处理  |
+| setTimeout | ❌ 不批处理 | ✅ 批处理  |
+| 原生事件   | ❌ 不批处理 | ✅ 批处理  |
+| fetch 回调 | ❌ 不批处理 | ✅ 批处理  |
 
-```
-state = {
-    number:1
-};
-componentDidMount(){
-    this.setState({number:3})
-    console.log(this.state.number)
-}
-```
+##### **React 17**
 
-![img](https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-user-assets/2020/7/11/1733ca3cdf9d950d~tplv-t2oaga2asx-watermark.awebp)
-
-setState是一个异步方法，如果每次调用setState都会触发更新，那么性能消耗就大，异步操作是为了提高性能，React会将多个setState的调用合并一起进行**批量更新**，减少re-render调用。 **将 `setState()` 视为请求而不是立即更新组件的命令。** 
+**在 React 17 中，批处理是"选择性"的**
 
 ```
-for ( let i = 0; i < 100; i++ ) {
-    this.setState( { num: this.state.num + 1 } ); // num 是 0 所以 setState({num:0 + 1})。
-}
-```
-
-如果setState是一个同步执行的机制，那么这个状态会被重新渲染100次，这对性能是一个相当大的消耗。
-
-#### 同步执行
-
-在setTimeout，Promise.then异步事件，原生dom事件中，setState和useState是同步执行的，`render` 会执行多次
-
-```
-changeText() {
-  setTimeout(() => {
-    this.setState({
-      message: "你好啊"
+function React17Example() {
+  const [count, setCount] = useState(0);
+  const [flag, setFlag] = useState(false);
+  
+  console.log('渲染了', count, flag);
+  
+  // ✅ 会在 React 事件处理函数中批处理
+  const handleClick = () => {
+    setCount(c => c + 1);
+    setFlag(f => !f);
+    // 只触发 1 次重新渲染
+  };
+  
+  // ❌ 不会在 Promise、setTimeout 中批处理
+  const handleAsync = () => {
+    setTimeout(() => {
+      setCount(c => c + 1);  // 第1次渲染
+      setFlag(f => !f);       // 第2次渲染
+      // 总共触发 2 次重新渲染
+    }, 1000);
+  };
+  
+  // ❌ 不会在 fetch 回调中批处理
+  const handleFetch = () => {
+    fetch('/api/data').then(() => {
+      setCount(c => c + 1);  // 第1次渲染
+      setFlag(f => !f);       // 第2次渲染
     });
-    console.log(this.state.message); //你好啊
-  }, 0);
-}
-```
-
-```
-componentDidMount() {
-const btnEl = document.getElementById("btn");
-btnEl.addEventListener( 'click', () => {
-this.setState({
-message: "你好啊 ,李银河 "
-});
-console.log(this.state.message); // 你好啊 ,李银河
-})
+  };
+  
+  return (
+    <div>
+      <button onClick={handleClick}>同步更新</button>
+      <button onClick={handleAsync}>异步更新</button>
+    </div>
+  );
 }
 ```
 
 
 
-## ref
+##### **React 18**
 
-### 原生JS获取Dom
+**React 18 中，几乎所有场景都会批处理**
+
+```
+function React18Example() {
+  const [count, setCount] = useState(0);
+  const [flag, setFlag] = useState(false);
+  
+  console.log('渲染了'); // 所有场景都只打印一次！
+  
+  // ✅ Promise 中也能批处理
+  const handlePromise = () => {
+    Promise.resolve().then(() => {
+      setCount(c => c + 1);
+      setFlag(f => !f);
+      // React 18: 1 次渲染
+    });
+  };
+  
+  // ✅ setTimeout 中也能批处理
+  const handleTimeout = () => {
+    setTimeout(() => {
+      setCount(c => c + 1);
+      setFlag(f => !f);
+      // React 18: 1 次渲染
+    }, 1000);
+  };
+  
+  // ✅ 原生事件中也能批处理
+  useEffect(() => {
+    const button = document.getElementById('my-btn');
+    button.addEventListener('click', () => {
+      setCount(c => c + 1);
+      setFlag(f => !f);
+      // React 18: 1 次渲染
+    });
+  }, []);
+  
+  return (
+    <div>
+      <button onClick={handlePromise}>Promise</button>
+      <button onClick={handleTimeout}>Timeout</button>
+      <button id="my-btn">原生事件</button>
+    </div>
+  );
+}
+```
+
+##### **unstable_batchedUpdates手动批处理**
 
 ```jsx
-import {Component} from "react";
-class App extends Component {
-    //定义获取Dom的函数
-    handleGetDom(){
-        let title = document.querySelector('#title');
-        console.log(title);
-        title.style.background = 'skyblue'
-    }
-    render() {
-        return (
-            <>
-                <h1 id="title">测试节点</h1>
-                <button onClick={this.handleGetDom}>点击操作Dom</button>
-            </>
-        )
-    }
-}
-export default App;
+  function handleClick3() {
+    // 手动批处理
+    setTimeout(() => {
+      unstable_batchedUpdates(() => {
+        setCount1(count1 + 1);
+        console.log(count1);
+        setFlag((f) => !f);
+      });
+    }, 10);
+    // React 只会在最后重新渲染一次（这是批处理！）
+  }
 ```
 
-### 使用场景
-
-- 对Dom元素的焦点控制、内容选择、控制
-- 对Dom元素的内容设置及媒体播放
-- 对Dom元素的操作和对组件实例的操作
-- 集成第三方 DOM 库
+## ref
 
 ### 回调 Ref
 
@@ -1248,17 +1437,27 @@ export default class MyInput extends React.Component {
 
 ### useRef
 
-#### 概念
-
 **只能在函数组件中使用**
 
-- 访问 DOM 元素
+- 访问 DOM 元素/组件
 - `useRef` 可以存储任何可变值
   - useRef更新时不会导致组件重新渲染
   - 更新时不会导致useRef存储的值被再次初始化。
 
+useRef 的特性：
 
-#### createRef和useRef区别
+- useRef 返回一个可变的 ref 对象，其 .current 属性被初始化为传入的参数
+- ref 对象在组件的整个生命周期内保持不变
+- 修改 .current 属性不会触发组件重新渲染
+- 由于 ref 对象本身不变，所有引用它的地方都会访问到最新的 .current 值
+  解决方案机制：
+
+1. 我们创建 apiConfigRef 来跟踪最新的 apiConfig
+2. 使用 useEffect 在 apiConfig 变化时同步更新 apiConfigRef.current
+3. 在 onConfirm 回调中使用 apiConfigRef.current 而不是 apiConfig
+   这样无论何时调用 onConfirm ，它都能通过 apiConfigRef.current 访问到最新的 API 配置值，而不是创建回调时捕获的旧值。
+
+### createRef和useRef区别
 
 useRef 用法类似于React.createRef()，区别：https://zhuanlan.zhihu.com/p/105276393
 
@@ -1301,87 +1500,7 @@ export default Different;
 
 ```
 
-#### 解决闭包问题
 
-https://article.juejin.cn/post/7532261830022971407
-
-##### 什么是闭包陷阱
-
-- **闭包陷阱是指在函数组件中，一个函数（例如事件处理、setTimeout、setInterval、Promise 回调）捕获了定义它时所在作用域的变量（特别是状态或 props），但这个变量在后续的渲染中已经更新（函数组件和函数也会更新，<u>但旧的函数实例被外部系统引用，则不会被垃圾回收</u>），而该函数内部引用的仍然是其“过时”的旧值。**
-- **闭包问题发生在某些外部系统（定时器、事件监听器等）仍然持有对旧函数实例的引用，而没有及时更新到新函数。**
-
-```
-function Counter() {
-  const [count, setCount] = useState(0);
-  const handleClick = () => {
-    setCount(count + 1); // 依赖于当前渲染的 count
-  };
-
-  const handleAlert = () => {
-    setTimeout(() => {
-      alert('Current count: ' + count); // 🚨 陷阱所在！捕获的是定义时的 count
-    }, 3000);
-  };
-
-  return (
-    <div>
-      <p>Count: {count}</p>
-      <button onClick={handleClick}>Increment</button>
-      <button onClick={handleAlert}>Show Alert (in 3s)</button>
-    </div>
-  );
-}
-
-```
-
-**操作步骤与问题：**
-
-1. 初始渲染：`count = 0`。
-2. 点击 “Increment” 按钮 3 次，`count` 变为 3。
-3. 立即点击 “Show Alert” 按钮，并点击“Increment” 按钮 3 次
-4. 3 秒后，弹出的警告框显示的是 **`Current count: 3`**，而不是预期的 `6`！
-
-##### 案例
-
-protable中**Column**配置，操作项使用动态接口函数配置，tab切换时动态切换接口函数
-
-- 问题：接口函数还是之前的接口
-
-- 原因：apiConfig 使用的是闭包中的旧值，而不是最新的状态值。这是因为 **React 的闭包特性导致的**
-
-  ```
-  const [apiConfig, setApiConfig] = React.useState(apis[activeTab.key]);
-  ```
-
-- 解决：
-
-  ```
-  const [apiConfig, setApiConfig] = React.useState(apis[activeTab.key]);
-  const apiConfigRef = React.useRef(apis[activeTab.key]);
-  
-  // 同步更新 ref
-  React.useEffect(() => {
-  	apiConfigRef.current = apiConfig;
-  }, [apiConfig]);
-  ```
-
-  
-
-useRef 的特性：
-
-- useRef 返回一个可变的 ref 对象，其 .current 属性被初始化为传入的参数
-- ref 对象在组件的整个生命周期内保持不变
-- 修改 .current 属性不会触发组件重新渲染
-- 由于 ref 对象本身不变，所有引用它的地方都会访问到最新的 .current 值
-  解决方案机制：
-
-1. 1.
-   我们创建 apiConfigRef 来跟踪最新的 apiConfig
-2. 2.
-   使用 useEffect 在 apiConfig 变化时同步更新 apiConfigRef.current
-3. 3.
-   在 onConfirm 回调中使用 apiConfigRef.current 而不是 apiConfig
-   这样无论何时调用 onConfirm ，它都能通过 apiConfigRef.current 访问到最新的 API 配置值，而不是创建回调时捕获的旧值。
 
 ### forwardRef 转发/传递
 
@@ -1643,7 +1762,226 @@ class ErrorBoundary extends React.Component {
 }	
 ```
 
+## 闭包
 
+https://blog.csdn.net/2302_80706750/article/details/156606678
+
+
+
+### 闭包原因
+
+React 函数组件的运行机制（本质上就是个普通的 JavaScript 函数）
+
+1. 每次状态更新（比如 setCount）、props 变化、强制刷新时，函数都会被重新执行一次；
+2. 每次执行都会创建一个「全新的函数作用域」，里面的变量（状态、普通变量、函数）都是新的「副本」；
+3. 页面展示的状态是「当前最新作用域」里的，而闭包捕获的是「创建它时那个作用域」里的状态。
+
+> React 闭包 为什么更新usestate中的变量使得函数组件更新，对应的闭包函数不应该重新生成吗，里面使用的变量不应该是最新值吗
+>
+> 组件重新渲染 → 函数重新执行 → 创建新的闭包函数 → 应该访问新值
+>
+> **但实际上，当你调用一个旧函数时，它永远只能访问它被创建时的值！**
+
+### 闭包案例解析
+
+```
+import { useEffect, useState } from 'react';
+
+export default function App() {
+  // 声明状态变量 count，初始值 0，setCount 用于更新状态
+  const [count, setCount] = useState(0);
+
+  // 组件每次渲染时都会执行，打印当前 count
+  console.log(count, '/////');
+
+  // 副作用钩子：模拟组件挂载后启动定时器
+  useEffect(() => {
+    // 定义定时器，每隔 1 秒打印 count
+    const timer = setInterval(() => {
+      console.log('Current count:', count);
+    }, 1000);
+
+    // 清理函数：组件卸载时清除定时器，防止内存泄漏
+    return () => {
+      clearInterval(timer);
+    };
+  }, []); // 空依赖数组：表示只在挂载时执行一次
+
+  // 渲染页面：展示 count 并提供更新按钮
+  return (
+    <>
+      <p>{count}</p>
+      <button onClick={() => setCount(count + 1)}>count + 1</button>
+    </>
+  );
+}
+
+```
+
+运行效果：
+
+- 点击按钮时，页面上的 count 会正常从 0→1→2... 递增，控制台的 console.log(count, '/////') 也会同步打印最新值；
+- 但是！定时器里的 console.log('Current count:', count) 却像被「冻住」了一样，始终打印 0，无论点多少次按钮都不变。
+
+分析
+
+- 执行 const [count, setCount] = useState(0)：React 在「堆内存」里保存 count 的初始值 0，当前函数作用域的 count 变量指向这个堆内存地址（类似指针）；
+- 执行 console.log(count, '/////')：直接访问当前作用域的 count，打印 0 /////；
+- 执行 useEffect 钩子：
+  - 因为依赖数组是空的 []，所以只在挂载时执行一次；
+  - 定时器的回调函数是嵌套在 useEffect 里的内部函数，它遵循「词法作用域」—— 书写时就绑定了「首次挂载的 App 函数作用域」；
+  - 回调函数引用了当前作用域的 count，形成闭包：即使 App 函数执行完出栈，回调依然保留对「首次作用域中 count」的引用（也就是指向堆内存中 0 的地址）；
+    
+
+```
+function Counter() {
+  const [count, setCount] = useState(0);
+  const handleClick = () => {
+    setCount(count + 1); // 依赖于当前渲染的 count
+  };
+
+  const handleAlert = () => {
+    setTimeout(() => {
+      alert('Current count: ' + count); // 🚨 陷阱所在！捕获的是定义时的 count
+    }, 3000);
+  };
+
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={handleClick}>Increment</button>
+      <button onClick={handleAlert}>Show Alert (in 3s)</button>
+    </div>
+  );
+}
+
+```
+
+**操作步骤与问题：**
+
+1. 初始渲染：`count = 0`。
+2. 点击 “Increment” 按钮 3 次，`count` 变为 3。
+3. 立即点击 “Show Alert” 按钮，并点击“Increment” 按钮 3 次
+4. 3 秒后，弹出的警告框显示的是 **`Current count: 3`**，而不是预期的 `6`！
+
+### 核心形成条件
+
+闭包陷阱的形成需要「三大要素」：
+
+- 存在嵌套函数结构（闭包基础） ：组件内部有定时器、setTimeout、事件回调、Promise 回调等，且这些内部函数引用了组件状态 / 变量；
+- 依赖固化（核心触发条件） ：useEffect、useCallback 等钩子用了「空依赖数组 []」或「不完整的依赖数组」，导致钩子只执行一次，内部闭包捕获的状态永远停留在某一时刻；
+- 词法作用域与重渲染的叠加 ：组件重渲染会创建新作用域，但闭包只认「创建时的作用域」，不会自动切换到新作用域，导致状态不一致。
+
+### 解决方案
+
+- 方案 1：将 count 加入 useEffect 依赖数组（最直观）
+- 方案 2：使用 useRef 保存最新 count（避免频繁更 新定时器）
+
+### 批处理和闭包
+
+```
+// 异步回调（Promise + setTimeout）导致的闭包问题
+function AsyncCallbackBug() {
+  const [count, setCount] = useState(0);
+
+  const handleClick = () => {
+    setCount(count + 1); // React 只是记录一条“把 count 从 X 改成 X+1”的更新，暂时不立刻重渲染组件
+    console.log('Click count:', count); 
+  };
+
+  const handleAsync = () => {
+    // 模拟一个 3 秒后才返回结果的异步请求
+    request
+      .get("/common/setTimeOut",)
+      .then((res) => {
+        // 🚨 问题：then 回调闭包里捕获的是调用 handleAsync 时的 count
+        alert('Async callback count (BUG): ' + count);
+      })
+      .catch((err) => {
+        console.log("login error", err);
+      });
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <p>AsyncCallbackBug Count: {count}</p>
+      <button onClick={handleClick}>Increment</button>
+      <button onClick={handleAsync} style={{ marginLeft: 8 }}>Async Request</button>
+      <div style={{ color: '#999', marginTop: 6 }}>说明：先点 Async Request，再在 3 秒内多次点击 Increment，弹框会显示旧的 count。</div>
+    </div>
+  );
+}
+```
+
+- 批处理
+
+  ```
+  const handleClick = () => {
+    setCount(count + 1);      // 1. 这里只是把“要把 count+1”这件事，放进 React 的更新队列
+    console.log('Click count:', count); // 2. 这里还是当前这次渲染里的旧 count
+  };
+  ```
+
+  在这一次点击事件里发生的是：
+
+  1. React 先执行 [handleClick](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 函数；
+  2. 遇到setCount(count + 1)：
+     - React 只是记录一条“把 count 从 X 改成 X+1”的更新，**暂时不立刻重渲染组件**；
+  3. 继续往下执行console.log('Click count:', count)：
+     - 这里读取的是这次渲染闭包里的 [count](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html)，还没应用上一步的更新，所以是旧值；
+  4. 整个事件处理结束后，React 看这轮事件里所有的 `setState`，**一起批量计算新 state，然后触发一次渲染**。
+
+- 闭包
+
+  ```
+  const handleAsync = () => {
+    // 1. 这里的 count 是当前这次渲染里的值
+    request
+      .get("/common/setTimeOut")
+      .then((res) => {
+        // 2. then 这个回调在定义的那一刻，就把上面的 count 闭包进来了
+        alert('Async callback count (BUG): ' + count);
+      });
+  };
+  ```
+
+  操作顺序是这样的：
+
+  1. 你点击 “Async Request” 时，组件处在某一轮渲染，[count](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 比如是 0；
+  2. [handleAsync](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 在这轮渲染里执行，`.then(() => {...})` 这个函数被创建，它的闭包里记录的是当时的 [count = 0](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html)；
+  3. 接下来你点 “Increment”，`setCount(count + 1)` 触发多次重新渲染，UI 上的 [count](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 变成了 1、2、3……，这是新的渲染和新的 [count](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html)；
+  4. 一段时间后，网络请求返回，[.then](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 里的回调才被调用，但它用的还是“创建那一刻”的闭包环境，所以看到的还是旧的 [count](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html)（当时是 0）。
+
+  也就是说：
+
+  - React 的状态早就更新完了（UI 上已经是最新值），
+  - 之所以 alert 出旧值，是 **then 回调对应的那个函数是“旧渲染里创建的”，闭包里装的是旧的 count**。
+
+### 案例
+
+protable中**Column**配置，操作项使用动态接口函数配置，tab切换时动态切换接口函数
+
+- 问题：接口函数还是之前的接口
+
+- 原因：apiConfig 使用的是闭包中的旧值，而不是最新的状态值。这是因为 **React 的闭包特性导致的**
+
+  ```
+  const [apiConfig, setApiConfig] = React.useState(apis[activeTab.key]);
+  ```
+
+- 解决：
+
+  ```
+  const [apiConfig, setApiConfig] = React.useState(apis[activeTab.key]);
+  const apiConfigRef = React.useRef(apis[activeTab.key]);
+  
+  // 同步更新 ref
+  React.useEffect(() => {
+  	apiConfigRef.current = apiConfig;
+  }, [apiConfig]);
+  ```
+
+  
 
 # 组件
 
@@ -2205,245 +2543,7 @@ http://www.ruanyifeng.com/blog/2019/09/react-hooks.html
 
 **React Hooks 的意思是，组件尽量写成纯函数，如果需要外部功能和副作用，就用钩子把外部代码"钩"进来。**而React Hooks 就是我们所说的“钩子”。
 
-## useState():状态钩子
 
-用于为函数组件引入状态（state）。纯函数不能有状态，所以把状态放在钩子里面。
-
-### 使用
-
-#### 基本使用
-
-```
-const [state, setState] = useState(initialState);
-```
-
-- `initialState`: 状态的初始值，可以是任何类型（数字、字符串、对象、数组、函数等）
-  - 如果传递函数作为 `initialState`，则它将被视为 **初始化函数**。它应该是纯函数，不应该接受任何参数，并且应该返回一个任何类型的值。当初始化组件时，React 将调用你的初始化函数，并将其返回值存储为初始状态
-
-- `state`: 当前的状态值
-- `setState`: 更新状态的函数
-
-#### 更新状态方式
-
-1. **直接设置新值**:
-
-   ```
-   setCount(10);
-   ```
-
-2. **基于前一个状态更新**:
-
-   ```
-   setCount(prevCount => prevCount + 1);
-   ```
-
-   假设 `age` 为 `42`，这个处理函数三次调用 `setAge(age + 1)`：
-
-   ```
-   function handleClick() {
-     setAge(age + 1); // setAge(42 + 1)
-     setAge(age + 1); // setAge(42 + 1)
-     setAge(age + 1); // setAge(42 + 1)
-   }
-   ```
-
-   然而，点击一次后，`age` 将只会变为 `43` 而不是 `45`！这是因为调用 `set` 函数 [不会更新](https://react.docschina.org/learn/state-as-a-snapshot) 已经运行代码中的 `age` 状态变量。因此，每个 `setAge(age + 1)` 调用变成了 `setAge(43)`。
-
-   为了解决这个问题，**你可以向 `setAge` 传递一个 \*更新函数\***，而不是下一个状态：
-
-   ```
-   function handleClick() {
-     setAge(a => a + 1); // setAge(42 => 43)
-     setAge(a => a + 1); // setAge(43 => 44)
-     setAge(a => a + 1); // setAge(44 => 45)
-   }
-   ```
-
-3. **更新对象或数组**:
-
-   ```
-   const [user, setUser] = useState({ name: 'John', age: 30 });
-   // 🚩 不要像下面这样改变一个对象：
-   user.age = 'Taylor';
-   // 通过创建一个新对象来替换整个对象
-   setUser(prevUser => ({ ...prevUser, age: 31 }));
-   ```
-
-##### mutation
-
-在 React 中，"mutation"（突变）指的是直接修改数据或状态，而不是创建新的副本。理解这个概念对于正确管理 React 的状态非常重要。
-
-Mutation 是指直接更改对象或数组的内容，而不是创建一个新的对象或数组。在 React 中，**直接突变状态是被禁止的**，因为这会导致不可预测的行为和性能问题。
-
-**为什么 React 反对 Mutation**
-
-1. **不可预测性**：直接突变可能导致组件不按预期重新渲染
-2. **性能优化**：React 依赖不可变性来高效地确定何时需要重新渲染
-3. **时间旅行调试**：像 Redux 这样的工具依赖不可变性来实现调试功能
-4. **并发模式**：React 的未来功能依赖于状态更新的可预测性
-
-**避免 Mutation 的工具**
-
-1. **展开运算符 (`...`)**：用于对象和数组的浅拷贝
-
-2. **数组方法**：`map`, `filter`, `concat`, `slice` 等不改变原数组的方法
-
-   | 避免使用 (会改变原始数组) | 推荐使用 (会返回一个新数组）  |                                                              |
-   | ------------------------- | ----------------------------- | ------------------------------------------------------------ |
-   | 添加元素                  | `push`，`unshift`             | `concat`，`[...arr]` 展开语法（[例子](https://react.docschina.org/learn/updating-arrays-in-state#adding-to-an-array)） |
-   | 删除元素                  | `pop`，`shift`，`splice`      | `filter`，`slice`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#removing-from-an-array)） |
-   | 替换元素                  | `splice`，`arr[i] = ...` 赋值 | `map`（[例子](https://react.docschina.org/learn/updating-arrays-in-state#replacing-items-in-an-array)） |
-   | 排序                      | `reverse`，`sort`             | 先将数组复制一份（[例子](https://react.docschina.org/learn/updating-arrays-in-state#making-other-changes-to-an-array)） |
-
-3. **第三方库**：
-
-   - Immer：简化不可变更新逻辑
-
-     ```
-     import produce from 'immer';
-     
-     const [user, setUser] = useState({
-       name: 'Alice',
-       profile: { age: 25 }
-     });
-     
-     // 使用 Immer 可以"看似"直接修改，但实际上创建了新对象
-     setUser(produce(draft => {
-       draft.profile.age = 26;
-     }));
-     ```
-
-   - Immutable.js：提供持久化数据结构
-
-### 原理
-
-```jsx
-//useState模拟1.0
-//因为每次调用myUseState时会重置state的值。经过改进，必须将state写在函数的外面。
-let _state;
-function myUseState(initialValue) {
-  _state = _state===undefined? initialValue:_state;
-  const setState = (newValue) => {
-    _state = newValue; //更新state值，
-    render(); //触发重新渲染
-  };
-  return [_state, setState];
-}
-/* 粗糙的渲染 */
-const render = () => {
-  ReactDOM.render(<App />, document.getElementById("root"));
-};
-// 使用myUseState
-const App = () => {
-  const [n, setN] = myUseState(0);
-  return (
-	  <div classNam="App">
-		 <p>n:{n}</p>
-		 <button onClick={()=>{setN(n+1)}}>n+1</button> 
-	  </div>
-	  );
-};
-ReactDOM.render(<App />, document.getElementById("root"));
-
-```
-
-```jsx
-//一个组件用了两个useState怎么办？useState模拟2.0
-let _state=[];
-let index=0;
-function myUseState(initialValue) {
-  int currentIndex=index;	//引入中间变量currentIndex就是为了保存当前操作的下标index。
-  _state[currentIndex] = _state[currentIndex]===undefined? initialValue:_state[currentIndex];
-  const setState = (newValue) => {
-    _state[currentIndex] = newValue; 
-    render(); 
-  };
-  index+=1;// 每次更新完state值后，index值+1
-  return [_state[currentIndex], setState];
-}
-const render = () => {
-  index=0;	//重要的一步，必须在渲染前后将index值重置为0，不然index会一种增加1
-  ReactDOM.render(<App />, document.getElementById("root"));
-};
-// 使用myUseState
-const App = () => {
-  const [n, setN] = myUseState(0);
-  const [m, setM] = myUseState(0);
-  return (
-	  <div classNam="App">
-		 <p>n:{n}</p>
-		 <button onClick={()=>{setN(n+1)}}>n+1</button> 
-		 <p>m:{m}</p>
-		 <button onClick={()=>{setM(m+1)}}>n+1</button> 
-	  </div>
-	  );
-};
-ReactDOM.render(<App />, document.getElementById("root"));
-```
-
-- 在正常的react的事件流里（如onClick等）
-
-  - setState和useState是**异步执行**的（不会立即更新state的结果，所以console数据没有更新）
-    
-  - 多次执行setState和useState，只会调用一次重新渲染render
-  
-  - 不同的是，setState会进行state的合并，而useState会进行state的覆盖
-  
-- 在setTimeout，Promise.then等异步事件中
-
-  - setState和useState是**同步执行**的（立即更新state的结果，**react17之后还是会批处理**）
-
-  - 多次执行setState和useState，每一次的执行setState和useState，都会调用一次render
-
-### 批处理
-
-batch批量处理：在每次执行 useState 的时候，组件都要重新 render 一次，会造成无效渲染，浪费时间（因为最后一次渲染会覆盖掉前面所有的渲染效果）。 所以 react 会把一些可以一起更新的 useState/setState 放在一起，只渲染一次。
-
-在React16版本及以前，React 会对所有React内部触发的事件监听函数中的更新（比如onClick函数）做批处理，如果是绕过react组件，如addEventListenr，或者异步调用如异步请求或者setTimeout等，不会进行批处理。在React17版本及之后，React会对所有的更新做批处理。
-
-**unstable_batchedUpdates手动批处理**
-
-```jsx
-  function handleClick3() {
-    // 手动批处理
-    setTimeout(() => {
-      unstable_batchedUpdates(() => {
-        setCount1(count1 + 1);
-        console.log(count1);
-        setFlag((f) => !f);
-      });
-    }, 10);
-    // React 只会在最后重新渲染一次（这是批处理！）
-  }
-```
-
-### 避免重复创建初始状态 
-
-React 只在初次渲染时保存初始状态，后续渲染时将其忽略。
-
-```
-function TodoList() {
-
-  const [todos, setTodos] = useState(createInitialTodos());
-
-  // ...
-```
-
-尽管 `createInitialTodos()` 的结果仅用于初始渲染，但你仍然在每次渲染时调用此函数。如果它创建大数组或执行昂贵的计算，这可能会浪费资源。
-
-为了解决这个问题，你可以将它 **作为初始化函数传递给** `useState`：
-
-```
-function TodoList() {
-
-  const [todos, setTodos] = useState(createInitialTodos);
-
-  // ...
-```
-
-请注意，你传递的是 `createInitialTodos` **函数本身**，而不是 `createInitialTodos()` 调用该函数的结果。如果将函数传递给 `useState`，React 仅在初始化期间调用它。
-
-React 在开发模式下可能会调用你的 [初始化函数](https://react.docschina.org/reference/react/useState#my-initializer-or-updater-function-runs-twice) 两次，以验证它们是否是 [纯函数](https://react.docschina.org/learn/keeping-components-pure)。
 
 ## useContext():共享状态钩子
 
@@ -3933,6 +4033,8 @@ function App(props) {
 | react-router-redux  | React Router 和 Redux 的集成。                               |
 | eact-router-config  | 提供可配置化的路由                                           |
 
+
+
 ## 路由创建
 
 ### 组件创建（V5）
@@ -3988,35 +4090,46 @@ const router = createBrowserRouter([
 </RouterProvider>
 ```
 
-### 嵌套路由
+## 路由嵌套和路由懒加载
 
-> 注意：如果在父路由中开启 exact 匹配，就会导致子组件加载不出来
+### v5
+
+https://zh-hans.reactjs.org/docs/code-splitting.html
+
+**Suspense和lazy**
+
+如果我们项目有三个模块，用户管理（UserManage）、资产管理（AssetManage）、考勤管理（AttendanceManage）。当我们进入首页的时候由于没有进入任何一个模块，为了提高响应效率是不需要进行模块资源加载的，同时当我们进入用户管理的时候只需要加载用户管理路由对应的模块资源，进入其他模块亦然。这时候我们就需要对代码进行拆分，React.lazy可以结合Router来对模块进行懒加载。
 
 ```jsx
-//根路由
-<Switch>
-    <Route path="router" component={Router}></Route>
-</Switch>
+import { BrowserRouter as Router, Route, Switch } from 'react-router-dom';
+import React, { Suspense, lazy } from 'react';
 
-//Router.jsx
-<span>router</span>
-<ul>
-    <li>
-        <Link to="/router/second/1">1</Link>
-    </li>
-    <li>
-        <Link to="/router/second/12">2</Link>
-    </li>
-</ul>
-//子路由的配置分散到各组件中
-<Switch>
-    <Route exact path="/router/second/:id" component={Second}></Route>
-</Switch>
+// 懒加载引入组件 在用到路由组件时才发送请求
+// 通过React的lazy函数配合import()函数动态加载路由组件 ===> 路由组件代码会被分开打包 
+
+const Home = lazy(() => import('./routes/Home'));
+const UserManage = lazy(() => import('./routes/UserManage'));
+const AssetManage = lazy(() => import('./routes/AssetManage'));
+const AttendanceManage = lazy(() => import('./routes/AttendanceManage'));
+
+const App = () => (
+  <Router>
+     {/* 用Suspense包含所有需要注册的路由 fallback为响应未回来时显示的内容 */}
+    <Suspense fallback={<div>Loading...</div>}>
+      <Switch>
+        <Route exact path="/" component={Home}/>
+        <Route path="/userManage" component={UserManage}/>
+        <Route path="/assetManage" component={AssetManage}/>
+        <Route path="/attendanceManage" component={AttendanceManage}/>
+      </Switch>
+    </Suspense>
+  </Router>
+)
 ```
 
-### 路由懒加载
+### v6
 
-[路由懒加载](https://so.csdn.net/so/search?q=路由懒加载&spm=1001.2101.3001.7020)是指路由的 js 资源只有在背访问时才会动态获取，为了优化项目首次打开的时间。
+[路由懒加载](https://so.csdn.net/so/search?q=路由懒加载&spm=1001.2101.3001.7020)是指路由的 js 资源只有在被访问时才会动态获取，为了优化项目首次打开的时间。
 
 ```jsx
 import { createBrowserRouter } from 'react-router-dom'
@@ -4076,41 +4189,6 @@ const router = createBrowserRouter([
 ])
 
 export default router
-```
-
-### 路由嵌套路由懒加载
-
-https://zh-hans.reactjs.org/docs/code-splitting.html
-
-**Suspense和lazy**
-
-如果我们项目有三个模块，用户管理（UserManage）、资产管理（AssetManage）、考勤管理（AttendanceManage）。当我们进入首页的时候由于没有进入任何一个模块，为了提高响应效率是不需要进行模块资源加载的，同时当我们进入用户管理的时候只需要加载用户管理路由对应的模块资源，进入其他模块亦然。这时候我们就需要对代码进行拆分，React.lazy可以结合Router来对模块进行懒加载。
-
-```jsx
-import { BrowserRouter as Router, Route, Switch } from 'react-router-dom';
-import React, { Suspense, lazy } from 'react';
-
-// 懒加载引入组件 在用到路由组件时才发送请求
-// 通过React的lazy函数配合import()函数动态加载路由组件 ===> 路由组件代码会被分开打包 
-
-const Home = lazy(() => import('./routes/Home'));
-const UserManage = lazy(() => import('./routes/UserManage'));
-const AssetManage = lazy(() => import('./routes/AssetManage'));
-const AttendanceManage = lazy(() => import('./routes/AttendanceManage'));
-
-const App = () => (
-  <Router>
-     {/* 用Suspense包含所有需要注册的路由 fallback为响应未回来时显示的内容 */}
-    <Suspense fallback={<div>Loading...</div>}>
-      <Switch>
-        <Route exact path="/" component={Home}/>
-        <Route path="/userManage" component={UserManage}/>
-        <Route path="/assetManage" component={AssetManage}/>
-        <Route path="/attendanceManage" component={AttendanceManage}/>
-      </Switch>
-    </Suspense>
-  </Router>
-)
 ```
 
 
@@ -4183,16 +4261,18 @@ const First = () => <p>页面一的页面内容</p>
 </Router>
 ```
 
-- <a id="exact">exact</a> 是否进行精确匹配，路由 `/a` 可以和 `/a/、/a` 匹配
+- <a id="exact">exact</a> 是否进行精确匹配
 
-  当exact为false时，根据路由匹配所有组件，例如/a/b/c 能匹配到/、/a、/a/b、/a/b/c 且匹配还是按顺序的
-  
-  例如路由设置的前后顺序为:
-  1./ ；
-  2./a；
-  3./a/b ; 
-  4./a/b/c
-  且前3个路径都没有设置 exact，这样前3个组件**都会被渲染**并且默认将2当作1的子页面，3当作2的子页面
+  当exact为false时，路由 `/a` 可以和 `/a/、/a` 匹配。例如/a/b/c 能匹配到/、/a、/a/b、/a/b/c 且匹配还是按顺序的
+
+  路由设置的前后顺序为:
+
+  - 1./ ；
+  - 2./a；
+  - 3./a/b ; 
+  - 4./a/b/c
+
+  且前3个路径都没有设置 exact，这样前3个组件**都会被渲染**并且默认将2当作1的子页面，3当作2的子页面
 
 - `strict` 是否进行严格匹配，指明路径只匹配以斜线结尾的路径，路由`/a`可以和`/a`匹配，不能和`/a/`匹配，相比 `exact` 会更严格些
 
@@ -4221,7 +4301,9 @@ const First = () => <p>页面一的页面内容</p>
     `**` 匹配任意字符，直到下一个`/`、`?`、`#`为止。匹配方式是贪婪模式。
 
 - `component` 表示路径对应显示的组件
+
 - `location (object)` 除了通过 path 传递路由路径，也可以通过传递 location 对象可以匹配
+
 - `sensitive (boolean)` 匹配路径时，是否区分大小写
 
 ### 链接
@@ -4301,7 +4383,7 @@ import { Navigate } from 'react-router-dom';
 
 ### IndexRoute和IndexRedirect
 
-#### Index Routes
+#### Index Routes默认页
 
 通常情况下，我们会建立如下情况的路由：
 
@@ -4328,7 +4410,7 @@ import { Navigate } from 'react-router-dom';
 
 如此配置后，我们再次访问 `/` 路由，你会发现页面渲染了 Home 组件的内容。这就是 IndexRoute 的功能，指定一个路由的默认页。
 
-#### Index Redirects
+#### Index Redirects重定向
 
 上面这种情况比较常见，还有一种非常常见的方式就是当我们尝试访问 `/` 这个路由时，我们想让其直接跳转到 ‘/Accounts’，直接免去了默认页 Home，这样来的更加直接。由此我们就需要 `IndexRedirect` 功能。考虑如下路由：
 
@@ -4350,8 +4432,6 @@ import { Navigate } from 'react-router-dom';
 
 - IndexRoute 一般情况下用于设计一个默认页且不改变 URL 地址，而 IndexRedirect 则是跳转默认地址且地址会发生改变。
 - IndexRoute 指定一个组件作为默认页，而 IndexRedirect 指定一个路由地址作为跳转地址。
-
-
 
 ### BrowserRouter
 
@@ -4473,7 +4553,7 @@ function Chat(props) {
 
 ### 路由传参
 
-#### param动态路由传参 
+#### 动态路由传参 
 
 ```jsx
 <Route path='/path/:name' component={Path}/>
@@ -4867,8 +4947,6 @@ function App() {
 
 ```
 
-## 实战
-
 
 
 # 性能优化
@@ -5119,6 +5197,16 @@ export type PulldownSearchProps = React.PropsWithChildren<{
 ```
 
 
+
+## 问题
+
+- JSX 元素类型“Card”不具有任何构造签名或调用签名。
+
+  react和antd的版本不兼容
+
+  - antd 5 在运行时其实也支持 React 17，但它的类型和生态更偏向 React 18，像你刚才遇到的 Card 类型问题就需要自己打补丁。
+  - 所以如果不想折腾 TS 类型，React 17 + antd 4.x 是更稳的组合；
+    如果坚持 antd 5，就像现在这样用 React 17 + 额外 d.ts 覆盖类型即可。
 
 # NEXT
 

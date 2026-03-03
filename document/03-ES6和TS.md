@@ -7065,7 +7065,15 @@ f()
 
 
 
-### 捕获promise内部报错
+### 未处理的Promise拒绝
+
+https://baijiahao.baidu.com/s?id=1825824687377982040&wfr=spider&for=pc
+
+> axios Promise.reject 出现Uncaught runtime errors报红页面
+
+在使用axios进行HTTP请求时，可能会遇到“未捕获的 Promise 拒绝”的问题。这种问题通常发生在axios的请求失败了但没有被正确处理，导致Promise没有被捕获或处理。
+
+#### 捕获promise内部报错
 
 ```js
 const a = () => {
@@ -8452,21 +8460,6 @@ type Meth = keyof typeof HttpMethod; // "Get" | "Post"
 
 
 
-### InstanceType 
-
-InstanceType 是一个内置的工具类型，用于获取一个类的实例类型。
-
-```
-class MyClass {
-  x = 0;
-  y = 0;
-}
- 
-type Instance = InstanceType<typeof MyClass>; // MyClass的实例类型
- 
-let instance: Instance = new MyClass(); // 这是正确的
-```
-
 ### Record
 
 #### 定义和用途
@@ -8543,7 +8536,24 @@ let obj: Foo = { bar: 'value' }; // 使用Foo类型定义一个对象
 
 在这个例子中，`import type { Foo } from './someTypes';`仅导入Foo类型的声明。
 
-### `Partial` 
+### InstanceType类类型
+
+InstanceType 是一个内置的工具类型，用于获取一个类的实例类型。
+
+```
+class MyClass {
+  x = 0;
+  y = 0;
+}
+ 
+type Instance = InstanceType<typeof MyClass>; // MyClass的实例类型
+ 
+let instance: Instance = new MyClass(); // 这是正确的
+```
+
+
+
+### Partial可选
 
 `Partial<T>` 是 TypeScript 内置的**实用类型**，它可以将类型 `T` 的所有属性都变为**可选**的。
 
@@ -8569,7 +8579,7 @@ interface PartialUser {
 }
 ```
 
-### **Omit**
+### **Omit省略**
 
 ```
 Omit<Type, Keys>
@@ -8651,7 +8661,7 @@ type PublicUser = Omit<User, 'password' | 'email'>;
   ```
 
 
-### `Pick`
+### Pick选择
 
 `Pick` 是 TypeScript 中的一个内置实用类型，用于从现有类型中选择部分属性来创建新类型。
 
@@ -8686,7 +8696,23 @@ const user: UserBasicInfo = {
 };
 ```
 
+### PropertyKey 
 
+`PropertyKey` 是 TypeScript 中的一个**内置类型别名**，定义如下：
+
+```
+typescript
+
+type PropertyKey = string | number | symbol;
+```
+
+它表示 JavaScript 对象中所有可能的属性键类型：
+
+1. `string` - 字符串类型的键，例如 `'name'` 或 `"age"`
+2. `number` - 数字类型的键，例如 `1` 或 `42`（在数组或对象中）
+3. `symbol` - Symbol 类型的键，例如 `Symbol('myKey')`
+
+当你使用像 `obj[key]` 这样的语法访问对象属性，或者使用 `key in obj` 进行属性检查，或者使用 `Object.keys()` 等方法时，就会涉及到 `PropertyKey` 类型。
 
 ## 基础类型
 
@@ -8941,7 +8967,6 @@ void 作为类型表示一个空类型，代表“这里有类型，但是个空
 
 ```
 type UnionWithNever = "linbudu" | 599 | true | void | never;
-
 ```
 
 将鼠标悬浮在类型别名之上，你会发现这里显示的类型是`"linbudu" | 599 | true | void`。never 类型被直接无视掉了，而 void 仍然存在。
@@ -8956,31 +8981,42 @@ type UnionWithNever = "linbudu" | 599 | true | void | never;
 #### never类型的应用场景
 
 1. ‌**异常处理**‌：在异常处理函数中，可以使用`never`类型明确标注抛出异常的函数返回类型，这样编译器会提示调用该函数后的代码不可达，从而避免无效代码的编写。
+
+   ```
+   function error(msg: string): never {
+       throw new Error(msg);
+   }
+   ```
+
+   
+
 2. ‌**无限循环控制流**‌：用于表示那些永不终止的循环，如事件循环或守护进程。
+
+   ```
+   function loop(): never {
+       while (true) {
+           // 处理事件队列
+       }
+   }
+   ```
+
+   
+
 3. ‌**穷尽性检查**‌：在处理联合类型的场景中，使用`never`类型可以在编译时检查是否覆盖了所有可能的分支，确保代码的完整性。
 
-```
-function error(msg: string): never {
-    throw new Error(msg);
-}
+   ```
+   type HttpMethod = 'GET' | 'POST' | 'PUT';
+   function handleRequest(method: HttpMethod) {
+       switch (method) {
+           case 'GET': return fetchData();
+           case 'POST': return submitData();
+           case 'PUT': return updateData();
+           default: const exhaustiveCheck: never = method; // 类型守卫，确保覆盖所有可能
+       }
+   }
+   ```
 
-function loop(): never {
-    while (true) {
-        // 处理事件队列
-    }
-}
-
-type HttpMethod = 'GET' | 'POST' | 'PUT';
-function handleRequest(method: HttpMethod) {
-    switch (method) {
-        case 'GET': return fetchData();
-        case 'POST': return submitData();
-        case 'PUT': return updateData();
-        default: const exhaustiveCheck: never = method; // 类型守卫，确保覆盖所有可能
-    }
-}
-
-```
+   
 
 
 

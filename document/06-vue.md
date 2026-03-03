@@ -2005,7 +2005,7 @@ export default {
 
 - v-model（不推荐）
 
-  在Vue2中，**当在自定义组件上使用`v-model`时，如果传入的是数值类型(number)，Vue会默认将其转换为字符串类型(string)。**这是因为`v-model`本质上是一个语法糖，它默认使用`value`属性和`input`事件，而HTML元素的属性值总是字符串。
+  在Vue2中，~~**当在自定义组件上使用`v-model`时，如果传入的是数值类型(number)，Vue会默认将其转换为字符串类型(string)。**~~这是因为`v-model`本质上是一个语法糖，它默认使用`value`属性和`input`事件，而HTML元素的属性值总是字符串。
 
   ```
   <com1 v-model="num"></com1>
