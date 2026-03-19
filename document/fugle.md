@@ -12,6 +12,20 @@ LiMing@ifugle.onaliyun.com
 
 ## 难点
 
+- useEffect
+
+  ![image-20260311224443368](img/公司/fugle/image-20260311224443368.png)
+
+  祖-父-子组件。runMapData在父组件中，runMapData会更新状态。runMapData受祖子组件中的筛选条件变化执行。
+
+  useEffect监听祖组件的状态调用runMapData，同时父组件会把runMapData给到子组件也是在useEffect让它调用。
+
+  - 初始化的时候一共执行三次
+    - 父组件useEffect首次执行
+    - 子组件useEffect首次执行，并且初始化会改变依赖项的值再执行一次
+
+  - 这里用`useUpdateEffect` （用法等同于 `useEffect`，但是会忽略首次执行，只在依赖更新时执行）防止首次执行的影响
+
 - 云服务前端部署  网络问题卡死 。
 
   <img src="img/公司/fugle/image-20260228145208422.png" alt="image-20260228145208422" style="zoom: 25%;" />
@@ -73,8 +87,6 @@ LiMing@ifugle.onaliyun.com
   - 使用portal，默认是注入在根app上的，滚动时候因为它是在外层，所以显示在外层。
 
     feat: eqa-select防止注入在根app上的，导致父容器滚动，下拉框在外部能看到
-
-    
 
     <img src="公司/fugle/image-20250801102351901.png" alt="image-20250801102351901" style="zoom:50%;" />
 

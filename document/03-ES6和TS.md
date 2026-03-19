@@ -9087,8 +9087,16 @@ let strLength: number = (someValue as string).length;
 
 TypeScript 3.4 引入了一种新的字面量构造方式，也称为 const 断言。当我们使用 const 断言构造新的字面量表达式时，我们可以向编程语言发出以下信号
 
-- 表达式中的任何字面量类型都不应该被扩展；
+- **表达式中的任何字面量类型都不应该被扩展；**
+
+  ```
+  type: 'input' as const,
+  ```
+
+  如果不加 `as const`，TS 可能会把它推断成 `type: string`（或 `'input' | string`），这会导致后续类型检查（比如 `FormPro` 的字段配置）不能准确识别它是具体的 `'input'` 类型。
+
 - **对象字面量的属性**，将使用 `readonly` 修饰；
+
 - **数组字面量**将变成 `readonly` 元组。
 
 下面我们来举一个 const 断言的例子：

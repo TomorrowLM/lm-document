@@ -2258,48 +2258,36 @@ function shallowEqual(objA: mixed, objB: mixed): boolean {
 
 #### memo (用于函数组件)
 
+https://www.runoob.com/react/react-memo.html
+
 **`React.memo` 仅检查 props 变更。** 
 
-https://blog.csdn.net/u013165804/article/details/143937372
+适用于以下场景：
 
-https://www.runoob.com/react/react-memo.html
+- **静态数据展示**：组件接收的 `props` 很少变化，但组件本身较为复杂，重新渲染成本高。
+- **性能优化**：在大列表或表格中，每个项目都是独立的组件，使用 `React.memo` 可以避免不必要的重新渲染。
+- **避免深度相等检查**：自定义比较函数可以避免深度相等检查，特别是在 `props` 包含大量数据时。
+
+注意事项
+
+- **浅比较**：默认情况下，`React.memo` 进行浅比较，这意味着它只会比较 `props` 的一级内容，嵌套对象需要自定义比较函数。
+- **状态和上下文**：`React.memo` 只关注 `props` 的变化，组件内部的状态和上下文的变化不会触发重新渲染。
 
 #### useMemo
 
 **useMemo(factory, [dependencies])** - 缓存计算值，以便在依赖项变化时避免重复计算。
 
-实例
-
+```
 import React, { useMemo } from 'react';
 
-**function** ExpensiveComponent({ data }) {
- **const** expensiveValue = useMemo(() => {
-  **return** computeExpensiveValue(data);
+function ExpensiveComponent({ data }) {
+ const expensiveValue = useMemo(() => {
+  return computeExpensiveValue(data);
  }, [data]);
 
- **return** <div>Expensive value: {expensiveValue}</div>;
+ return <div>Expensive value: {expensiveValue}</div>;
 }
-
-**useRef(initialValue)** - 创建一个持久化的引用，可用于访问 DOM 元素或缓存任何可变值。
-
-实例
-
-import React, { useRef, useEffect } from 'react';
-
-**function** TextInputWithFocusButton() {
- **const** inputRef = useRef(**null**);
-
- useEffect(() => {
-  inputRef.current.focus();
- }, []);
-
- **return** (
-  <>
-   <input ref={inputRef} type="text" />
-   <button onClick={() => inputRef.current.focus()}>Focus Input</button>
-  </>
- );
-}
+```
 
 #### useCallback
 
@@ -2521,7 +2509,7 @@ export default function AHooks(props) {
 }
 ```
 
-# Hooks函数
+# Hooks
 
 http://www.ruanyifeng.com/blog/2019/09/react-hooks.html
 
@@ -2770,7 +2758,7 @@ useEffect(()  =>  {
 
 **tips**
 
-- **它在第一次渲染之后*和*每次更新之后都会执行**
+- **它在第一次渲染之后和每次更新之后都会执行**
 
 - 使用`useEffect()`时，有一点需要注意。如果有多个副效应，应该调用多个`useEffect()`，而不应该合并写在一起。
 
@@ -3090,6 +3078,209 @@ useWhyDidYouUpdate
 useLockBodyScroll
 
 有时候当一些特别的组件在你们的页面中展示时，你想要阻止用户滑动你的页面（想一想modal框或者移动端的全屏菜单）。
+
+
+
+## ahooks
+
+### useRequest
+
+#### 生命周期
+
+`useRequest` 提供了以下几个生命周期配置项，供你在异步函数的不同阶段做一些处理。
+
+- `onBefore`：请求之前触发
+- `onSuccess`：请求成功触发
+- `onError`：请求失败触发
+- `onFinally`：请求完成触发
+
+#### run
+
+`run` 与 `runAsync` 的区别在于：
+
+- `run` 是一个普通的同步函数，我们会自动捕获异常，你可以通过 `options.onError` 来处理异常时的行为。
+
+- `runAsync` 是一个返回 `Promise` 的异步函数，如果使用 `runAsync` 来调用，则意味着你需要自己捕获异常。
+
+  ```
+  runAsync().then((data) => {
+    console.log(data);
+  }).catch((error) => {
+    console.log(error);
+  })
+  ```
+
+#### refresh
+
+`useRequest` 提供了 `refresh` 和 `refreshAsync` 方法，使我们可以使用上一次的参数，重新发起请求。
+
+假如在读取用户信息的场景中
+
+1. 我们读取了 ID 为 1 的用户信息 `run(1)`
+2. 我们通过某种手段更新了用户信息
+3. 我们想重新发起上一次的请求，那我们就可以使用 `refresh` 来代替 `run(1)`，这在复杂参数的场景中是非常有用的
+
+
+
+#### 取消响应
+
+`useRequest` 提供了 `cancel` 函数，用于**忽略**当前 promise 返回的数据和错误
+
+**注意：调用 `cancel` 函数并不会取消 promise 的执行**
+
+#### Ready
+
+通过设置 `options.ready`，可以控制请求是否发出。当其值为 `false` 时，请求永远都不会发出。
+
+其具体行为如下：
+
+1. 当 `manual=false` 自动请求模式时，每次 `ready` 从 `false` 变为 `true` 时，都会自动发起请求，会带上参数 `options.defaultParams`。
+2. 当 `manual=true` 手动请求模式时，只要 `ready=false`，则通过 `run/runAsync` 触发的请求都不会执行。
+
+#### 缓存
+
+如果设置了 `options.cacheKey`，`useRequest` 会将当前请求成功的数据缓存起来。下次组件初始化时，如果有缓存数据，我们会优先返回缓存数据，然后在背后发送新请求，也就是 SWR 的能力。
+
+你可以通过 `options.staleTime` 设置数据保持新鲜时间，在该时间内，我们认为数据是新鲜的，不会重新发起请求。
+
+你也可以通过 `options.cacheTime` 设置数据缓存时间，超过该时间，我们会清空该条缓存数据。
+
+```
+import { useBoolean } from 'ahooks';
+import Mock from 'mockjs';
+import React from 'react';
+import { useRequest } from 'ahooks';
+
+const getArticle = async () => {
+  console.log('cacheKey-staleTime');
+  return new Promise<{ data: string; time: number }>((resolve) => {
+    setTimeout(() => {
+      resolve({
+        data: Mock.mock('@paragraph'),
+        time: Date.now(),
+      });
+    }, 1000);
+  });
+};
+
+const Article = () => {
+  const { data, loading } = useRequest(getArticle, {
+    cacheKey: 'staleTime-demo',
+    staleTime: 5000,
+  });
+  if (!data && loading) {
+    return <p>Loading</p>;
+  }
+  return (
+    <>
+      <p>Background loading: {loading ? 'true' : 'false'}</p>
+      <p>Latest request time: {data?.time}</p>
+      <p>{data?.data}</p>
+    </>
+  );
+};
+
+export default () => {
+  const [state, { toggle }] = useBoolean();
+  return (
+    <div>
+      <button type="button" onClick={() => toggle()}>
+        show/hidden
+      </button>
+      {state && <Article />}
+    </div>
+  );
+};
+```
+
+##### 数据共享
+
+同一个 `cacheKey` 的内容，在全局是共享的，这会带来以下几个特性：
+
+- 请求 `Promise` 共享：相同的 `cacheKey` 同时只会有一个在发起请求，后发起的会共用同一个请求 `Promise`
+- 数据同步：当某个 `cacheKey` 发起请求时，其它相同 `cacheKey` 的内容均会随之同步
+
+```
+  const { data, loading, refresh } = useRequest(getArticle, {
+    cacheKey: 'cacheKey-share',
+  });
+```
+
+### useControllableValue
+
+> 可用在自定义弹窗组件（受控组件）
+
+在某些组件开发时，我们需要组件的状态既可以自己管理，也可以被外部控制，`useControllableValue` 就是帮你管理这种状态的 Hook。
+
+```
+import { Modal, Button } from 'antd';
+import { useControllableValue } from 'ahooks';
+
+const ControllableModal = ({ children, ...props }) => {
+  // 核心代码：这一行就帮你处理好了 visible 和 onVisibleChange 的逻辑
+  const [visible, setVisible] = useControllableValue(props, {
+    valuePropName: 'visible',    // 指定受控属性名为 'visible'
+    trigger: 'onVisibleChange',  // 指定状态变化时触发的回调名为 'onVisibleChange'
+    defaultValue: false,         // 默认是关闭的
+  });
+
+  const handleOpen = () => setVisible(true);
+  const handleClose = () => setVisible(false);
+
+  return (
+    <>
+      <Button onClick={handleOpen}>打开弹窗</Button>
+      <Modal
+        title="受控/非受控弹窗"
+        visible={visible}
+        onOk={handleClose}
+        onCancel={handleClose}
+      >
+        {children}
+      </Modal>
+    </>
+  );
+};
+
+// 父组件中使用：
+// 1. 作为受控组件使用
+<ControllableModal visible={visible} onVisibleChange={setVisible} />
+
+// 2. 作为非受控组件使用（自己管自己的开关）
+<ControllableModal defaultVisible={true} />
+```
+
+
+
+```
+import React, { useState } from 'react';
+import { useControllableValue } from 'ahooks';
+
+const ControllableComponent = (props: any) => {
+  const [state, setState] = useControllableValue<string>(props);
+
+  return <input value={state} onChange={(e) => setState(e.target.value)} style={{ width: 300 }} />;
+};
+
+const Parent = () => {
+  const [state, setState] = useState<string>('');
+  const clear = () => {
+    setState('');
+  };
+
+  return (
+    <>
+      <ControllableComponent value={state} onChange={setState} />
+      <button type="button" onClick={clear} style={{ marginLeft: 8 }}>
+        Clear
+      </button>
+    </>
+  );
+};
+export default Parent;
+```
+
+如果 props 有 value 字段，则由父级接管控制 state
 
 # 状态管理器
 
@@ -4090,11 +4281,87 @@ const router = createBrowserRouter([
 </RouterProvider>
 ```
 
-## 路由嵌套和路由懒加载
+## 路由嵌套
 
 ### v5
 
-https://zh-hans.reactjs.org/docs/code-splitting.html
+```
+<>
+  {/* /learn */}
+  <Suspense fallback={<div />}>
+    <Route
+      path="/learn"
+      exact={false}
+      render={(props) => (
+        <Learn {...props}>
+          {/* /learn/router (父路由：component: 'learn/router') */}
+          <Suspense fallback={<div />}>
+            <Route
+              path="/learn/router"
+              exact={false}
+              render={(props) => (
+                <RouterCOM {...props}>
+                  {/* /learn/router/:id */}
+                  <Suspense fallback={<div />}>
+                    <Route
+                      path="/learn/router/:id"
+                      exact={false}
+                      component={ChildRouter}
+                    />
+                  </Suspense>
+                </RouterCOM>
+              )}
+            />
+          </Suspense>
+        </Learn>
+      )}
+    />
+  </Suspense>
+</>
+```
+
+RouterCOM
+
+```
+import React, { useEffect, useState, ReactNode } from "react";
+import { Divider } from "antd";
+import { Route, Link, Switch } from "react-router-dom";
+import LmCard from "@/components/Lm-card";
+
+interface RouterProps {
+  children?: ReactNode;
+}
+const Router: React.FC<RouterProps> = (props: RouterProps) => {
+  console.log(props.children);
+
+  useEffect(() => {
+    console.log("渲染");
+  });
+  return (
+    <div>
+      <LmCard title="路由嵌套示例">
+        <li>
+          <Link to="/learn/router/1">1</Link>
+        </li>
+        <li>
+          <Link to="/learn/router/2">2</Link>
+        </li>
+
+        {props.children}
+      </LmCard>
+      <Divider />
+
+    </div>
+  );
+}
+export default Router;  
+```
+
+
+
+## 路由懒加载
+
+### v5
 
 **Suspense和lazy**
 
@@ -4195,6 +4462,61 @@ export default router
 
 ## 组件
 
+### 路由容器
+
+#### BrowserRouter
+
+`<BrowserRouter>`使用常规的URL路径。但它们要求正确配置服务器。具体来说，您的Web服务器需要在所有由React Router客户端管理的URL上提供相同的页面
+
+BrowserRouter提供了如下属性
+
+- `basename (string)` 指定路由的基础前缀。路由匹配和导航都会以这个前缀为基准，等于是告诉路由器“我的应用挂在这个子路径下”。
+
+  - **行为举例**
+    - 如果你写 [](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html)，那么声明 [](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 实际匹配的完整路径是 `/qiankun/react-app/dashboard`。
+    - 同理，`<Link to="/dashboard">` 生成的地址会是 `/qiankun/react-app/dashboard`（由 Router 自动在前面加上 [basename](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/072586267e/resources/app/out/vs/code/electron-browser/workbench/workbench.html)）。
+
+
+  - 使用场景
+    - 当应用程序放置于服务器上子目录中时，可以设置，比如 `/public` 。
+    - qiankun子应用配置子应用路由的基础前缀
+
+- `forceRefresh (boolean)`，在导航的过程中整个页面是否刷新
+
+- `getUserConfirmation (func)`，当导航需要确认时执行的函数。默认是：window.confirm
+
+- `keyLength (number)`  location.key 的长度。默认是 6
+
+- `children (node)` 要渲染的子节点
+
+```
+ import React from "react";
+ import ReactDOM from 'react-dom/client';
+ import { BrowserRouter } from "react-router-dom";
+ ​
+ const root = ReactDOM.createRoot(document.getElementById('root'));
+ root.render(
+   <BrowserRouter>
+     {/* 整体结构（通常为App组件） */}
+   </BrowserRouter>
+ );
+
+```
+
+#### HashRouter
+
+`<HashRouter>`将当前位置存储在[URL](https://developer.mozilla.org/en-US/docs/Web/API/HTMLHyperlinkElementUtils/hash)[的`hash`一部分中](https://developer.mozilla.org/en-US/docs/Web/API/HTMLHyperlinkElementUtils/hash)，因此URL看起来像`http://example.com/#/your/page`。由于哈希从不发送到服务器，因此这意味着不需要特殊的服务器配置(**在任意的路由进行页面的刷新都不会是 404**)。
+
+HashRouter提供了如下属性
+
+- `basename: string`, 同 `<BrowserRouter>` 的 `basename`。
+- `getUserConfirmation: function`, 同 `<BrowserRouter>` 的 `getUserConfirmation`。
+- `hashType: string`, Hash 编码类型，可选值 `'slash'(默认) | 'noslash' | 'hashbang'` 。
+  - `slash`, 创建像 `#/`, `#/user/1` 这样的 hash 地址，默认值。
+  - `noslash`, 创建像 `#`, `#user/1` 这样的 hash 地址
+  - `hashbang`, 创建像 `#!/`, `#!/user/1` 这样的 ajax crawlable(已被 Google 遗弃) 的 hash 地址
+- `children: node`, 同 `<BrowserRouter>` 的 `children: node`。
+
 ### 路由匹配器Route
 
 #### Swtich(v5)
@@ -4261,9 +4583,9 @@ const First = () => <p>页面一的页面内容</p>
 </Router>
 ```
 
-- <a id="exact">exact</a> 是否进行精确匹配
+- <a id="exact">exact</a> 决定 **path 是“前缀匹配”还是“完全匹配”**
 
-  当exact为false时，路由 `/a` 可以和 `/a/、/a` 匹配。例如/a/b/c 能匹配到/、/a、/a/b、/a/b/c 且匹配还是按顺序的
+  当exact为false时，路由 `/a` 可以和 `/a/、/a` 匹配。例如/a/b/c 能匹配到/、/a、/a/b、/a/b/c 且匹配还是按顺序渲染
 
   路由设置的前后顺序为:
 
@@ -4433,49 +4755,11 @@ import { Navigate } from 'react-router-dom';
 - IndexRoute 一般情况下用于设计一个默认页且不改变 URL 地址，而 IndexRedirect 则是跳转默认地址且地址会发生改变。
 - IndexRoute 指定一个组件作为默认页，而 IndexRedirect 指定一个路由地址作为跳转地址。
 
-### BrowserRouter
 
-`<BrowserRouter>`使用常规的URL路径。但它们要求正确配置服务器。具体来说，您的Web服务器需要在所有由React Router客户端管理的URL上提供相同的页面
 
-BrowserRouter提供了如下属性
+### Outlet(v6)
 
-- `basename (string)` 当前位置的基准 URL。当应用程序放置于服务器上子目录中时，可以设置，比如 `/public` 。
-- `forceRefresh (boolean)`，在导航的过程中整个页面是否刷新
-- `getUserConfirmation (func)`，当导航需要确认时执行的函数。默认是：window.confirm
-- `keyLength (number)`  location.key 的长度。默认是 6
-- `children (node)` 要渲染的子节点
-
-```
- import React from "react";
- import ReactDOM from 'react-dom/client';
- import { BrowserRouter } from "react-router-dom";
- ​
- const root = ReactDOM.createRoot(document.getElementById('root'));
- root.render(
-   <BrowserRouter>
-     {/* 整体结构（通常为App组件） */}
-   </BrowserRouter>
- );
-
-```
-
-### HashRouter
-
-`<HashRouter>`将当前位置存储在[URL](https://developer.mozilla.org/en-US/docs/Web/API/HTMLHyperlinkElementUtils/hash)[的`hash`一部分中](https://developer.mozilla.org/en-US/docs/Web/API/HTMLHyperlinkElementUtils/hash)，因此URL看起来像`http://example.com/#/your/page`。由于哈希从不发送到服务器，因此这意味着不需要特殊的服务器配置(**在任意的路由进行页面的刷新都不会是 404**)。
-
-HashRouter提供了如下属性
-
-- `basename: string`, 同 `<BrowserRouter>` 的 `basename`。
-- `getUserConfirmation: function`, 同 `<BrowserRouter>` 的 `getUserConfirmation`。
-- `hashType: string`, Hash 编码类型，可选值 `'slash'(默认) | 'noslash' | 'hashbang'` 。
-  - `slash`, 创建像 `#/`, `#/user/1` 这样的 hash 地址，默认值。
-  - `noslash`, 创建像 `#`, `#user/1` 这样的 hash 地址
-  - `hashbang`, 创建像 `#!/`, `#!/user/1` 这样的 ajax crawlable(已被 Google 遗弃) 的 hash 地址
-- `children: node`, 同 `<BrowserRouter>` 的 `children: node`。
-
-### Outlet
-
-<Outlet/>作用类似于Vue中的`router-view`
+<Outlet/>作用类似于Vue中的`router-view`,和`v5中的{props.children}`
 
 ```js
 import { NavLink, Outlet } from "react-router-dom"; 
@@ -4524,7 +4808,53 @@ import { NavLink, Outlet } from "react-router-dom";
 
 ### 编程式导航
 
-#### UseNavigate
+#### useHistory(v5)
+
+```
+import { Link, useHistory } from "react-router-dom";
+const history = useHistory();
+```
+
+- 跳转（push）：
+
+  ```
+  history.push('/path');                  // 新增历史记录
+  history.push('/user/123');              // 路径参数方式
+  history.push('/search?q=1');            // 带 query
+  history.push('/path', { foo: 'bar' }); // 带 state
+  ```
+
+- 替换（replace）：
+
+  ```
+  history.replace('/login'); // 替换当前记录
+  history.replace('/login', { from: '/protected' });
+  ```
+
+- 前进/后退/跳转指定位置
+
+  ```
+  history.goBack();   // 相当于 history.go(-1)
+  history.goForward();// 相当于 history.go(1)
+  history.go(-2);     // 往后两步
+  history.go(n);      // n 可以为正或负
+  ```
+
+- 监听路由变化
+
+  ```
+  useEffect(() => {
+    const unlisten = history.listen((location, action) => {
+      // location: { pathname, search, state, ... }
+      // action: 'PUSH' | 'REPLACE' | 'POP'
+    });
+    return () => unlisten();
+  }, [history]);
+  ```
+
+  
+
+#### useNavigate(v6)
 
 ```
 import { useNavigate } from 'react-router-dom';
@@ -4557,40 +4887,46 @@ function Chat(props) {
 
 ```jsx
 <Route path='/path/:name' component={Path}/>
+
 <link to={ '/user/' + '2' }>xxx</Link>
 this.props.history.push({pathname:"/path/" + name});
 
 //读取参数用:this.props.match.params.name
 ```
 
-优点：
-1、传参和接收都比较简单
-2、刷新页面参数不会丢失
-缺点：
-1、 当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
+- 优点：
 
-```jsx
-// 定义路由匹配
-<Route path="/user/:data" component={Component} />;
-let data = {
-  id: 3,
-  name: "tom",
-  age: 25,
-};
-let path = JSON.Stringify(data);
+  - 1、传参和接收都比较简单
 
-// 传递路由参数
-<Link to={path}>用户</Link>;
-this.props.history.push(path);
+  - 2、刷新页面参数不会丢失
 
-// 使用路由参数
-const { id, name, age } = this.props.match.params.data;
-```
+- 缺点：
 
-2、多个参数的传递，url 会又长又不美观
-3、参数会出现在url上，不够安全 
+  - 1、 当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
 
-#### search传参
+    ```
+    // 定义路由匹配
+    <Route path="/user/:data" component={Component} />;
+    let data = {
+      id: 3,
+      name: "tom",
+      age: 25,
+    };
+    let path = JSON.Stringify(data);
+    
+    // 传递路由参数
+    <Link to={path}>用户</Link>;
+    this.props.history.push(path);
+    
+    // 使用路由参数
+    const { id, name, age } = this.props.match.params.data;
+    ```
+
+  - 2、多个参数的传递，url 会又长又不美观
+
+  - 3、参数会出现在url上，不够安全 
+
+#### query传参 
 
 ```jsx
 <Route path='/web/departManange' component={DepartManange}/>
@@ -4600,52 +4936,40 @@ this.props.history.push({pathname:"/web/departManange?tenantId" + row.tenantId})
 //读取参数用: this.props.location.search
 ```
 
-优点：
-1、传参和接收都比较简单
-2、刷新页面参数不会丢失
-3、可以传递多个参数
-缺点：
-1、当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
-2、参数会出现在url上，不够安全 
-
-#### query传参 
-
-```jsx
-<Route path='/query' component={Query}/>
-<Link to={{ path : ' /query' , query : { name : 'sunny' }}}>
-this.props.history.push({pathname:"/query",query: { name : 'sunny' }});
-
-//读取参数用: this.props.location.query.name
-```
-
-优点：
-1、传参和接收都比较简单
-2、可以传递多个参数
-3、传递对象数组等复杂参数方便
-4、不会暴露给用户，比较安全
-缺点：
-1、如果手动刷新当前路由时，数据参数有可能会丢失 
+- 优点：
+  - 1、传参和接收都比较简单
+  - 2、刷新页面参数不会丢失
+  - 3、可以传递多个参数
+- 缺点：
+  - 1、当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
+  - 2、参数会出现在url上，不够安全 
 
 #### state传参
 
 ```c
 <Link to={{
-    pathname: 'about',
+    pathname: '/learn/router/3',
     state: {
-        name: 'dx'
+        name: '123'
     }
 }}>关于</Link>
+history.push("/learn/router/3", { id: 123 })  
 
 this.props.location.state
 ```
 
-优点：
-1、传参和接收都比较简单
-2、可以传递多个参数
-3、传递对象数组等复杂参数方便
-4、不会暴露给用户，比较安全
-缺点：
-1、如果手动刷新当前路由时，数据参数有可能会丢失 
+- 优点：
+
+  - 1、传参和接收都比较简单
+
+  - 2、可以传递多个参数
+
+  - 3、传递对象数组等复杂参数方便
+
+  - 4、不会暴露给用户，比较安全
+
+- 缺点：
+  - 1、如果手动刷新当前路由时，数据参数有可能会丢失 
 
 在[react](https://so.csdn.net/so/search?q=react&spm=1001.2101.3001.7020)中，最外层包裹了BrowserRouter时，不会丢失,但如果使用的时HashRouter，刷新当前页面时，会丢失state中的数据 
 
