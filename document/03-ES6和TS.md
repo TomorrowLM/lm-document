@@ -8415,24 +8415,6 @@ type Func = typeof func; // (input: string) => boolean
 
 ```
 
-### keyof
-
-**用于获取一个类型的所有键（属性名）作为联合类型**‌
-
-```
-interface Person {
-    id: number;
-    name: string;
-    age: number;
-}
-```
-
-使用`keyof`可以获取这个接口的所有键：
-
-```
-type KeysOfPerson = keyof Person; // 'id' | 'name' | 'age'
-```
-
 #### 结合对象使用
 
 当`typeof`与对象结合使用时，可以获取该对象的类型。例如：
@@ -8458,7 +8440,23 @@ type Meth = keyof typeof HttpMethod; // "Get" | "Post"
 
 
 
+### keyof
 
+**用于获取一个类型的所有键（属性名）作为联合类型**‌
+
+```
+interface Person {
+    id: number;
+    name: string;
+    age: number;
+}
+```
+
+使用`keyof`可以获取这个接口的所有键：
+
+```
+type KeysOfPerson = keyof Person; // 'id' | 'name' | 'age'
+```
 
 ### Record
 

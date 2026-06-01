@@ -1,6 +1,3 @@
-[submodule "document/document-note-backup"]
-	path = document/document-note-backup
-	url = https://github.com/TomorrowLM/document-private.git
 [submodule "document/document-note"]
 	path = document/document-note
 	url = https://github.com/TomorrowLM/document-private.git

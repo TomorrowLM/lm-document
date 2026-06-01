@@ -74,3 +74,16 @@ Python和C++是两个设计哲学差异很大的语言，但正因为这种差�
   Python的应用场景非常广泛，除了网站后端，它在**人工智能、数据分析、自动化脚本、科学计算**等领域都是霸主 。这些领域的学习者和从业者众多，推高了它在TIOBE和PYPL这类综合榜单上的热度。但在纯网站后端这个存量市场上，它远不及PHP和[ASP.NET](https://asp.net/)等老牌技术 。
 - **C++：精深的专才**
   C++的“用得多”体现在另外一些地方。它是**游戏引擎（如虚幻引擎）、高频交易系统、操作系统、大型桌面软件、音视频处理、嵌入式系统**等高难度、高性能领域的绝对主力 。这些领域的开发者数量可能不如Web开发多，但他们在用C++构建着整个数字世界的基石。所以，C++的占比，主要体现在这些关键基础设施的“幕后”。
+
+
+
+# 依赖安装
+
+powershell 管理员模式打开执行命令
+
+```
+ D:\software\java\pyenv-win-master\pyenv-win\versions\3.9.13\python.exe D:\software\java\pyenv-win-master\pyenv-win\versions\3.9.13\Scripts\pip.exe install git+https://github.com/tencentyun/cos-python-sdk-v5.git
+Collecting git+https://github.com/tencentyun/cos-python-sdk-v5.git
+```
+
+python "D:\work\demo\script\python\upload_cos.py" "{imagePath}"

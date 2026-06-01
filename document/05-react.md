@@ -2391,9 +2391,11 @@ export default Son
 
 ### 后代组件Context
 
-https://zh-hans.reactjs.org/docs/context.html
+#### 概念
 
-数据是通过 props 属性自上而下（由父及子）进行传递的 ，需要显式地通过组件树的逐层传递 props。Context 设计目的是为了共享那些对于一个组件树而言是“全局”的数据 
+https://zh-hans.react.dev/learn/passing-data-deeply-with-context
+
+数据是通过 props 属性自上而下（由父及子）进行传递的 ，必须通过许多中间组件向下传递 props。**Context** 允许父组件向其下层无论多深的任何组件提供信息，而无需通过 props 显式传递。
 
 ```jsx
 // context.js
@@ -2428,7 +2430,15 @@ import { Consumer } from './context'
 </Consumer>
 ```
 
-当 Provider 的 `value` 值发生变化时，它内部的所有消费组件都会重新渲染。从 Provider 到其内部 consumer 组件（包括 [.contextType](https://zh-hans.reactjs.org/docs/context.html#classcontexttype) 和 [useContext](https://zh-hans.reactjs.org/docs/hooks-reference.html#usecontext)）的传播不受制于  `shouldComponentUpdate` 函数，因此当 consumer 组件在其祖先组件跳过更新的情况下也能更新。 
+**当 Provider 的 `value` 值发生变化时，它内部的所有消费组件都会重新渲染。**从 Provider 到其内部 consumer 组件（包括 [.contextType](https://zh-hans.reactjs.org/docs/context.html#classcontexttype) 和 [useContext](https://zh-hans.reactjs.org/docs/hooks-reference.html#usecontext)）的传播不受制于  `shouldComponentUpdate` 函数，因此当 consumer 组件在其祖先组件跳过更新的情况下也能更新。 
+
+#### 子组件修改context值
+
+**子组件本身不能直接修改 Context 的值，但可以通过传递修改函数来实现修改。**
+
+#### reducer 和 context结合
+
+https://zh-hans.react.dev/learn/scaling-up-with-reducer-and-context#combining-a-reducer-with-context
 
 ### 跨级
 
@@ -2647,6 +2657,8 @@ function MyApp() {
 
 ## useReducer()钩子
 
+> **`useReducer`是`useState`的升级版，而非替代品。选择权在于状态管理的复杂度。**
+
 **useReducer适用于引用类型，而useState适合值类型**
 
 ```
@@ -2720,6 +2732,18 @@ function Counter() {
 }
 
 ```
+
+### 对比 `useState` 和 `useReducer` 
+
+Reducer 并非没有缺点！以下是比较它们的几种方法：
+
+- **代码体积：** 通常，在使用 `useState` 时，一开始只需要编写少量代码。而 `useReducer` 必须提前编写 reducer 函数和需要调度的 actions。但是，当多个事件处理程序以相似的方式修改 state 时，`useReducer` 可以减少代码量。
+- **可读性：** 当状态更新逻辑足够简单时，`useState` 的可读性还行。但是，一旦逻辑变得复杂起来，它们会使组件变得臃肿且难以阅读。在这种情况下，`useReducer` 允许你将状态更新逻辑与事件处理程序分离开来。
+- **可调试性：** 当使用 `useState` 出现问题时, 你很难发现具体原因以及为什么。 而使用 `useReducer` 时， 你可以在 reducer 函数中通过打印日志的方式来观察每个状态的更新，以及为什么要更新（来自哪个 `action`）。 如果所有 `action` 都没问题，你就知道问题出在了 reducer 本身的逻辑中。 然而，与使用 `useState` 相比，你必须单步执行更多的代码。
+- **可测试性：** reducer 是一个不依赖于组件的纯函数。这就意味着你可以单独对它进行测试。一般来说，我们最好是在真实环境中测试组件，但对于复杂的状态更新逻辑，针对特定的初始状态和 `action`，断言 reducer 返回的特定状态会很有帮助。
+- **个人偏好：** 并不是所有人都喜欢用 reducer，没关系，这是个人偏好问题。你可以随时在 `useState` 和 `useReducer` 之间切换，它们能做的事情是一样的！
+
+如果你在修改某些组件状态时经常出现问题或者想给组件添加更多逻辑时，我们建议你还是使用 reducer。当然，你也不必整个项目都用 reducer，这是可以自由搭配的。你甚至可以在一个组件中同时使用 `useState` 和 `useReducer`。
 
 ## useEffect()：副作用钩子
 
@@ -4224,7 +4248,11 @@ function App(props) {
 | react-router-redux  | React Router 和 Redux 的集成。                               |
 | eact-router-config  | 提供可配置化的路由                                           |
 
+## 注意
 
+在React Router v6中，`props.match`已经被移除，取而代之的是新的API，如`useParams`、`useLocation`、`useRouteMatch`等。这些新的API提供了更强大、更灵活的方式来访问路由信息。
+
+在React Router v5中，`props.match`是一个包含路由匹配信息的对象，例如`params`、`url`、`path`等。然而，在React Router v6中，这些信息被拆分成了多个独立的Hook，以便更灵活地访问和使用。
 
 ## 路由创建
 
@@ -4280,6 +4308,82 @@ const router = createBrowserRouter([
 	<App />
 </RouterProvider>
 ```
+
+#### 额外的元数据
+
+在React Router v6中，`handle`配置是一个可选的对象，可以用于在路由配置中存储额外的元数据。这些元数据可以被路由组件或路由中间件访问，以便根据需要执行某些操作。
+
+`handle`配置的主要用途是为路由提供一些额外的信息，以便在组件或中间件中使用。例如，你可以使用`handle`来存储与特定路由相关的权限信息、SEO信息或其他元数据。这些信息可以被组件或中间件用于执行某些操作，例如检查用户权限、设置页面标题或描述等。
+
+```
+import React from 'react';
+import {
+  createBrowserRouter,
+  RouterProvider,
+  Route,
+  Link,
+  useParams,
+} from 'react-router-dom';
+
+const Home = ({ handle }) => {
+  return (
+    <div>
+      <h1>{handle.title}</h1>
+      <p>{handle.description}</p>
+      <p>Welcome to the home page!</p>
+    </div>
+  );
+};
+
+const About = () => {
+  const { id } = useParams();
+
+  return (
+    <div>
+      <h1>About</h1>
+      <p>This is the about page with id: {id}</p>
+    </div>
+  );
+};
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <Home />,
+    handle: {
+      title: 'Home Page',
+      description: 'This is the home page',
+    },
+  },
+  {
+    path: '/about/:id',
+    element: <About />,
+  },
+]);
+
+const App = () => {
+  return (
+    <div>
+      <nav>
+        <ul>
+          <li>
+            <Link to="/">Home</Link>
+          </li>
+          <li>
+            <Link to="/about/123">About</Link>
+          </li>
+        </ul>
+      </nav>
+
+      <RouterProvider router={router} />
+    </div>
+  );
+};
+
+export default App;
+```
+
+
 
 ## 路由嵌套
 
@@ -4462,7 +4566,7 @@ export default router
 
 ## 组件
 
-### 路由容器
+### 路由容器(v5)
 
 #### BrowserRouter
 
@@ -4770,11 +4874,51 @@ import { NavLink, Outlet } from "react-router-dom";
 
 ## 路由导航跳转
 
-### 声明式导航Link
+### 声明式导航
 
-`<Link>` 组件被用来在**页面之间**进行导航，它其实就是 HTML 中的 `<a>` 标签的上层封装，不过在其源码中使用 `event.preventDefault` 禁止了其默认行为，然后使用 [history API](https://link.juejin.cn?target=https%3A%2F%2Fdeveloper.mozilla.org%2Fzh-CN%2Fdocs%2FWeb%2FAPI%2FHistory_API) 自己实现了跳转。我们都知道，如果使用 `<a>` 标签去进行导航的话，整个页面都会被刷新，这是我们不希望看到的。所以我们使用 `<Link>` 组件来导航到一个目标 URL，可以在不刷新页面的情况下重新渲染页面
+#### NavLink
 
-#### 参数
+`<NavLink>` 是 `<Link>` 的一个增强版，主要用于导航菜单或需要高亮当前选中链接的场景。它会根据当前路由的匹配情况自动添加或移除一些样式类。
+
+**特点**
+
+- **高亮**：
+
+  - v5：当当前路由与 `<NavLink>` 的 `to` 属性匹配时，会自动添加 `activeClassName` 指定的类。
+
+    ```
+    import { NavLink } from 'react-router-dom';
+    
+    <NavLink to="/some/path" activeClassName="active">Go to Some Path</NavLink>;
+    ```
+
+    
+
+  - v6：在 React Router v6 中，`<NavLink>` 的 `className` 和 `style` 属性接受一个函数，该函数接收一个对象 `{ isActive, isPending }` 作为参数
+
+    ```
+    import { NavLink } from 'react-router-dom';
+    
+    <NavLink to="/some/path" className={({ isActive }) => isActive ? 'active' : ''}>Go to Some Path</NavLink>;
+    ```
+
+    
+
+- **样式控制**：可以通过 `activeClassName` 和 `exact` 属性来控制高亮样式。
+
+- **适用场景**：适用于导航菜单、面包屑导航等需要高亮当前选中链接的场景
+
+#### Link
+
+`<Link>` 组件被用来在**页面之间**进行导航，它其实就是 HTML 中的 `<a>` 标签的上层封装，不过在其源码中使用 `event.preventDefault` 禁止了其默认行为，然后使用 [history API](https://link.juejin.cn?target=https%3A%2F%2Fdeveloper.mozilla.org%2Fzh-CN%2Fdocs%2FWeb%2FAPI%2FHistory_API) 自己实现了跳转。我们都知道，**如果使用 `<a>` 标签去进行导航的话，整个页面都会被刷新，**这是我们不希望看到的。所以我们使用 `<Link>` 组件来导航到一个目标 URL，可以在不刷新页面的情况下重新渲染页面
+
+**特点**
+
+- **简单**：只负责导航，不提供额外的状态或样式。
+- **性能**：由于没有额外的状态管理，性能较高。
+- **适用场景**：适用于大多数导航需求，特别是当不需要高亮当前选中链接时
+
+**参数**
 
 - to（string | object | function）
 
@@ -4809,6 +4953,8 @@ import { NavLink, Outlet } from "react-router-dom";
 ### 编程式导航
 
 #### useHistory(v5)
+
+**useHistory钩子为您提供访问历史实例的权限，您可以使用该实例进行导航。**
 
 ```
 import { Link, useHistory } from "react-router-dom";
@@ -4896,13 +5042,13 @@ this.props.history.push({pathname:"/path/" + name});
 
 - 优点：
 
-  - 1、传参和接收都比较简单
+  - 传参和接收都比较简单
 
-  - 2、刷新页面参数不会丢失
+  - 刷新页面参数不会丢失
 
 - 缺点：
 
-  - 1、 当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
+  - 当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
 
     ```
     // 定义路由匹配
@@ -4922,9 +5068,9 @@ this.props.history.push({pathname:"/path/" + name});
     const { id, name, age } = this.props.match.params.data;
     ```
 
-  - 2、多个参数的传递，url 会又长又不美观
+  - 多个参数的传递，url 会又长又不美观
 
-  - 3、参数会出现在url上，不够安全 
+  - 参数会出现在url上，不够安全 
 
 #### query传参 
 
@@ -4937,12 +5083,12 @@ this.props.history.push({pathname:"/web/departManange?tenantId" + row.tenantId})
 ```
 
 - 优点：
-  - 1、传参和接收都比较简单
-  - 2、刷新页面参数不会丢失
-  - 3、可以传递多个参数
+  - 传参和接收都比较简单
+  - 刷新页面参数不会丢失
+  - 可以传递多个参数
 - 缺点：
-  - 1、当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
-  - 2、参数会出现在url上，不够安全 
+  - 当复杂数据对象或数组需要传参时，这样做比较麻烦，需要通过json字符串的方式进行处理
+  - 参数会出现在url上，不够安全 
 
 #### state传参
 
@@ -4960,22 +5106,50 @@ this.props.location.state
 
 - 优点：
 
-  - 1、传参和接收都比较简单
+  - 传参和接收都比较简单
 
-  - 2、可以传递多个参数
+  - 可以传递多个参数
 
-  - 3、传递对象数组等复杂参数方便
+  - 传递对象数组等复杂参数方便
 
-  - 4、不会暴露给用户，比较安全
+  - 不会暴露给用户，比较安全
 
 - 缺点：
-  - 1、如果手动刷新当前路由时，数据参数有可能会丢失 
+  - 如果手动刷新当前路由时，数据参数有可能会丢失 
 
 在[react](https://so.csdn.net/so/search?q=react&spm=1001.2101.3001.7020)中，最外层包裹了BrowserRouter时，不会丢失,但如果使用的时HashRouter，刷新当前页面时，会丢失state中的数据 
 
 ## Hooks
 
 https://juejin.cn/post/7229493617365712953#heading-5
+
+### 属性的隐式传递
+
+this.props.history/match/location
+
+| 所属     | 属性                   | 类型     | 含义                                              |
+| -------- | ---------------------- | -------- | ------------------------------------------------- |
+| history  | length                 | number   | 表示history堆栈的数量                             |
+|          | action                 | string   | 表示当前的动作。比如pop、replace或push            |
+|          | location               | object   | 表示当前的位置                                    |
+|          | push(path, [state])    | function | 在history堆栈顶加入一个新的条目                   |
+|          | replace(path, [state]) | function | 替换在history堆栈中的当前条目                     |
+|          | go(n)                  | function | 将history堆栈中的指针向前移动                     |
+|          | goBack()               | function | 等同于go(-1)                                      |
+|          | goForward()            | function | 等同于go(1)                                       |
+|          | block(promt)           | function | 阻止跳转                                          |
+|          |                        |          |                                                   |
+| match    | params                 | object   | 表示路径参数，通过解析URL中动态的部分获得的键值对 |
+|          | isExact                | boolean  | 为true时，表示精确匹配                            |
+|          | path                   | string   | 用来做匹配的路径格式                              |
+|          | url                    | string   | URL匹配的部分                                     |
+|          |                        |          |                                                   |
+| location | pathname               | string   | URL路径                                           |
+|          | search                 | string   | URl中查询字符串                                   |
+|          | hash                   | string   | URL的hash分段                                     |
+|          | state                  | string   | 表示location中的状态                              |
+
+
 
 ### withRouter
 
@@ -5028,149 +5202,51 @@ export default withRouter(BackHome)
 
 ```
 
-### useRoutes
-
-新钩子useRoutes代替react-router-config
-
-作用：根据路由表，动态创建`<Routes>`和`<Route>`。它的作用是动态地配置路由，它接收一个路由数组，并使用匹配到的路由来渲染相应的组件。
+### useRoutes(v6)
 
 `useRoutes()` 在功能上等同于 `<Routes>`，但它使用 JavaScript 对象而不是元素来定义路由。这些对象具有与 `<Route>` 组件相同的属性。
 
-`useRoutes()`的返回值是可用于呈现路由树的有效 React 元素。
-
-```javascript
-javascript复制代码//路由表配置：src/routes/index.jsx
-import { Navigate } from 'react-router-dom';
-
-import Home from '../views/Home';
-import Friend from '../views/Friend';
-import Setting from '../views/Setting';
-import NotFound from '../views/NotFound';
-import Chat from '../views/Chat';
-
-const routes = [
-	{ path: '/', element: <Navigate to='/home' /> },
-	{ path: '/home', element: <Home /> },
-	{
-		path: '/friend',
-		element: <Friend />,
-		children: [{ path: 'chat/:name', element: <Chat /> }],
-	},
-	{ path: '/setting', element: <Setting /> },
-	{ path: '*', element: <NotFound /> },
-];
-
-export default routes;
-   
-javascript复制代码// App.jsx
-
-import { useState } from 'react';
-import { NavLink, useRoutes } from 'react-router-dom';
-import routes from './routes';
-
-const App = () => {
-  // 根据路由表生成对应的路由规则
-  const ElementRouter = useRoutes(routes)
-	const [items] = useState([
-		{ path: '/home', title: '首页' },
-		{ path: '/friend', title: '好友' },
-		{ path: '/setting', title: '设置' },
-	]);
-
-	return (
-		<div className='app'>
-			<nav className='nav'>
-				<div className='w'>
-					{items.map(item => (
-						<NavLink className={({ isActive }) => (isActive ? 'active' : '')} to={item.path} key={item.path}>
-							{item.title}
-						</NavLink>
-					))}
-				</div>
-			</nav>
-			{/* 注册路由 */}
-			{ElementRouter}
-		</div>
-	);
-};
 ```
-
-
-
-### 属性的隐式传递
-
-this.props.history/match/location
-
-| 所属     | 属性                   | 类型     | 含义                                              |
-| -------- | ---------------------- | -------- | ------------------------------------------------- |
-| history  | length                 | number   | 表示history堆栈的数量                             |
-|          | action                 | string   | 表示当前的动作。比如pop、replace或push            |
-|          | location               | object   | 表示当前的位置                                    |
-|          | push(path, [state])    | function | 在history堆栈顶加入一个新的条目                   |
-|          | replace(path, [state]) | function | 替换在history堆栈中的当前条目                     |
-|          | go(n)                  | function | 将history堆栈中的指针向前移动                     |
-|          | goBack()               | function | 等同于go(-1)                                      |
-|          | goForward()            | function | 等同于go(1)                                       |
-|          | block(promt)           | function | 阻止跳转                                          |
-|          |                        |          |                                                   |
-| match    | params                 | object   | 表示路径参数，通过解析URL中动态的部分获得的键值对 |
-|          | isExact                | boolean  | 为true时，表示精确匹配                            |
-|          | path                   | string   | 用来做匹配的路径格式                              |
-|          | url                    | string   | URL匹配的部分                                     |
-|          |                        |          |                                                   |
-| location | pathname               | string   | URL路径                                           |
-|          | search                 | string   | URl中查询字符串                                   |
-|          | hash                   | string   | URL的hash分段                                     |
-|          | state                  | string   | 表示location中的状态                              |
-
-### useNavigate(v6)
-
-用useNavigate代替useHistory
-
-```
-import { useNavigate } from 'react-router-dom';
-
-function Chat(props) {
-  const navigate = useNavigate();
-	const goBack = () => {
-    // 第一种使用方式：传入数值进行前进或后退，类似 history.go()方法
-		// navigate(-1);
-    
-		// 第二种使用方式：指定具体的路径
-		navigate('/friend', {
-			replace: false,
-			state: { a: 1, b: 2 },
-		});
-	};
-	return (
-		<div id="chat" className="w">
-			<h2>chat页面 </h2>
-      <button onClick={goBack}>返回</button>
-		</div>
-	);
+function AppRouter() {
+  return useRoutes([
+    { path: '/', element: <Home /> },
+    { path: '/about', element: <About /> },
+  ])
 }
-
 ```
 
+等价于Routes
 
-
-### useHistory(v5)
-
-用以获取history对象，进行编程式的导航
-
-```react
-const Husky = props => {
-  console.log(useHistory()); // 与 props.history 结果一致
-  console.log(props.history);
-  return <div>哈士奇</div>;
-};
-...
-<Route path="/dog" component={Dog}></Route> // 必须这么写，props 才能拿到相关值
-...
-<Route path="/husky">
-	<Husky />
-</Route> // 这样写的话 useHistory 可以正常取值，但是 props 不行
 ```
+import { Routes, Route } from 'react-router-dom'
+
+function AppRouter() {
+  return (
+    <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/about" element={<About />} />
+    </Routes>
+  )
+}
+```
+
+等价于 [createBrowserRouter(routes)](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/07ff9d6178/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 传进去的那个路由数组
+
+```
+const router = createBrowserRouter([
+  { path: '/', element: <Home /> },
+  { path: '/about', element: <About /> },
+])
+
+<RouterProvider router={router} />
+```
+
+但它们不完全等价，因为运行方式不同：
+
+1. `useRoutes` 返回的是“渲染结果”
+2. [createBrowserRouter](vscode-file://vscode-app/d:/software/front/Microsoft VS Code/07ff9d6178/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 返回的是“router 实例”
+
+
 
 ### useLocation
 
@@ -5187,6 +5263,14 @@ const Husky = props => {
 ### useParams
 
 useParams和props.match.params可以获取路由参数
+
+```
+import { useParams } from 'react-router-dom';
+const User = () => {
+  const { id } = useParams();
+  return <div>User ID: {id}</div>;
+};
+```
 
 ```react
 <Route path="/blog/:eat">
@@ -5226,52 +5310,36 @@ ini复制代码function Chat(props) {
 }
 ```
 
+### useMatch
 
+#### useRouteMatch(v5)
 
-### useRouteMatch
-
-`useRouteMatch`，接受一个**path字符串**作为参数。当参数的path与当前的路径相匹配时，useRouteMatch会返回match对象，否则返回null。
-
-`useRouteMatch`在对于一些，**不是路由级别的组件**。但是**组件自身的显隐却和当前路径相关的组件时**，非常有用。
-
-比如，你在做一个后台管理系统时，网页的Header只会在登录页显示，登录完成后不需要显示，这种场景下就可以用到`useRouteMatch`。
-
-```react
-const Home = () => {
-  return (
-    <div>Home</div>
-  )
-}
-// Header组件只会在匹配`/detail/:id`时出现
-const Header = () => {
-  // 只有当前路径匹配`/detail/:id`时，match不为null
-  const match = useRouteMatch('/detail/:id')
-  return (
-    match && <div>Header</div>
-  )
-}
-const Detail = () => {
-  return (
-    <div>Detail</div>
-  )
-}
-function App() {
-  return (
-    <div className="App">
-      <Router>
-        <Header/>
-        <Switch>
-          <Route exact path="/" component={Home}/>
-          <Route exact path="/detail/:id" component={Detail}/> 
-        </Switch>
-      </Router>
-    </div>
-  );
-}
+`useMatch` 用于获取当前组件的最近路由匹配信息。
 
 ```
+import { useMatch } from 'react-router-dom';
+const match = useMatch(pattern);
+```
 
+- 可选参数`pattern`：用于指定要匹配的路径模式。如果省略，`useMatch` 将返回当前组件的最近匹配信息。
 
+- **返回值**
+
+  - 如果当前组件匹配到指定的路径模式，useMatch返回一个匹配对象，包含以下属性：
+    - `params`：一个对象，包含从路径中解析出的参数。
+    - `pathname`：当前匹配的完整路径。
+    - `url`：当前匹配的 URL。
+    - `path`：当前匹配的路径模式。
+
+  - 如果没有匹配到指定的路径模式，`useMatch` 返回 `null`。
+
+#### useMatch(v6)
+
+同理useRouteMatch
+
+#### useMatches(v6)
+
+**`useMatches`**‌：返回‌**当前页面上所有匹配的路由层级信息**‌（包括父路由和子路由），适用于构建面包屑、权限控制等需要全局路由上下文的场景。
 
 # 性能优化
 
