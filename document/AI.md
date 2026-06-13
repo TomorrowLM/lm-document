@@ -886,6 +886,29 @@ Composer Mode（代码生成模式）：能够处理更复杂的任务，执行�
 
 
 
+### 终端
+
+**CC Switch** 是一款开源的跨平台桌面应用（Windows / macOS / Linux），核心功能是**统一管理 AI 编程 CLI 工具的模型供应商配置**。
+
+它主要解决以下痛点：使用 Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw 等 AI 编程 CLI 工具时，需要手动编辑 settings.json、auth.json、.env 等配置文件来切换模型供应商，过程繁琐。CC Switch 将这些操作可视化，内置 **50+ 供应商预设**，填写 API Key 后一键切换即可生效。
+
+**Ghostty + tmux + Claude Code**，这是前端开发当前的最优解
+
+**tmux 是一个终端复用器（terminal multiplexer）**。
+
+说人话：它让你在一个终端窗口里，同时跑多个独立的命令行会话，而且退出终端后这些会话不会死
+
+```
+Ghostty（窗口）── 你看到的这个终端窗口
+  └─ tmux（空间管理器）── 把窗口切成格子，管理会话生命周期
+       ├─ zsh + nvim ── 你写代码
+       ├─ zsh + claude ── AI 写代码
+       ├─ zsh + npm run dev ── 开发服务器
+       └─ zsh + lazygit ── Git 操作
+```
+
+
+
 ## 聊天窗
 
 模型切换会继承上面的历史吗
