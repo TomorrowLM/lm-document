@@ -2504,7 +2504,9 @@ GitNexus 的索引核心是 **代码符号**（函数、类、方法、接口等
 
 `query` 工具的设计目的是"进程感知的代码搜索"，不是通用文档全文检索。对于纯 markdown 文档文件，它的内容搜索能力比代码文件要弱。
 
-## Skill Seeker
+## 技能生成
+
+### Skill Seeker
 
 ‌**Skill Seeker 是一个开源自动化工具**‌，用于将文档网站、GitHub 仓库、PDF 等多源技术资料转换为 ‌**Claude AI 可直接使用的“技能包”（Skills）**‌，从而让 Claude 在特定领域具备专家级知识，避免“幻觉”和过时信息问题 ‌‌
 
@@ -2512,7 +2514,41 @@ GitNexus 的索引核心是 **代码符号**（函数、类、方法、接口等
 PYTHONIOENCODING=utf-8 uv tool run skill-seekers create https://app-test.17an.com/an-ui/
 ```
 
+### Repomix
 
+repomix --skill-generate an-ui --compress --include "src/**" --ignore "**/_demo/**" --skill-output /Users/zm/lm/an-ui-repomix-src -f
+
+### 区别
+
+两者定位完全不同：
+
+#### 核心区别
+
+|                    | skill-seekers                        | Repomix                                |
+| ------------------ | ------------------------------------ | -------------------------------------- |
+| **核心理念**       | 分析 → 提取 → 总结                   | 打包 → 结构化 → 交给 AI 自己理解       |
+| **对代码做了什么** | 尝试"读懂"代码，提取模式、依赖、配置 | 不做语义分析，把全部源码原样打包进技能 |
+| **产出本质**       | 一份**分析报告**                     | 一份**可检索的完整代码库**             |
+| **AI 增强**        | 有 Claude enhance 步骤做语义总结     | 无，依赖 AI 消费侧自行理解             |
+| **源类型**         | 18 种（网站、GitHub、PDF、视频等）   | 主要是代码仓库（本地/远程）            |
+
+#### 各自擅长场景
+
+**skill-seekers 适合：**
+- 文档网站生成技能（如 `skill-seekers create https://docs.react.dev/`）
+- PDF / 视频内容提取并结构化
+- 多源混合知识库（网站 + GitHub + PDF 一起）
+- 需要"分析结论"而非"原始代码"的场景
+
+**Repomix 适合：**
+- 让 AI 理解你的代码库全貌，写代码时参考项目上下文
+- 代码审查、架构梳理（AI 直接 grep 源码定位）
+- 把开源项目打包成参考技能（`repomix --remote user/repo --skill-generate`）
+- 新人接手项目时快速建立全局视图
+
+#### 一句话总结
+
+> **skill-seekers** 帮你"读懂"内容后写一份摘要；**Repomix** 帮你把整本书装订好，让 AI 自己去读。对代码项目尤其是 TypeScript，Repomix 更可靠——它不猜、不丢、不虚报。
 
 # claw/code
 
