@@ -4254,6 +4254,8 @@ function App(props) {
 
 在React Router v5中，`props.match`是一个包含路由匹配信息的对象，例如`params`、`url`、`path`等。然而，在React Router v6中，这些信息被拆分成了多个独立的Hook，以便更灵活地访问和使用。
 
+
+
 ## 路由创建
 
 ### 组件创建（V5）
@@ -5117,7 +5119,22 @@ this.props.location.state
 - 缺点：
   - 如果手动刷新当前路由时，数据参数有可能会丢失 
 
-在[react](https://so.csdn.net/so/search?q=react&spm=1001.2101.3001.7020)中，最外层包裹了BrowserRouter时，不会丢失,但如果使用的时HashRouter，刷新当前页面时，会丢失state中的数据 
+**HashRouter 的 state 存储在 JavaScript 内存中，刷新即丢失；BrowserRouter 的 state 存储在浏览器的 `history.state` 对象中，普通刷新可保留。**
+
+**React Router v5 及以后版本的 HashRouter 同样支持通过 `history.push(path, state)` 传递 state**
+
+| 对比维度                      | HashRouter（v4）                        | BrowserRouter                                              |
+| :---------------------------- | :-------------------------------------- | :--------------------------------------------------------- |
+| **URL 格式**                  | `example.com/#/detail`                  | `example.com/detail`                                       |
+| **底层 API**                  | `window.addEventListener('hashchange')` | HTML5 History API（`pushState`/`replaceState`/`popstate`） |
+| **State 存储位置**            | React Router 内部内存对象（JS 堆内存）  | 浏览器原生 `window.history.state`（浏览器内核维护）        |
+| **普通刷新（F5）**            | ❌ **丢失**（内存清空）                  | ✅ **保留**（浏览器会话持久化）                             |
+| **手动输入 URL / 新开标签页** | ❌ 丢失                                  | ❌ 丢失（无跳转来源，`history.state` 为空）                 |
+| **硬性重新加载**              | ❌ 丢失                                  | ⚠️ 部分场景丢失（取决于浏览器实现）                         |
+| **数据序列化限制**            | 无限制（纯内存对象）                    | 仅支持可序列化数据（函数、Symbol、循环引用会丢失）         |
+| **服务端配置**                | 无需特殊配置                            | 需要配置 fallback 到 `index.html`（否则 404）              |
+| **SEO 友好**                  | ❌ 不友好（爬虫忽略 `#` 后内容）         | ✅ 友好                                                     |
+| **适用场景**                  | 静态页面、无需 SEO 的后台管理系统       | 需要 SEO、追求优雅 URL 的正式项目                          |
 
 ## Hooks
 
