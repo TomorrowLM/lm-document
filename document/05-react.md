@@ -390,30 +390,63 @@ class MyComponent extends React.Component {
 > - **返回值**：`getSnapshotBeforeUpdate()` 方法应该返回一个值（通常是一个对象），它将成为`componentDidUpdate()` 方法的第三个参数。这个返回值通常用于保存一些DOM相关的信息，比如滚动位置。
 > - **通常和componentDidUpdate()一起使用**：`getSnapshotBeforeUpdate()` 结合`componentDidUpdate(prevProps, prevState, snapshot)` 使用，snapshot参数是`getSnapshotBeforeUpdate()` 的返回值。你可以在`componentDidUpdate()` 中使用snapshot来执行DOM操作或其他一些操作。
 
-作
-
 #### getDerivedStateFromError
 
-```
-static getDerivedStateFromError(error)
-```
+getDerivedStateFromError 是 React 错误边界（Error Boundary）的静态方法，在**后代组件抛出错误后、渲染阶段**被调用。getDerivedStateFromError **只捕获渲染阶段的同步错误**，不包括接口请求这类异步错误。
 
-此生命周期会在后代组件抛出错误后被调用。 它将抛出的错误作为参数，并返回一个值以更新 state
+##### 核心要点
 
-```
+| 项目            | 说明                                  |
+| :-------------- | :------------------------------------ |
+| 调用时机        | 渲染阶段，后代组件抛出错误时          |
+| 参数            | error — 抛出的错误对象                |
+| 返回值          | 返回 state 更新对象（或 null 不更新） |
+| 是否能访问 this | 不能，是静态方法                      |
+| 是否有副作用    | 不应有，渲染阶段只做 state 更新       |
+
+
+
+```jsx
 class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false };
+  state = { hasError: false };
+
+  static getDerivedStateFromError(error) {
+    // 更新 state，下次渲染显示降级 UI
+    return { hasError: true };
   }
 
-  static getDerivedStateFromError(error) {    // 更新 state 使下一次渲染可以显降级 UI    return { hasError: true };  }
   render() {
-    if (this.state.hasError) {      // 你可以渲染任何自定义的降级  UI      return <h1>Something went wrong.</h1>;    }
-    return this.props.children; 
+    if (this.state.hasError) {
+      return <h1>出错了</h1>;
+    }
+    return this.props.children;
   }
 }
 ```
+
+
+
+##### 它会捕获
+
+- 组件 render 中抛出的错误
+- 生命周期方法中的同步错误
+- 子组件构造函数中的错误
+
+##### 它不会捕获
+
+| 场景              | 示例                            | 原因             |
+| :---------------- | :------------------------------ | :--------------- |
+| 异步请求错误      | fetch('/api').catch()           | 不在渲染阶段抛出 |
+| 事件处理器错误    | onClick={() => { throw ... }}   | 不在渲染阶段     |
+| 异步代码错误      | setTimeout(() => { throw ... }) | 不在渲染阶段     |
+| Promise rejection | async 函数中的 throw            | **属于异步错误** |
+
+
+
+## 注意事项
+
+- 无法捕获自身的错误、事件处理器中的错误、异步代码错误（setTimeout / Promise）及 SSR 中的错误
+- 函数组件没有等价方法，需用类组件实现错误边界
 
 ## forceUpdate
 
@@ -1724,15 +1757,6 @@ React 事件：父元素事件监听！
 
 ## 错误处理
 
-当渲染过程，生命周期，或子组件的构造函数中抛出错误时，会调用如下方法：
-
-抛出错误后，请使用 static getDerivedStateFromError（）渲染备用 UI，使用 componentDidCatch（）打印错误信息
-
-- try,catch
-
-- static getDerivedStateFromError()
-- componentDidCatch()
-
 ```
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -1761,6 +1785,42 @@ class ErrorBoundary extends React.Component {
   }
 }	
 ```
+
+
+
+### 与 componentDidCatch 的区别
+
+|      | getDerivedStateFromError   | componentDidCatch        |
+| :--- | :------------------------- | :----------------------- |
+| 阶段 | 渲染阶段                   | 提交阶段                 |
+| 用途 | 更新 state 触发**降级 UI** | 错误**日志上报**、副作用 |
+| 静态 | 是                         | 否                       |
+|      |                            |                          |
+
+通常两者搭配：getDerivedStateFromError 负责切换 UI，componentDidCatch 负责 Sentry / console.error 等日志上报。
+
+### 接口错误如何被 Error Boundary 捕获？
+
+需要手动在 catch 里调用 setState 抛出渲染错误：
+
+```jsx
+function Comp() {
+  const [error, setError] = useState(null);
+  
+  useEffect(() => {
+    fetch('/api')
+      .catch(err => setError(err));  // 异步错误不会触发 Error Boundary
+  }, []);
+
+  if (error) throw error;  // 这里抛出的才会被 Error Boundary 捕获
+
+  return <div>...</div>;
+}
+```
+
+所以接口错误**不会自动**进入 getDerivedStateFromError，你得在渲染路径上主动 throw 才行。
+
+
 
 ## 闭包
 
@@ -2541,7 +2601,37 @@ http://www.ruanyifeng.com/blog/2019/09/react-hooks.html
 
 **React Hooks 的意思是，组件尽量写成纯函数，如果需要外部功能和副作用，就用钩子把外部代码"钩"进来。**而React Hooks 就是我们所说的“钩子”。
 
+## 规则
 
+### 1. 只在最顶层调用 Hook
+
+**不要在循环、条件或嵌套函数中调用 Hook**，始终在 React 函数的最顶层使用。
+
+```jsx
+// 正确
+function Comp() {
+  const [count, setCount] = useState(0);
+  if (count > 0) {
+    useEffect(() => { ... }); // 这里没问题，因为 Hook 在顶层，条件在内部
+  }
+}
+
+// 错误 —— Hook 在条件中
+function Comp() {
+  if (someCondition) {
+    const [count, setCount] = useState(0); // 违反规则
+  }
+}
+```
+
+原因：React 依赖 Hook 调用顺序来正确关联状态。顺序一变，状态映射全乱。
+
+### 2. 只在 React 函数中调用 Hook
+
+- 在 React **函数组件**中调用
+- 在**自定义 Hook**（以 use 开头的函数）中调用
+
+**不要在普通 JavaScript 函数、class 组件、事件处理函数中调用。**
 
 ## useContext():共享状态钩子
 
