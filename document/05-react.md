@@ -2359,6 +2359,17 @@ function ExpensiveComponent({ data }) {
 
 ## 内置组件
 
+### createPortal
+
+`createPortal` 是 React 提供的 API，作用是**将子组件渲染到 DOM 树的其他位置**，而不是当前组件的父节点内。
+
+这里 `createPortal(...)` 将弹窗内容直接挂载到 `document.body` 下，主要解决两个问题：
+
+1. **z-index 层级问题**：弹窗使用 `fixed` 定位 + `z-50`，如果渲染在普通组件层级内，可能被父容器的 `overflow: hidden`、`transform` 或其他 `z-index` 上下文截断或遮挡。Portal 确保弹窗脱离组件树，直接挂在 `body` 上，层级最高。
+2. **样式隔离**：弹窗的遮罩层（`bg-black/50`）和底部面板需要覆盖整个视口（`fixed inset-0`），Portal 保证它不受父组件 CSS 约束（如 `position: relative`、`overflow`）的影响。
+
+简言之：**让弹窗在视觉上"浮"在整个页面最上层，不被任何父元素裁剪或遮挡。**
+
 ### Fragment
 
 无论是函数组件还是类组件，return 的 React 元素的语法必须是由一个标签包裹起来的所有虚拟 DOM 内容
