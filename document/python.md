@@ -20,8 +20,6 @@
 
   - 示例：
 
-    python
-
     ```python
     print('''一二三
     四五六''')
