@@ -1878,7 +1878,289 @@ Spec-Kit 强调“先想清楚再动手”，它的核心工作流是严格的�
 6. **第五步：代码实现 (`/speckit.implement`)**
    确认任务清单无误后，下达此指令。AI 会严格按照任务列表开始生成代码，并且 Spec-Kit 强烈建议配合 TDD（测试驱动开发），让 AI 先生成测试用例，再写实现代码。
 
+## harness
 
+约束智能体，编排流程，功能文档记录，code rw，工具调用，功能闭环
+
+![image-20260804162445050](img/AI/image-20260804162445050.png)
+
+
+
+## 自建SDD
+
+### 目录结构
+
+```
+docs/design/YYYY-MM-DD-<topic>-design/
+│
+├── index.md                              ← Phase 2: writing-doc (技术方案文档)
+│
+├── spec/
+│   ├── implementation-plan.md            ← Phase 3: writing-plans (不拆分时)
+│   └── <module>-spec.md                  ← Phase 3: writing-plans (拆分时，多份)
+│
+├── assets/
+│   ├── figma/
+│   │   ├── 设计稿截图.png                ← figma-implement-design Step 3
+│   │   ├── 标注图.png                    ← figma-implement-design Step 3
+│   │   ├── icon-home.svg                 ← figma-implement-design Step 4
+│   │   └── illustration.png              ← figma-implement-design Step 4
+│   │
+│   ├── screenshots/
+│   │   ├── 列表页验收.png                ← webapp-testing (Playwright 截图)
+│   │   ├── 详情页验收.png                ← webapp-testing
+│   │   └── 思维导图.png                  ← mcp-exe (chrome-devtools 截图)
+│   │
+│   └── diagrams/
+│       ├── 业务流程图.drawio.png          ← mcp-exe (drawio 导出)
+│       └── 架构时序图.drawio.png          ← mcp-exe
+│
+└── evidence/
+    └── phase5-verification.md             ← Phase 5: 自动化验证结果 + 手动验收记录
+└── .agent-orchestrator/                ← agent-orchestrator-mcp 编排产物
+    ├── tasks.json                      ←   任务记录
+    └── results/                        ←   子任务执行结果（<编号>-result.md）
+```
+
+
+
+### commit同步文档
+
+目的是为了同步项目说明文档
+
+```
+┌─ 日常工作 ──────────────────────────────────────┐
+│                                                  │
+│  git commit  →  hook 自动追加 hash 到列表         │
+│     ↓                                            │
+│  git commit  →  hook 追加 hash（上一个也带走）     │
+│     ↓                                            │
+│  git push    →  代码+hash列表一起到远程           │
+│     ↓                                            │
+│  在 Copilot 说 "sync docs"                       │
+│     ↓                                            │
+│  AI 逐个 git show 每个 hash → 分析影响 → 更新文档  │
+│     ↓                                            │
+│  AI 清空 hash 列表 → git add → 等待下一个 push   │
+│                                                  │
+└──────────────────────────────────────────────────┘
+```
+
+```
+post-commit
+#!/usr/bin/env sh
+
+# post-commit: 每次 commit 后将 HEAD hash 记录到 doc-sync-commits
+# push 后对 Copilot 说 "sync docs" 即可触发 AI 读取并同步文档
+
+# 如果本次 commit 只修改了 doc-sync-commits 本身，跳过记录（避免自循环）
+CHANGED=$(git diff-tree --no-commit-id -r HEAD --name-only)
+if echo "$CHANGED" | grep -v '^$' | grep -vq '^docs/\.doc-sync-commits$'; then
+  HASH=$(git rev-parse HEAD)
+  echo "$HASH" >> docs/.doc-sync-commits
+  git add docs/.doc-sync-commits
+fi
+
+
+
+```
+
+当用户说 **"sync docs"** / **"同步文档"** 时，AI 必须执行以下流程：
+
+1. **读取待同步列表**：读取 `docs/.doc-sync-commits`，获取所有待同步的 commit hash
+2. **逐个获取 diff**：对每个 hash 执行 `git show --stat <hash>` 和 `git show <hash>` 获取变更信息
+3. **匹配受影响文档**：根据变更文件路径，判断 `docs/design/` 和 `docs/prod/` 中哪些文档需要更新：
+   - `src/pages/<page>/**` → `docs/design/<对应设计文档>` 和 `docs/prod/<对应生产文档>`
+   - `src/components/**` → 引用该组件的页面对应的文档
+   - `src/services/**` → 相关功能模块的文档
+   - `src/constants/**` → 相关业务领域的文档
+   - `src/types/**` → 相关全局类型的文档
+4. **列出变更方案**：向用户展示本次变更影响哪些文档、建议如何更新
+5. **等待确认后执行**：用户确认后逐个更新文档
+6. **清空 hash 列表**：所有文档同步完成后，将 `docs/.doc-sync-commits` 恢复为空（仅保留注释头）
+
+**触发词**：`sync docs`、`同步文档`、`文档同步`
+
+**文件未找到时**
+
+若 hash 已被垃圾回收，对应的 hash 行跳过并标注 "hash not found"。警告用户该 commit 可能已被 rebase 或清理。
+
+# page-development-workflow 闭环验证报告
+
+> 验证日期：2026-08-08
+> 验证项目：yqa-g-h5-urban
+> 验证功能：日常检查 (daily-inspection) 列表页
+> 验证方式：MCP 编排 + 内联验证，无代码变更
+
+---
+
+## 一、流程总览
+
+按 SKILL.md 严格状态机执行 6 个 Phase，每阶段门控确认后推进：
+
+```mermaid
+flowchart LR
+  P1[Phase 1 需求调研] -->|确认| P2[Phase 2 技术方案]
+  P2 -->|确认| P3[Phase 3 实现计划]
+  P3 -->|确认| P4[Phase 4 编码实现]
+  P4 --> P5[Phase 5 测试验收]
+  P5 -->|确认| P6[Phase 6 收尾交付]
+```
+
+---
+
+## 二、各阶段执行摘要
+
+### Phase 1：需求分析与技术调研
+
+| 维度     | 内容                                     |
+| -------- | ---------------------------------------- |
+| 输入源   | PRD §2.1、现有代码、Swagger              |
+| 产出     | 需求共识 + 现有资产清单 + 待决策点       |
+| 技能调用 | `mcp-integration.md`（Swagger 接口查询） |
+
+### Phase 2：技术方案编写
+
+| 维度     | 内容                                                      |
+| -------- | --------------------------------------------------------- |
+| 输入     | Phase 1 确认的需求共识                                    |
+| 产出     | `docs/design/2026-08-08-daily-inspection-design/index.md` |
+| 技能调用 | `writing-doc`（前端功能技术文档模板，12 章节）            |
+| 注册     | 新增 `docs/pages/pages.yaml` 中 `daily-inspection` 条目   |
+
+### Phase 3：制定实现计划
+
+| 维度     | 内容                                    |
+| -------- | --------------------------------------- |
+| 输入     | Phase 2 技术方案                        |
+| 产出     | 4 种拆分方案 → 用户选 B（按技术层拆分） |
+| 技能调用 | `phase3-split-strategies.md`            |
+| 产物     | 4 个 `<NNx>-<module>-spec.md`           |
+
+**拆分方案 B（按技术层）：**
+
+```
+01-data-layer-spec.md           # Batch 1：串行前置
+02a-task-card-spec.md           # Batch 2：并行
+02b-task-list-modal-spec.md      # Batch 2：并行
+03-page-integration-spec.md     # Batch 3：串行，依赖 02a+02b
+```
+
+### Phase 4：编码实现（MCP 编排）
+
+| 维度     | 内容                            |
+| -------- | ------------------------------- |
+| 执行方式 | MCP 编排（用户选择）            |
+| 工具     | `agent-orchestrator-mcp` 全流程 |
+
+**MCP 编排五步执行：**
+
+| 步骤   | 工具                          | 结果             |
+| ------ | ----------------------------- | ---------------- |
+| Step 1 | `agent_create_task` ×4        | 4 个任务创建     |
+| Step 2 | `agent_open_task_chats` ×3 批 | 子窗口逐批打开   |
+| Step 3 | `agent_wait_for_tasks` ×3 批  | 全部完成         |
+| Step 4 | `agent_summarize_results`     | 内联补全缺失结果 |
+| Step 5 | `agent_complete_task` ×3      | 补齐缺失任务     |
+
+**验证结果：17/17 全部通过**
+
+| 规格                | 验收项                                                        | 结果   |
+| ------------------- | ------------------------------------------------------------- | ------ |
+| 01-data-layer       | InspectionTask 字段、TASK_STATUS_MAP、INSPECTION_TABS、page() | ✅ 4/4 |
+| 02a-task-card       | 优先级选取(5步)、展示字段、状态映射、转派                     | ✅ 4/4 |
+| 02b-task-list-modal | 子任务列表、标签一致性、RectifyProgressTag                    | ✅ 3/3 |
+| 03-page-integration | Tab切换、搜索过滤、组合筛选、滚动、空态、定位                 | ✅ 6/6 |
+
+### Phase 5：测试验收
+
+| 命令               | 结果                            |
+| ------------------ | ------------------------------- |
+| `pnpm lint`        | ✅ 0 errors（22 预存 warnings） |
+| `npx tsc --noEmit` | ✅ 列表页 0 errors              |
+| `pnpm build:test`  | ✅ 872ms                        |
+| 单元测试           | 跳过（项目无测试脚本）          |
+
+证据 → `evidence/phase5-verification.md`
+
+### Phase 6：收尾交付
+
+- 变更仅限 `docs/` 目录（设计文档 + pages.yaml），无 `src/` 代码改动
+- `sync:designs` 脚本不存在，跳过
+
+---
+
+## 三、技能调度记录
+
+| 技能                                           | 触发阶段         | 实际调用                |
+| ---------------------------------------------- | ---------------- | ----------------------- |
+| `mcp-integration.md`                           | Phase 1          | Swagger 接口查询        |
+| `writing-doc`                                  | Phase 2          | 创建技术方案文档        |
+| `phase3-split-strategies.md`                   | Phase 3          | 拆分方案与执行编排      |
+| `phase-gates.md`                               | 每阶段门控       | 输入/产出/门控自检      |
+| `pages-registry.md`                            | Phase 2          | pages.yaml schema 定义  |
+| `mcp-exe/references/agent-orchestrator-mcp.md` | Phase 4 MCP 编排 | Step 1-5 操作手册       |
+| `phase5-verification.md`                       | Phase 5          | 验证命令选择 & 证据模板 |
+
+---
+
+## 四、产物目录结构
+
+```
+docs/design/2026-08-08-daily-inspection-design/
+├── index.md                            # Phase 2 技术方案
+├── spec/                               # Phase 3 拆分规格
+│   ├── 01-data-layer-spec.md
+│   ├── 02a-task-card-spec.md
+│   ├── 02b-task-list-modal-spec.md
+│   └── 03-page-integration-spec.md
+├── results/                            # Phase 4 验证结果
+│   ├── 01-data-layer-result.md
+│   ├── 02a-task-card-result.md
+│   ├── 02b-task-list-modal-result.md
+│   └── 03-page-integration-result.md
+├── evidence/                           # Phase 5 验证证据
+│   └── phase5-verification.md
+├── brainstorm/                         # MCP 编排自动生成
+└── tasks.json                          # MCP 编排任务记录
+
+docs/pages/
+└── pages.yaml                          # 页面索引（含 daily-inspection 条目）
+```
+
+---
+
+## 五、工作流完善项（本次验证中修复/补充）
+
+### 5.1 SKILL.md 完善
+
+| 改进                                                    | 说明                                         |
+| ------------------------------------------------------- | -------------------------------------------- |
+| `pages.yaml` 替代 `pages.json`                          | 注释支持更好，YAML 格式                      |
+| pages.yaml schema 独立到 `references/pages-registry.md` | 主文件精简，细节按需加载                     |
+| `children` 仅路由嵌套约束                               | 列表页不放 children，schema 明确             |
+| spec 命名 `NNx-` 格式                                   | `01`、`02a`、`02b`、`03`，并行批次用字母后缀 |
+
+### 5.2 MCP 基础设施修复
+
+| Bug                                   | 文件               | 修复                                            |
+| ------------------------------------- | ------------------ | ----------------------------------------------- |
+| `agent_open_task_chats` JSON 解析错误 | `chat-launcher.ts` | 移除返回的 `codeCli` 和 `args`                  |
+| `tasks.json` 并发写入竞态损坏         | `store.ts`         | 新增 `withStoreLock()` 原子化 read→modify→write |
+
+---
+
+## 六、闭环结论
+
+| 检查项                      | 状态 |
+| --------------------------- | ---- |
+| 6 个 Phase 按序执行，无跳过 | ✅   |
+| 每阶段有门控确认            | ✅   |
+| 所有 spec 有对应 result     | ✅   |
+| 自动化验证全部通过          | ✅   |
+| pages.yaml 已注册           | ✅   |
+| 产物目录符合规范            | ✅   |
+| 无与需求无关的文件变更      | ✅   |
 
 # 知识库
 
@@ -3196,5 +3478,4 @@ https://myclaw.ai/zh-CN/blog/hermes-agent-vs-claude-code
 - 196b5a382698ab0a76647b3264f7fa3f8f53c27c4e30340d
 
 ![image-20260324101209994](img/AI/image-20260324101209994.png)
-
 
