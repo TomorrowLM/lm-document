@@ -28,6 +28,309 @@
 
 
 
+# python
+
+## 字符串
+
+- **第一种：普通字符串** [02:03](https://b.quark.cn/apps/5AZ7aRopS/routes/mofb35Rkb?debug=0&fid=ef717e6f379b473b81a6def3c9cbf6c1#?seek_t=123)
+
+  - 使用单引号或双引号括起字符串内容。
+  - 示例：`print("Hello")` 或 `print('World')`
+
+- **第二种：原始字符串** [02:29](https://b.quark.cn/apps/5AZ7aRopS/routes/mofb35Rkb?debug=0&fid=ef717e6f379b473b81a6def3c9cbf6c1#?seek_t=149)
+
+  - 使用前缀 `r` 表示原始字符串。
+  - 不将反斜杠视为转义字符。
+  - 示例：`print(r"C:\new\text.txt")` 输出 `C:\new\text.txt`
+  - 应用于路径、正则表达式等需要保留反斜杠的场景。
+
+- **第三种：三引号多行字符串** [05:13](https://b.quark.cn/apps/5AZ7aRopS/routes/mofb35Rkb?debug=0&fid=ef717e6f379b473b81a6def3c9cbf6c1#?seek_t=313)
+
+  - 使用三个单引号或双引号括起内容。
+
+  - 支持换行、包含引号。
+
+  - 示例：
+
+    ```python
+    print('''一二三
+    四五六''')
+    ```
+
+  - 可用于多行文本、文档字符串（docstring）。
+
+- **第四种：格式化字符串（f-string）** [07:39](https://b.quark.cn/apps/5AZ7aRopS/routes/mofb35Rkb?debug=0&fid=ef717e6f379b473b81a6def3c9cbf6c1#?seek_t=459)
+
+  - 使用前缀 `f` 或 `F`。
+
+  - 在字符串中使用花括号 `{}` 插入变量或表达式。
+
+  - 示例：
+
+    python
+
+    ```python
+    name = "Tom"
+    print(f"Hello, {name}")
+    ```
+
+  - 常用于动态输出信息，提升代码可读性。
+
+- **第五种：Unicode字符串** [13:14](https://b.quark.cn/apps/5AZ7aRopS/routes/mofb35Rkb?debug=0&fid=ef717e6f379b473b81a6def3c9cbf6c1#?seek_t=794)
+
+  - 使用前缀 `u` 表示Unicode字符串。
+  - 示例：`u"你好"`
+  - 用于处理非ASCII字符，避免文件编码问题。
+  - 推荐配合标准库如 `codecs` 使用。
+
+- **第六种：字节串（bytes）** [15:54](https://b.quark.cn/apps/5AZ7aRopS/routes/mofb35Rkb?debug=0&fid=ef717e6f379b473b81a6def3c9cbf6c1#?seek_t=954)
+
+  - 使用前缀 `b` 表示字节串。
+
+  - 示例：`b"hello"`
+
+  - 表示二进制数据。
+
+  - 常用于网络传输、文件操作中字节流处理。
+
+  - 示例操作：
+
+    python
+
+    ```python
+    data = b"hello"
+    decoded = data.decode("utf-8")
+    encoded = decoded.encode("utf-8")
+    ```
+
+- **Python与Java、JavaScript字符串对比** [18:12](https://b.quark.cn/apps/5AZ7aRopS/routes/mofb35Rkb?debug=0&fid=ef717e6f379b473b81a6def3c9cbf6c1#?seek_t=1092)
+
+  - **定义方式**
+    - Python：支持单引号、双引号、三引号。
+    - Java：字符串用双引号表示，字符用单引号。
+    - JavaScript：单引号、双引号均可，反斜杠用于换行。
+  - **不可变性**
+    - Python 和 Java 的字符串对象不可变，修改会创建新对象。
+    - JavaScript 同样不可变。
+    - Vue.js 等框架中变量可变，但不是字符串本身的特性。
+  - **字符串方法**
+    - Python 提供丰富内置方法（如 `split`, `replace`, `join` 等）。
+    - Java 和 JavaScript 方法类似，但命名和参数略有不同。
+    - 示例对比：
+      - Python: `s.split()`
+      - Java: `s.split("\\s+")`
+      - JavaScript: `s.split(/\s+/)`
+  - **格式化支持**
+    - Python 有 f-string。
+    - Java 使用 `String.format()` 或 `Formatter`类。
+    - JavaScript 使用模板字符串（反引号 + `${}`）。
+  - **多行支持**
+    - Python 使用三引号。
+    - JavaScript 使用反引号（`）。
+    - Java 需手动拼接或使用 `\n`。
+
+## 编码
+
+### 一、常见字符编码标准
+
+#### 1.1 ASCII
+
+- 全称：美国信息交换标准代码（American Standard Code for Information Interchange）
+- 包含 128 个字符，涵盖英文字母、数字、标点符号和控制字符
+- **每个字符对应唯一的 7 位二进制数**
+- 是最早的字符编码标准，也是许多其他编码的基础
+
+#### 1.2 Unicode
+
+- **使用一个二进制数值表示每个字符，确保全球范围内字符的唯一性**
+- 目的是为全球所有语言字符提供统一的编码系统
+- 不直接定义存储方式，只定义"字符→码点"的映射（如 `U+4E2D` = 中）
+
+#### 1.3 UTF-8
+
+- 可变长度 Unicode 编码方案，**使用 1 到 4 个字节表示一个字符**
+- 完全兼容 ASCII，广泛用于网页设计、邮件传输等场景
+- 无字节序问题，是目前的事实标准
+
+#### 1.4 其他常见编码速查
+
+| 编码         | 字节数   | 说明                                                       |
+| ------------ | -------- | ---------------------------------------------------------- |
+| UTF-8        | 1~4 字节 | 变长，兼容 ASCII，推荐首选                                 |
+| UTF-16       | 2/4 字节 | Windows 内核 / JVM 内部使用，有 LE/BE 字节序               |
+| GBK / GB2312 | 1~2 字节 | 中文编码，Windows 中文版默认代码页 936                     |
+| Latin-1      | 1 字节   | 仅西欧字符；解码不抛异常（0x00-0xFF 全覆盖），常用于吞乱码 |
+
+---
+
+### 二、Python 3 编码核心机制
+
+#### 2.1 两种数据类型
+
+| 类型    | 含义                      | 场景         |
+| ------- | ------------------------- | ------------ |
+| `str`   | 内存中的 Unicode 码点序列 | 程序内部处理 |
+| `bytes` | 磁盘/网络传输的字节序列   | IO 操作      |
+
+两个方向的转换**必须显式指定编码**：
+
+```python
+# bytes → str（解码）
+b'\xe4\xb8\xad'.decode('utf-8')   # '中'
+
+# str → bytes（编码）
+'中'.encode('utf-8')              # b'\xe4\xb8\xad'
+```
+
+#### 2.2 编码转换实践
+
+**字符串 → UTF-8 字节序列**
+
+```python
+text = "你好"
+byte_data = text.encode("utf-8")
+print(byte_data)  # b'\xe4\xbd\xa0\xe5\xa5\xbd'
+```
+
+**UTF-8 字节序列 → 字符串**
+
+```python
+byte_data = b'\xe4\xbd\xa0\xe5\xa5\xbd'
+text = byte_data.decode("utf-8")
+print(text)  # 你好
+```
+
+#### 2.3 两大经典错误
+
+| 错误                 | 原因                   | 典型场景                   |
+| -------------------- | ---------------------- | -------------------------- |
+| `UnicodeDecodeError` | 用错误编码解码字节流   | 用 UTF-8 读取 GBK 文件     |
+| `UnicodeEncodeError` | 字符无法用目标编码表示 | `'中文'.encode('latin-1')` |
+
+#### 2.4 编码错误处理
+
+Python 的 `encode()` / `decode()` 支持 `errors` 参数：
+
+| 参数                      | 行为               | 适用场景               |
+| ------------------------- | ------------------ | ---------------------- |
+| `errors='strict'`（默认） | 抛出异常           | 开发阶段，尽早暴露问题 |
+| `errors='ignore'`         | 忽略无法处理的字符 | 数据清洗，丢弃损坏部分 |
+| `errors='replace'`        | 用 `?` 替换        | 保留位置信息，便于排查 |
+
+```python
+# 示例：忽略无法解码的字节
+b'\xff\xfehello'.decode('utf-8', errors='ignore')  # 'hello'
+
+# 示例：替换无法编码的字符
+'你好'.encode('latin-1', errors='replace')  # b'??'
+```
+
+#### 2.5 文件操作中的编码问题
+
+**中文乱码根因**：文件编码与 Python 解释器默认编码不一致。
+
+**解决方案**：统一显式使用 `encoding='utf-8'` 进行文件读写。
+
+```python
+# 读取文本文件
+with open('test.txt', 'r', encoding='utf-8') as file:
+    content = file.read()
+
+# 写入文本文件
+with open('output.txt', 'w', encoding='utf-8') as file:
+    file.write('中文内容')
+
+# 处理带 BOM 的 UTF-8 文件
+with open('data.csv', 'r', encoding='utf-8-sig') as file:
+    content = file.read()
+```
+
+#### 2.6 二进制文件处理
+
+默认情况下 Python 将文件视为文本文件，读取二进制数据会出错（如 `\r\n` 自动转换）。二进制模式不会做任何转换：
+
+```python
+# 写入二进制数据
+with open('data.bin', 'wb') as file:
+    file.write(b'\x00\x01\x02\x03')
+
+# 读取二进制数据
+with open('data.bin', 'rb') as file:
+    raw = file.read()
+    print(raw)  # b'\x00\x01\x02\x03'
+```
+
+#### 2.7 最佳实践清单
+
+| 场景     | 做法                                          | 反例                              |
+| -------- | --------------------------------------------- | --------------------------------- |
+| 文件读写 | 显式指定 `encoding='utf-8'`                   | 依赖系统 locale 默认值            |
+| 源码声明 | `# -*- coding: utf-8 -*-` 放在文件头部        | 无声明                            |
+| 标准 I/O | 设 `PYTHONIOENCODING=utf-8` 或 `PYTHONUTF8=1` | Windows 下不设，stdout 走 GBK     |
+| CSV/JSON | 用 `encoding='utf-8-sig'` 处理带 BOM 的文件   | 不加 `-sig`，BOM 被当作内容       |
+| 网络数据 | 先看 `Content-Type` / `charset`，再解码       | 盲目用 UTF-8 解所有响应           |
+| 数据库   | 连接串指定 `charset=utf8mb4`                  | `utf8`（仅 3 字节，不兼容 emoji） |
+
+---
+
+### 三、Agent 场景下的字符编码
+
+#### 3.1 Agent 链路中的编码陷阱
+
+```
+用户输入 → 前端 → API → LLM → 工具调用（Shell/Python/文件读写）→ 返回 → 前端渲染
+```
+
+每个环节都可能发生编码丢失或转换错误。
+
+| 环节                 | 典型问题                                  | 根因                                              |
+| -------------------- | ----------------------------------------- | ------------------------------------------------- |
+| Windows 终端工具调用 | 中文文件读取后变 `è…`                     | PowerShell 默认 GBK（cp936），Agent 按 UTF-8 解析 |
+| Linux/macOS Shell    | `LANG=C` 时中文变 `???`                   | locale 未设为 UTF-8                               |
+| LLM 输出             | BPE tokenizer 边界切分导致 emoji/CJK 截断 | BPE 按字节切分，多字节字符可能被拆散              |
+| 工具链传递           | 文件名含中文，传给 Shell 时被转义         | 参数未做 encoding 保护                            |
+| 上下文污染           | 一次乱码进入 session 记忆，后续持续出错   | 乱码字节被当作合法文本存储                        |
+
+#### 3.2 Windows Agent 乱码修复
+
+中文 Windows 下 Agent 最常见的编码故障：
+
+**原因**：Windows PowerShell 默认代码页 936（GBK），Agent 工具通过 Shell 执行命令时按 UTF-8 解析输出 → 中文乱码。
+
+| 修复方法        | 命令                                                         | 作用范围     |
+| --------------- | ------------------------------------------------------------ | ------------ |
+| 切换代码页      | `chcp 65001`                                                 | 当前终端会话 |
+| 永久修改        | 注册表 `HKCU\Console\CodePage` = 65001                       | 新打开的终端 |
+| Python 环境变量 | `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`                    | Python 进程  |
+| PowerShell 配置 | `$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` | 当前 PS 会话 |
+
+#### 3.3 Agent System Prompt 语言锁定
+
+| 层级          | 方法                   | 效果                          |
+| ------------- | ---------------------- | ----------------------------- |
+| System Prompt | 声明语言偏好           | 最高优先级                    |
+| 工具返回      | 指定英文结果翻译成中文 | 防止工具输出带偏 LLM          |
+| 文件编码      | 所有读写默认 UTF-8     | 避免 Agent 读写文件时编码错误 |
+
+---
+
+### 四、总结
+
+| 维度     | Python 侧                         | Agent 侧                               |
+| -------- | --------------------------------- | -------------------------------------- |
+| 核心问题 | str/bytes 转换编码不匹配          | 工具链多环节编码不一致                 |
+| 高发场景 | 文件读写、网络请求、数据库        | Shell 输出解析、文件操作工具           |
+| 根因     | 依赖系统 locale 隐式编码          | PowerShell 默认 GBK + Agent 默认 UTF-8 |
+| 解法     | 所有 IO 显式传 `encoding='utf-8'` | chcp 65001 + 环境变量 + Prompt 声明    |
+| 兜底     | `errors='ignore'` / `replace`     | 工具结果 try/except 编码检测容错       |
+
+**核心记忆**：`str` 在内存，`bytes` 在 IO，两者间转换永远显式传 `encoding`。
+*（内容由AI生成，仅供参考）*
+
+## 异常
+
+![image-20260802140015021](img/python/image-20260802140015021.png)
+
 # 入门
 
 https://www.modb.pro/db/1881156671699955712
@@ -105,6 +408,12 @@ LLM的训练过程分为预训练和微调两个阶段。
 Token是指在自然语言处理（NLP）模型中，输入文本被分割成的最小单位（通常是单词、子词或字符），这些单位被称为 **Token**。
 
 1个英文字符≈0.3个token。1个中文字符≈0.6个token。
+
+1 个 token 对应字符数
+
+| **英文** | 约 **3.3 个字符** |
+| -------- | ----------------- |
+| **中文** | 约 **1.7 个字符** |
 
 ### 原理
 
