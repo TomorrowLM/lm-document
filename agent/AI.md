@@ -1577,94 +1577,109 @@ Spec-Kit 强调“先想清楚再动手”，它的核心工作流是严格的�
 来源：`page-development-workflow` SKILL.md
 
 ```
-Phase 1 需求分析 → [⛔确认] → Phase 2 技术方案 → [⛔确认] → Phase 3 实现计划 → [⛔确认] → Phase 4 编码实现 → Phase 5 测试验收 → Phase 6 收尾交付 → ✅完成
+Phase 1 需求分析与技术调研
+  → [⛔ 用户确认]
+Phase 2 技术方案编写
+  → [⛔ 用户确认]
+Phase 3 制定实现计划
+  → [⛔ 用户确认]
+Phase 4 编码实现
+Phase 5 测试验收
+  → [⛔ 用户确认]
+Phase 6 收尾交付
+  → ✅ 完成
 ```
+
+轻量路径只允许合并 Phase 1-3 的展示和确认，不允许省略阶段产出，也不允许跳过 Phase 4-6。
 
 #### 流程图
 
-![workflow-slikk](https://image-1304658407.cos.ap-shanghai.myqcloud.com/AI/20260622112356_2afc5b.svg)
+流程图拆成两层：第一张只表达阶段状态机和门控，第二张只表达 Phase 4 的执行方式与 MCP 编排细节。
+
+##### 总状态机
 
 ```mermaid
 flowchart TD
-  Start(["触发: 开发新页面 / 实现设计稿"]) --> P1A
+  Start(["触发判断\n新页面 / 设计稿 / PRD / 完整功能页"]) --> Trigger{"是否适用\n页面开发工作流?"}
+  Trigger -->|"否"| Quick["走小范围变更 / Bug 修复流程"]
+  Trigger -->|"是"| P1["Phase 1\n需求分析与技术调研"]
 
-  subgraph Phase1["Phase 1: 需求分析与技术调研"]
-    P1A["收集信息\n设计稿 / PRD / API文档 / 技术栈"] --> P1B["确认关键点\n路由 / 组件 / 交互 / 数据 / 状态"]
-    P1B --> P1C["技术决策\n模块封装 / 核心组件 / API组织 / 状态管理"]
-    P1C --> P1D{"GitNexus\n索引存在?"}
-    P1D -->|"是"| P1E["探索现有代码结构\n发现可复用组件"]
-    P1D -->|"否"| P1F["建立索引\nnpx gitnexus analyze"]
-    P1F --> P1E
-    P1E --> P1G{"MCP资源?"}
-    P1G -->|"Swagger"| P1H["get_swagger_mcp\n获取接口详情"]
-    P1G -->|"Figma"| P1I["get_figma_data\n获取UI数据"]
-    P1G -->|"无"| P1J["Phase 1 产出完成"]
-    P1H --> P1J
-    P1I --> P1J
-  end
-
-  P1J --> Gate1{"⛔ 门控\n用户确认?"}
+  P1 --> P1Out["产出\n需求共识 / 范围取舍 / 待决策点 / 调研摘要"]
+  P1Out --> Gate1{"⛔ 用户确认\nPhase 1?"}
   Gate1 -->|"未确认"| Gate1W["等待用户确认"]
   Gate1W --> Gate1
-  Gate1 -->|"确认"| P2A
+  Gate1 -->|"确认"| P2["Phase 2\n技术方案编写"]
 
-  subgraph Phase2["Phase 2: 技术方案设计"]
-    P2A{"用户有\n技术文档?"}
-    P2A -->|"是"| P2B["审阅并补充实现细节"]
-    P2A -->|"否"| P2C["使用 writing-doc\n创建技术文档"]
-    P2B --> P2D["确认: 路由 / 组件拆分\nhooks / 常量 / 接口字段"]
-    P2C --> P2D
-  end
-
-  P2D --> Gate2{"⛔ 门控\n用户确认?"}
+  P2 --> P2Pages{"页面是否已注册到\ndocs/pages/pages.yaml?"}
+  P2Pages -->|"否"| P2Register["补齐页面条目\n或提示用户先补充"]
+  P2Pages -->|"是"| P2Doc["创建 / 审阅 index.md\n明确组件、状态、接口、空态和错误态"]
+  P2Register --> P2Doc
+  P2Doc --> Gate2{"⛔ 用户确认\nPhase 2?"}
   Gate2 -->|"未确认"| Gate2W["等待用户确认"]
   Gate2W --> Gate2
-  Gate2 -->|"确认"| P3A
+  Gate2 -->|"确认"| P3["Phase 3\n制定实现计划"]
 
-  subgraph Phase3["Phase 3: 制定实现计划"]
-    P3A["使用 writing-plans\n生成实现计划"] --> P3B["任务序列:\n类型 → 常量 → API\n→ TDD状态 → TDD组件\n→ TDD页面 → 路由"]
-    P3B --> P3C{"GitNexus\n索引?"}
-    P3C -->|"是"| P3D["影响面评估\nimpact analysis"]
-    P3C -->|"否"| P3E["跳过影响评估"]
-    P3D --> P3F["用户选择执行方式"]
-    P3E --> P3F
-    P3F --> P3G["子代理驱动 / 内联执行 / 直接实现"]
-  end
-
-  P3G --> Gate3{"⛔ 门控\n用户确认?"}
+  P3 --> P3Plan["读取拆分策略\n展示 3-5 种拆分方案"]
+  P3Plan --> P3Impact{"修改现有模块\n且有 GitNexus 索引?"}
+  P3Impact -->|"是"| P3Risk["影响面分析\n高风险先提示"]
+  P3Impact -->|"否"| P3Write["写入 implementation-plan.md\n或 NNx-<module>-spec.md"]
+  P3Risk --> P3Write
+  P3Write --> Gate3{"⛔ 用户确认\nPhase 3?"}
   Gate3 -->|"未确认"| Gate3W["等待用户确认"]
   Gate3W --> Gate3
-  Gate3 -->|"确认"| P4Check
+  Gate3 -->|"确认"| P4["Phase 4\n编码实现"]
 
-  subgraph Phase4["Phase 4: 编码实现"]
-    P4Check["前置条件检查\nP1 + P2 + P3 均已确认"] --> P4B{"执行方式?"}
-    P4B -->|"子代理驱动"| P4C["subagent-driven-development"]
-    P4B -->|"内联执行"| P4D["executing-plans"]
-    P4B -->|"直接实现"| P4E["按步骤顺序编写"]
-    P4C --> P4F["TDD任务:\n红-绿-重构循环"]
-    P4D --> P4F
-    P4E --> P4F
-    P4F --> P4G["声明式代码:\n类型 / 常量 / API 直接编写"]
-  end
+  P4 --> P4Out["产出\n可工作代码 / 变更记录 / 子任务结果"]
+  P4Out --> P5["Phase 5\n测试验收"]
+  P5 --> P5Result{"验证与审查\n是否通过?"}
+  P5Result -->|"失败 / Critical / Important"| P4
+  P5Result -->|"通过"| P5Out["产出\n验证证据 / 手动验收记录 / 审查结论"]
+  P5Out --> Gate5{"⛔ 用户确认\nPhase 5?"}
+  Gate5 -->|"未确认"| Gate5W["等待用户确认"]
+  Gate5W --> Gate5
+  Gate5 -->|"确认"| P6["Phase 6\n收尾交付"]
+  P6 --> P6Sync{"存在 npm run\nsync:designs?"}
+  P6Sync -->|"是"| Sync["同步 pages.yaml"]
+  P6Sync -->|"否"| Summary["输出交付摘要\n证据 / 文档 / 风险 / 下一步"]
+  Sync --> Summary
+  Summary --> Done(["✅ 完成"])
+```
 
-  P4G --> P5A
+##### Phase 4 执行与 MCP 编排细节
 
-  subgraph Phase5["Phase 5: 测试验收"]
-    P5A["自动化测试\n单测 / 类型检查 / ESLint / 构建"] --> P5B{"全部通过?"}
-    P5B -->|"否"| P5Fix["修复问题"]
-    P5B -->|"是"| P5D["UI手动验证\n还原度 / 交互 / 分页"]
-    P5D --> P5E{"UI通过?"}
-    P5E -->|"否"| P5Fix
-    P5E -->|"是"| P5F["代码审查\nrequesting-code-review"]
-    P5F --> P5G{"Critical\n问题?"}
-    P5G -->|"是"| P5H["修复后重新验收"]
-    P5G -->|"否"| P5I["Minor问题\n记录 TODO review"]
-  end
+```mermaid
+flowchart TD
+  P4Start(["进入 Phase 4\n确认 Phase 1-3 均已通过"]) --> ReadPlan["读取已确认的实现计划\n或子任务规格"]
+  ReadPlan --> ExecMode{"确认执行方式"}
 
-  P5Fix --> P4Check
-  P5H --> P5A
-  P5I --> P6["Phase 6: 收尾交付"]
-  P6 --> Done(["✅ 完成"])
+  ExecMode -->|"内联串行"| Inline["当前对话按计划逐项执行"]
+  ExecMode -->|"子代理驱动"| SubAgent["按任务边界分派子代理\n主窗口审查结果"]
+  ExecMode -->|"多窗口并行"| MultiWindow["输出新窗口启动指令\n主窗口负责合流检查"]
+  ExecMode -->|"MCP 编排"| ReadMcp["读取 phase4-execution-modes.md\n和 agent-orchestrator-mcp.md"]
+
+  ReadMcp --> CreateTasks["agent_create_tasks\n创建任务并显式指定 resultFile"]
+  CreateTasks --> HasShared{"存在共享层依赖?"}
+  HasShared -->|"是"| OpenShared["agent_open_task_chats\n先打开共享层任务"]
+  OpenShared --> WaitShared["agent_wait_for_tasks\n等待共享层完成"]
+  WaitShared --> OpenRest["agent_open_task_chats\n打开依赖任务"]
+  HasShared -->|"否"| OpenAll["agent_open_task_chats\n一次打开可并行任务"]
+  OpenRest --> WaitTasks["agent_wait_for_tasks\n或 agent_poll_tasks"]
+  OpenAll --> WaitTasks
+  WaitTasks --> Summarize["agent_summarize_results\n汇总子任务结果"]
+  Summarize --> Review{"主窗口审查\n是否合格?"}
+  Review -->|"否"| Rework["agent_request_rework\n写入返工原因"]
+  Rework --> Reopen["agent_open_task_chats\n重新打开返工任务"]
+  Reopen --> WaitTasks
+  Review -->|"是"| MarkReviewed["agent_mark_task_reviewed\n标记已审查"]
+
+  Inline --> ProgressMode{"确认推进模式"}
+  SubAgent --> ProgressMode
+  MultiWindow --> ProgressMode
+  MarkReviewed --> ProgressMode
+  ProgressMode -->|"自动推进"| Auto["每个任务或批次完成后\n自动进入下一个"]
+  ProgressMode -->|"手动确认"| Manual["每个任务或批次完成后\n暂停等待确认"]
+  Auto --> Finish["产出代码、变更记录\n进入 Phase 5"]
+  Manual --> Finish
 ```
 
 #### 铁律
@@ -1673,64 +1688,70 @@ flowchart TD
 2. **禁止直接写代码** — Phase 4 之前不得编写任何业务代码。
 3. **每阶段必须等用户确认** — 展示产出 → 等待明确回复 → 才进入下一阶段。
 4. **无产出不停留** — 每个 Phase 必须产出规定的交付物。
+5. **Phase 4 前置门禁** — Phase 1、Phase 2、Phase 3 任一未确认，禁止进入编码。
+6. **接口优先重新获取** — 涉及接口、服务、请求参数或响应字段时，先用 `get_swagger_mcp` 且 `refresh: true` 获取最新接口信息。
 
 ### 阶段产出规范
 
 | 阶段 | 核心动作 | 产出 | 门控条件 |
 | ---- | -------- | ---- | -------- |
-| Phase 1 需求分析 | 收集信息 → 确认关键点 → 技术决策 → GitNexus/MCP 增强 | 信息来源清单 + 关键点确认 + 技术决策说明 | 用户确认全部产出 |
-| Phase 2 技术方案 | 审阅/创建技术文档 → 细化组件拆分、hooks、常量、接口 | 技术文档（创建或补充） | 用户确认技术方案 |
-| Phase 3 实现计划 | 生成实现计划 → 拆分任务 → 影响评估 → 执行方式选择 | 详细实现计划 + 用户选择的执行方式 | 用户确认实现计划 |
-| Phase 4 编码实现 | 前置检查 → 按执行方式编码 → TDD 红绿重构循环 | 可运行的业务代码 + 任务结果 | — |
-| Phase 5 测试验收 | 自动化测试 → UI 手动验证 → 代码审查 | 测试通过证据 + 审查结果 | 全部验收项通过 |
-| Phase 6 收尾交付 | 变更范围确认 → 文档同步 → 遗留项记录 | 交付摘要 + 同步状态 | 无未关闭 Critical 问题 |
+| Phase 1 需求分析与技术调研 | 收集信息 → 确认页面目标、用户、流程、输入输出、边界状态、成功标准 → 调研复用组件、Hook、服务和执行流 | 需求共识 + 范围取舍 + 待决策点 + 调研摘要 | 用户确认 Phase 1 产出 |
+| Phase 2 技术方案编写 | 检查 `docs/pages/pages.yaml` → 审阅/创建技术方案 → 明确路由、文件、组件拆分、props、状态、hooks、API、空态和错误态 | `docs/design/YYYY-MM-DD-<topic>-design/index.md` + 方案摘要 | 用户确认技术方案 |
+| Phase 3 制定实现计划 | 读取拆分策略 → 给出 3-5 种拆分方案 → 用户选择拆分和执行方式 → 生成计划或子规格 | `spec/implementation-plan.md` 或 `spec/NNx-<module>-spec.md` | 用户确认实现计划 |
+| Phase 4 编码实现 | 前置检查 → 读取计划编排 → 选择执行方式和推进模式 → 按计划编码 → TDD 任务红绿重构 | 可工作的代码 + 变更记录 + 子任务结果 | Phase 1-3 已确认，执行方式和推进模式已确认 |
+| Phase 5 测试验收 | 入口自检 → 读取验证规范 → 选择并运行 test/typecheck/lint/build → 手动验收 → 代码审查 → 记录证据 | `evidence/phase5-verification.md` + 验证证据 + 审查结论 | 用户确认验收结果 |
+| Phase 6 收尾交付 | 汇总验证和审查 → 检查变更范围 → 按需执行 `npm run sync:designs` → 输出交付摘要 | 交付摘要 + 文档路径 + 遗留风险 + 下一步 | 无未关闭 Critical / Important 问题 |
 
 ### 产物目录规范
 
+以下结构是 `page-development-workflow` 与当前 `agent-orchestrator-mcp` 落盘规则合并后的目录规范。
+
 ```
 docs/design/YYYY-MM-DD-<topic>-design/
-│
-├── index.md                              ← Phase 2: writing-doc (技术方案文档)
-│
-├── spec/
-│   ├── implementation-plan.md            ← Phase 3: writing-plans (不拆分时)
-│   └── <module>-spec.md                  ← Phase 3: writing-plans (拆分时，多份)
-│
-├── assets/
+├── index.md                         # Phase 2：技术方案，必需
+├── spec/                            # Phase 3：可执行计划 / 子任务规格，必需
+│   ├── implementation-plan.md        # 不拆分时
+│   └── NNx-<module>-spec.md          # 拆分时；与 implementation-plan.md 默认二选一
+├── tasks.json                       # MCP 编排任务状态，按需
+├── prompts/                         # MCP 编排子 Agent Prompt，按需
+│   ├── task-<uuid>.md
+│   └── task-<uuid>.rework-N.md
+├── results/                         # Phase 4：执行报告 / MCP 子任务结果，按需
+│   ├── <编号>-result.md
+│   └── task-<uuid>.md
+├── evidence/                        # Phase 5：验证证据，必需
+│   └── phase5-verification.md
+├── assets/                          # 设计稿、截图、图表、导出资源，按需
 │   ├── figma/
-│   │   ├── 设计稿截图.png                ← figma-implement-design Step 3
-│   │   ├── 标注图.png                    ← figma-implement-design Step 3
-│   │   ├── icon-home.svg                 ← figma-implement-design Step 4
-│   │   └── illustration.png              ← figma-implement-design Step 4
-│   │
 │   ├── screenshots/
-│   │   ├── 列表页验收.png                ← webapp-testing (Playwright 截图)
-│   │   ├── 详情页验收.png                ← webapp-testing
-│   │   └── 思维导图.png                  ← mcp-exe (chrome-devtools 截图)
-│   │
 │   └── diagrams/
-│       ├── 业务流程图.drawio.png          ← mcp-exe (drawio 导出)
-│       └── 架构时序图.drawio.png          ← mcp-exe
-│
-├── results/                              ← Phase 4: 子任务执行结果
-│   ├── 01-data-layer-result.md
-│   ├── 02a-task-card-result.md
-│   └── 03-page-integration-result.md
-│
-├── evidence/
-│   └── phase5-verification.md             ← Phase 5: 自动化验证结果 + 手动验收记录
-│
-└── .agent-orchestrator/                   ← agent-orchestrator-mcp 编排产物
-  ├── tasks.json                         ← 任务记录
-  └── results/                           ← 子任务执行结果（<编号>-result.md）
+└── brainstorm/                      # 头脑风暴视觉伴侣产物，按需
 
 docs/pages/
-└── pages.yaml                             ← 页面索引
+└── pages.yaml                        # 全局页面索引，不属于单个 design 目录
+
+docs/
+├── tasks.json                        # 无法推断需求目录时的 MCP 兜底任务记录
+└── results/                          # 无法推断需求目录时的 MCP 兜底结果目录
 ```
+
+目录规则：
+
+- `index.md` 是整体技术方案，不放入 `spec/`。
+- `spec/` 只放可执行交付物，不放整体技术方案。
+- 不拆分时使用 `implementation-plan.md`；拆分时使用 `01-xxx-spec.md`、`02a-xxx-spec.md`、`02b-xxx-spec.md` 等子任务规格；两类默认二选一。
+- MCP 编排不再使用 `.agent-orchestrator/` 目录；能从 `inputFiles` 或 `resultFile` 推断需求目录时，`tasks.json`、`prompts/`、`results/` 直接写入对应 `docs/design/<需求目录>/` 或 `docs/prod/<需求目录>/`。
+- 无法推断需求目录时，MCP 编排兜底写入 `docs/tasks.json` 和 `docs/results/`。
+- 页面开发工作流内使用 MCP 编排时，应显式指定 `resultFile` 到当前设计目录的 `results/<编号>-result.md`，确保任务记录和结果归入同一功能目录。
+- `assets/` 全部按需创建，不是阶段验收的必需项。
+- `brainstorm/` 用于头脑风暴视觉伴侣产物，只有使用视觉伴侣时才创建。
+- `docs/pages/pages.yaml` 是全局页面索引，由 Phase 2 检查注册，Phase 6 按需同步。
 
 ### MCP 编排规范
 
 当任务可以拆分为多个相对独立的规格时，优先使用 MCP 编排执行。
+
+进入 MCP 编排前必须先读取 `mcp-exe/references/agent-orchestrator-mcp.md`，并按 Step 1→2→3→4→5 完整执行，禁止跳过打开子任务聊天窗口。
 
 | 步骤 | 动作 | 说明 |
 | ---- | ---- | ---- |
@@ -1738,7 +1759,7 @@ docs/pages/
 | Step 2 | 分批打开子任务 | 按依赖顺序启动，互不依赖的任务可并行 |
 | Step 3 | 等待任务完成 | 串行批次必须等前置任务完成后再进入下一批 |
 | Step 4 | 汇总结果 | 汇总所有子任务结果，检查缺失和冲突 |
-| Step 5 | 补齐结果 | 对缺失、失败或返工任务补齐结果并重新验收 |
+| Step 5 | 审查与返工 | 逐条审查任务结果；通过则标记 reviewed，不通过则 `request_rework` 并重新打开任务 |
 
 任务拆分命名建议：
 
@@ -1753,12 +1774,16 @@ docs/pages/
 
 验收必须保留证据，优先写入 `evidence/phase5-verification.md`。
 
+进入 Phase 5 前必须先读取 `references/phase5-verification.md` 和 `verification-before-completion`，并先确认已读取，再执行验证命令。
+
+进入 Phase 5 前必须完成入口自检：检查 `spec/` 下所有计划或子任务规格均已有对应执行产物；缺失则回到 Phase 4 补齐。
+
 | 验收项 | 示例命令 / 方式 | 产出 |
 | ------ | ---------------- | ---- |
 | Lint | `pnpm lint` | 错误数、预存 warning 说明 |
 | 类型检查 | `npx tsc --noEmit` | 类型错误范围和结果 |
 | 构建 | `pnpm build:test` / 项目构建脚本 | 构建耗时和结果 |
-| 单元测试 | 项目测试脚本 | 通过/失败用例 |
+| 单元测试 | 项目测试脚本；项目无脚本时记录跳过原因 | 通过/失败用例或跳过说明 |
 | UI 验证 | Playwright 截图或手动验收 | 截图、交互验证记录 |
 | 代码审查 | `requesting-code-review` | Critical / Minor 问题记录 |
 
@@ -1771,20 +1796,35 @@ UI 验证不通过  → 回到 Phase 4 修复 → 重新 Phase 5
 代码审查 Minor   → 记录 TODO(review) → 集中清理
 ```
 
+### 最终自检
+
+Phase 6 结束前逐项核对，任一未通过不得交付：
+
+- [ ] `docs/pages/pages.yaml` 包含本次方案涉及的全部页面条目。
+- [ ] `spec/` 下所有 spec 文件均已执行，并有对应执行产物。
+- [ ] `evidence/phase5-verification.md` 包含 test / typecheck / lint / build 四项结果或跳过原因。
+- [ ] 自动化验证、手动验收和代码审查三项结论均已记录。
+- [ ] 变更范围仅限本次需求，无无关文件改动。
+- [ ] 交付摘要、文档路径和遗留风险已输出。
+
 ### 技能调度规范
 
 | 阶段 | 推荐技能 | 用途 |
 | ---- | -------- | ---- |
-| Phase 1 | `gitnexus-exploring` | 探索现有代码结构 |
-| Phase 1 | `mcp-exe` / Swagger 查询 | 获取接口详情 |
+| Phase 1 | `brainstorming` | 从零需求且无 Figma / Swagger 时澄清需求 |
+| Phase 1-4 | `skill-routing` | Figma、视觉设计、React / Next.js 实现取舍 |
+| Phase 1 | GitNexus 探索 | 项目有索引时探索现有代码和复用点 |
+| Phase 1 | `mcp-exe` / Swagger 查询 | 获取接口详情；接口相关变更必须 `refresh: true` |
 | Phase 2 | `writing-doc` | 创建前端功能技术文档 |
-| Phase 3 | `writing-plans` | 生成实现计划 |
-| Phase 3 | `gitnexus-impact-analysis` | 评估影响范围 |
+| Phase 3 | `references/phase3-split-strategies.md` | 设计拆分方案和实现计划 |
+| Phase 3 | GitNexus 影响分析 | 修改现有模块前评估影响范围 |
+| Phase 4 | `references/phase4-execution-modes.md` | 选择内联、子代理、MCP 编排或多窗口执行方式 |
 | Phase 4 | `test-driven-development` | TDD 红-绿-重构循环 |
-| Phase 4 | `subagent-driven-development` | 子代理驱动执行（推荐） |
+| Phase 4 | `subagent-driven-development` | 子代理驱动执行 |
 | Phase 4 | `executing-plans` | 内联执行 |
 | Phase 5 | `verification-before-completion` | 自动化测试门控 |
 | Phase 5 | `requesting-code-review` | 代码质量审查 |
+| 任意阶段 | `token-saving` | 长文档、多文件、Figma、并行任务、反复调试时减少上下文消耗 |
 
 ### 文档同步机制
 
@@ -2702,6 +2742,39 @@ npx @modelcontextprotocol/inspector node your-server.js
 ### Chrome DevTools MCP
 
 > node版本至少 Node 20.19.0 LTS
+
+### chrome-mcp
+
+- 安装：npm install -g mcp-chrome-bridge
+
+- 配置：
+
+  ```
+  		"chrome-mcp-server": {
+        "type": "http",
+        "url": "http://127.0.0.1:12306/mcp"
+      },
+  ```
+
+- 扩展
+
+  - 打开下载页： [https://github.com/hangwin/mcp-chrome/releases](vscode-file://vscode-app/Applications/Visual Studio Code.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html)
+
+  - 下载最新 release 里的 Chrome 扩展压缩包，通常名称类似：
+
+    或包含 `extension` / `chrome-extension` 字样的 zip。
+
+  - 解压到本地目录，例如：
+
+  - Chrome 打开：
+
+  - 右上角打开「开发者模式」。
+
+  - 点「加载已解压的扩展程序」。
+
+  - 选择刚才解压出来的扩展目录。
+
+  - Chrome 右上角点扩展图标，打开 `mcp-chrome`，点 `Connect`。
 
 ### Figma MCP
 
