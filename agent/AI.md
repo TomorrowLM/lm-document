@@ -2739,11 +2739,35 @@ npx @modelcontextprotocol/inspector node your-server.js
 
 ## 第三方MCP
 
-### Chrome DevTools MCP
+### chrome
+
+`mcp-chrome` 和 `chrome-devtools-mcp` 都能让 AI 控制 Chrome，但定位不同：
+
+| 维度           | `mcp-chrome`                                                 | `chrome-devtools-mcp`                                        |
+| -------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| 项目来源       | 社区项目：`hangwin/mcp-chrome`                               | Chrome DevTools 官方/Google 维护：`ChromeDevTools/chrome-devtools-mcp` |
+| 核心架构       | Chrome 扩展 + 本地 bridge                                    | MCP server + Puppeteer / Chrome DevTools 能力                |
+| 浏览器使用方式 | **直接复用你日常正在用的 Chrome、登录态、配置、标签页**      | 通常启动或连接一个可调试的 Chrome 实例                       |
+| 主要目标       | 把 Chrome 变成“个人浏览器助手”                               | 给 coding agent 提供可靠的页面调试、自动化、性能分析能力     |
+| 强项           | **复用登录态**、多标签页上下文、书签/历史、页面内容分析、语义搜索 | Console、Network、截图、性能 trace、Lighthouse/性能洞察、调试前端问题 |
+| 安装复杂度     | 需要安装 Chrome 扩展 + `mcp-chrome-bridge`                   | 通常 `npx chrome-devtools-mcp@latest` 即可                   |
+| 更适合         | 日常网页操作、已登录网站、浏览器助手、跨标签页检索           | 前端开发、性能分析、调试 JS/网络请求、验证 UI                |
+| 隐私/安全      | 本地运行，但因为复用个人浏览器，登录态暴露风险更高           | 也会暴露浏览器内容；官方文档明确提醒避免连接含敏感信息的会话 |
+| 成熟度         | README 标注仍处早期快速开发阶段                              | 官方工具链，偏工程调试场景更稳定                             |
+
+选择建议：
+
+- 做**前端开发调试、性能分析、网络请求排查、控制台错误分析**：优先用 `chrome-devtools-mcp`。
+- 做**个人浏览器自动化、复用已登录状态、操作日常 Chrome、多标签页语义搜索**：用 `mcp-chrome`。
+- 如果你在 VS Code/Copilot 里做项目开发，`chrome-devtools-mcp` 更贴合；如果你想让 AI 操作你当前 Chrome 的网页环境，`mcp-chrome` 更贴合。
+
+#### Chrome DevTools MCP
 
 > node版本至少 Node 20.19.0 LTS
 
-### chrome-mcp
+#### chrome-mcp
+
+http://blog.xiaban.run/posts/2025/claude-code-mcp-chrome/
 
 - 安装：npm install -g mcp-chrome-bridge
 
