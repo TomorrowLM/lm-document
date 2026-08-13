@@ -1561,16 +1561,16 @@ Spec-Kit 强调“先想清楚再动手”，它的核心工作流是严格的�
 
 ## 自研 SDD 开发体系
 
-这是一套基于 SDD 思想自研的 AI 驱动开发流程：用阶段门控约束 AI 行为，用文档沉淀需求、方案、计划和验收证据，用 MCP 与 Agent 编排提高执行效率，用测试和审查形成闭环。
+这是一套基于 SDD 思想自研的 AI 驱动开发体系：用阶段门控约束 AI 行为，用文档沉淀需求、方案、计划、执行记录和验收证据，用 MCP 与 Agent 编排提高执行效率，用测试、审查、返工和结果同步形成可追溯闭环。
 
 ### 设计目标
 
 - **先规范后实现**：Phase 4 编码前必须完成需求分析、技术方案和实现计划。
-- **文档作为事实来源**：以 `index.md`、`spec/*.md`、`evidence/*.md` 等产物记录需求、设计、任务和验收。
+- **文档作为事实来源**：以 `index.md`、`spec/*.md`、`tasks.json`、`results/*.md`、`reworks/*.md`、`evidence/*.md` 等产物记录需求、设计、任务、执行、返工和验收。
 - **阶段门控**：每个关键阶段都需要展示产出并获得确认后再继续。
 - **任务可拆分可编排**：复杂功能按数据层、组件层、页面集成等维度拆分，支持串行和并行执行。
-- **验证闭环**：自动化测试、UI 验证、代码审查和证据文档共同确认交付质量。
-- **过程可追溯**：通过设计文档、任务结果、验证证据和 commit 同步机制沉淀开发过程。
+- **验证闭环**：自动化测试、UI 验证、代码审查、返工复核和证据文档共同确认交付质量。
+- **过程可追溯**：通过设计文档、任务状态、任务结果、返工记录、验证证据和 commit 同步机制沉淀开发过程。
 
 ### 开发流程
 
@@ -1594,7 +1594,7 @@ Phase 6 收尾交付
 
 #### 流程图
 
-流程图拆成两层：第一张只表达阶段状态机和门控，第二张只表达 Phase 4 的执行方式与 MCP 编排细节。
+流程图拆成两层：第一张表达阶段状态机、门控、返工和中途追加任务回路；第二张表达 Phase 4 的执行方式与 MCP 编排细节。
 
 ##### 总状态机
 
@@ -1629,7 +1629,18 @@ flowchart TD
   Gate3W --> Gate3
   Gate3 -->|"确认"| P4["Phase 4\n编码实现"]
 
-  P4 --> P4Out["产出\n可工作代码 / 变更记录 / 子任务结果"]
+  P4 --> P4Check{"Phase 4 执行检查\n任务结果是否合格?"}
+  P4Check -->|"发现计划内遗漏"| P4Rework["返工闭环\nagent_request_rework\n生成 reworks/*.md\n更新 tasks.json"]
+  P4Rework --> P4Reopen["重新打开返工任务\n挂载 spec + rework.promptFile"]
+  P4Reopen --> P4
+  P4Check -->|"发现已确认范围内\n新增实现细节"| P4AddAsk["暂停说明追加原因\n任务边界 / spec 路径 / resultFile"]
+  P4AddAsk --> P4AddGate{"⛔ 用户确认\n追加子任务?"}
+  P4AddGate -->|"未确认"| P4AddWait["等待用户确认"]
+  P4AddWait --> P4AddGate
+  P4AddGate -->|"确认"| P4AddSpec["新增 spec/NNx-xxx-spec.md\n创建任务并同步 tasks.json"]
+  P4AddSpec --> P4
+  P4Check -->|"新增范围 / 接口契约 / 验收标准"| P3
+  P4Check -->|"合格"| P4Out["产出\n可工作代码 / 变更记录 / tasks.json / results / 按需 reworks"]
   P4Out --> P5["Phase 5\n测试验收"]
   P5 --> P5Result{"验证与审查\n是否通过?"}
   P5Result -->|"失败 / Critical / Important"| P4
@@ -1667,8 +1678,8 @@ flowchart TD
   OpenAll --> WaitTasks
   WaitTasks --> Summarize["agent_summarize_results\n汇总子任务结果"]
   Summarize --> Review{"主窗口审查\n是否合格?"}
-  Review -->|"否"| Rework["agent_request_rework\n写入返工原因"]
-  Rework --> Reopen["agent_open_task_chats\n重新打开返工任务"]
+  Review -->|"否"| Rework["agent_request_rework\n生成 reworks md\n更新 rework / reworks"]
+  Rework --> Reopen["agent_open_task_chats\n挂载 spec + rework.promptFile"]
   Reopen --> WaitTasks
   Review -->|"是"| MarkReviewed["agent_mark_task_reviewed\n标记已审查"]
 
@@ -1698,7 +1709,7 @@ flowchart TD
 | Phase 1 需求分析与技术调研 | 收集信息 → 确认页面目标、用户、流程、输入输出、边界状态、成功标准 → 调研复用组件、Hook、服务和执行流 | 需求共识 + 范围取舍 + 待决策点 + 调研摘要 | 用户确认 Phase 1 产出 |
 | Phase 2 技术方案编写 | 检查 `docs/pages/pages.yaml` → 审阅/创建技术方案 → 明确路由、文件、组件拆分、props、状态、hooks、API、空态和错误态 | `docs/design/YYYY-MM-DD-<topic>-design/index.md` + 方案摘要 | 用户确认技术方案 |
 | Phase 3 制定实现计划 | 读取拆分策略 → 给出 3-5 种拆分方案 → 用户选择拆分和执行方式 → 生成计划或子规格 | `spec/implementation-plan.md` 或 `spec/NNx-<module>-spec.md` | 用户确认实现计划 |
-| Phase 4 编码实现 | 前置检查 → 读取计划编排 → 选择执行方式和推进模式 → 按计划编码 → TDD 任务红绿重构 | 可工作的代码 + 变更记录 + 子任务结果 | Phase 1-3 已确认，执行方式和推进模式已确认 |
+| Phase 4 编码实现 | 前置检查 → 读取计划编排 → 选择执行方式和推进模式 → 按计划编码 → TDD 任务红绿重构 → MCP 编排时同步任务、返工和结果 | 可工作的代码 + 变更记录 + `tasks.json` + `results/*.md` + 按需 `reworks/*.md` | Phase 1-3 已确认，执行方式和推进模式已确认 |
 | Phase 5 测试验收 | 入口自检 → 读取验证规范 → 选择并运行 test/typecheck/lint/build → 手动验收 → 代码审查 → 记录证据 | `evidence/phase5-verification.md` + 验证证据 + 审查结论 | 用户确认验收结果 |
 | Phase 6 收尾交付 | 汇总验证和审查 → 检查变更范围 → 按需执行 `npm run sync:designs` → 输出交付摘要 | 交付摘要 + 文档路径 + 遗留风险 + 下一步 | 无未关闭 Critical / Important 问题 |
 
@@ -1713,12 +1724,12 @@ docs/design/YYYY-MM-DD-<topic>-design/
 │   ├── implementation-plan.md        # 不拆分时
 │   └── NNx-<module>-spec.md          # 拆分时；与 implementation-plan.md 默认二选一
 ├── tasks.json                       # MCP 编排任务状态，按需
-├── prompts/                         # MCP 编排子 Agent Prompt，按需
-│   ├── task-<uuid>.md
-│   └── task-<uuid>.rework-N.md
 ├── results/                         # Phase 4：执行报告 / MCP 子任务结果，按需
 │   ├── <编号>-result.md
 │   └── task-<uuid>.md
+├── reworks/                         # Phase 4：返工 prompt 历史，按需，文件平铺
+│   ├── task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90-rework-1.md
+│   └── task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90-rework-2.md
 ├── evidence/                        # Phase 5：验证证据，必需
 │   └── phase5-verification.md
 ├── assets/                          # 设计稿、截图、图表、导出资源，按需
@@ -1732,7 +1743,8 @@ docs/pages/
 
 docs/
 ├── tasks.json                        # 无法推断需求目录时的 MCP 兜底任务记录
-└── results/                          # 无法推断需求目录时的 MCP 兜底结果目录
+├── results/                          # 无法推断需求目录时的 MCP 兜底结果目录
+└── reworks/                          # 无法推断需求目录时的 MCP 兜底返工目录
 ```
 
 目录规则：
@@ -1740,12 +1752,137 @@ docs/
 - `index.md` 是整体技术方案，不放入 `spec/`。
 - `spec/` 只放可执行交付物，不放整体技术方案。
 - 不拆分时使用 `implementation-plan.md`；拆分时使用 `01-xxx-spec.md`、`02a-xxx-spec.md`、`02b-xxx-spec.md` 等子任务规格；两类默认二选一。
-- MCP 编排不再使用 `.agent-orchestrator/` 目录；能从 `inputFiles` 或 `resultFile` 推断需求目录时，`tasks.json`、`prompts/`、`results/` 直接写入对应 `docs/design/<需求目录>/` 或 `docs/prod/<需求目录>/`。
-- 无法推断需求目录时，MCP 编排兜底写入 `docs/tasks.json` 和 `docs/results/`。
+- MCP 编排不再使用 `.agent-orchestrator/` 目录；能从 `inputFiles` 或 `resultFile` 推断需求目录时，`tasks.json`、`results/`、`reworks/` 直接写入对应 `docs/design/<需求目录>/` 或 `docs/prod/<需求目录>/`。
+- 普通任务不生成 `prompts/` 文件夹；普通任务的执行上下文来自 `spec/*.md` 和 `tasks.json` 中的 `prompt` 字段。
+- `reworks/` 只保存返工 prompt md，命名为 `task-<uuid>-rework-<N>.md`，直接平铺在目录下，不按 taskId 再建子目录。
+- 无法推断需求目录时，MCP 编排兜底写入 `docs/tasks.json`、`docs/results/` 和 `docs/reworks/`。
 - 页面开发工作流内使用 MCP 编排时，应显式指定 `resultFile` 到当前设计目录的 `results/<编号>-result.md`，确保任务记录和结果归入同一功能目录。
+- 返工完成后仍覆盖原任务 `resultFile`，不创建独立返工结果文件。
 - `assets/` 全部按需创建，不是阶段验收的必需项。
 - `brainstorm/` 用于头脑风暴视觉伴侣产物，只有使用视觉伴侣时才创建。
 - `docs/pages/pages.yaml` 是全局页面索引，由 Phase 2 检查注册，Phase 6 按需同步。
+
+### `tasks.json` 字段说明
+
+`tasks.json` 是 MCP 编排在单个需求目录下的任务状态账本，用于让主 Agent、子 Agent 和后续审查流程共享同一份任务事实来源。
+
+#### 顶层结构
+
+```json
+{
+  "tasks": []
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `tasks` | `TaskRecord[]` | 是 | 当前需求目录下的全部 MCP 编排任务。追加任务时只能追加新项，不能覆盖已有任务。 |
+
+#### `TaskRecord` 字段
+
+| 字段 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `id` | `string` | 是 | 任务唯一 ID，格式通常为 `task-<uuid>`。 |
+| `title` | `string` | 是 | 任务标题，用于主窗口识别任务边界。 |
+| `prompt` | `string` | 是 | 创建任务时的原始任务要求。普通任务打开窗口时会把该字段作为任务指令发送，不会额外生成 `prompts/` 文件。 |
+| `workspaceRoot` | `string` | 是 | 工作区绝对路径。 |
+| `inputFiles` | `string[]` | 是 | 子任务需要读取的输入文件，至少应包含对应 `spec/*.md`；中途追加任务必须先新增 spec，再写入此字段。 |
+| `resultFile` | `string` | 是 | 子任务结果文件路径。页面工作流内必须显式指向当前设计目录 `results/<编号>-result.md`。返工完成也覆盖该文件。 |
+| `visualDir` | `string` | 是 | 视觉或头脑风暴产物目录，通常为当前设计目录下的 `brainstorm/`。 |
+| `status` | `TaskStatus` | 是 | 任务状态，见下方状态表。 |
+| `createdAt` | `string` | 是 | 任务创建时间，ISO 时间字符串。 |
+| `updatedAt` | `string` | 是 | 最近一次任务记录更新时间。 |
+| `startedAt` | `string` | 否 | 任务第一次或最近一次打开子窗口的时间。 |
+| `completedAt` | `string` | 否 | 任务结果写入并标记完成的时间。 |
+| `reworkCount` | `number` | 否 | 返工次数。每次 `agent_request_rework` 后递增。 |
+| `rework` | `TaskReworkRecord` | 否 | 当前最新一次返工记录。只有返工任务存在。 |
+| `reworks` | `TaskReworkRecord[]` | 否 | 所有返工历史记录。多次返工时按发生顺序追加。 |
+| `reviewNote` | `string` | 否 | 主 Agent 审查说明；返工时可保留最新返工原因，兼容旧逻辑。 |
+| `error` | `string` | 否 | 失败信息，正常返工不再写入该字段。 |
+
+#### `TaskStatus` 状态
+
+| 状态 | 含义 | 进入方式 |
+| ---- | ---- | -------- |
+| `pending` | 已创建但尚未打开子任务窗口 | `agent_create_task` / `agent_create_tasks` |
+| `running` | 已打开子任务窗口，等待结果 | `agent_open_task_chats` |
+| `completed` | 子任务已写入 `resultFile` | `agent_complete_task` 或轮询检测到结果文件 |
+| `failed` | 子任务失败 | 工具或执行异常时使用 |
+| `reviewed` | 主 Agent 已审查通过 | `agent_mark_task_reviewed` |
+| `rework_requested` | 主 Agent 已请求返工 | `agent_request_rework` |
+
+#### `TaskReworkRecord` 字段
+
+| 字段 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `id` | `string` | 是 | 返工 ID，格式为 `rework-<N>`。 |
+| `reason` | `string` | 是 | 返工原因，必须包含问题点、缺失验收项、期望修改结果和允许改动范围。 |
+| `prompt` | `string` | 是 | 实际发给返工子窗口的完整指令内容。 |
+| `promptFile` | `string` | 是 | `prompt` 落盘后的 md 文件路径，规则为 `reworks/task-<uuid>-rework-<N>.md`。 |
+| `status` | `requested \| running \| completed` | 是 | 当前返工状态。 |
+| `createdAt` | `string` | 是 | 返工创建时间。 |
+| `startedAt` | `string` | 否 | 返工窗口打开时间。 |
+| `completedAt` | `string` | 否 | 返工完成时间。 |
+
+返工状态同步规则：
+
+```text
+agent_request_rework
+  → task.status = rework_requested
+  → task.rework.status = requested
+  → task.reworks[] 追加当前返工
+
+agent_open_task_chats
+  → task.status = running
+  → task.rework.status = running
+  → 挂载原 spec + 当前 rework.promptFile
+
+agent_complete_task
+  → task.status = completed
+  → task.rework.status = completed
+  → 覆盖原 resultFile
+```
+
+#### 示例
+
+```json
+{
+  "id": "task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90",
+  "title": "Batch2a: TaskCard组件验证",
+  "prompt": "读取 spec/02-task-card-spec.md，对照验收标准检查...",
+  "workspaceRoot": "/Users/zm/work/yqa-g-h5-urban",
+  "inputFiles": [
+    "/Users/zm/work/yqa-g-h5-urban/docs/design/2026-08-08-daily-inspection-design/spec/02-task-card-spec.md"
+  ],
+  "resultFile": "/Users/zm/work/yqa-g-h5-urban/docs/design/2026-08-08-daily-inspection-design/results/02-task-card-result.md",
+  "visualDir": "/Users/zm/work/yqa-g-h5-urban/docs/design/2026-08-08-daily-inspection-design/brainstorm",
+  "status": "rework_requested",
+  "createdAt": "2026-08-08T09:49:31.295Z",
+  "updatedAt": "2026-08-13T10:00:00.000Z",
+  "startedAt": "2026-08-08T09:51:14.455Z",
+  "completedAt": "2026-08-08T09:55:56.872Z",
+  "reworkCount": 1,
+  "reviewNote": "缺少边界场景分析，请补充后覆盖原结果文件。",
+  "rework": {
+    "id": "rework-1",
+    "reason": "缺少边界场景分析，请补充后覆盖原结果文件。",
+    "prompt": "请对任务 task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90 进行返工...",
+    "promptFile": "/Users/zm/work/yqa-g-h5-urban/docs/design/2026-08-08-daily-inspection-design/reworks/task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90-rework-1.md",
+    "status": "requested",
+    "createdAt": "2026-08-13T10:00:00.000Z"
+  },
+  "reworks": [
+    {
+      "id": "rework-1",
+      "reason": "缺少边界场景分析，请补充后覆盖原结果文件。",
+      "prompt": "请对任务 task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90 进行返工...",
+      "promptFile": "/Users/zm/work/yqa-g-h5-urban/docs/design/2026-08-08-daily-inspection-design/reworks/task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90-rework-1.md",
+      "status": "requested",
+      "createdAt": "2026-08-13T10:00:00.000Z"
+    }
+  ]
+}
+```
 
 ### MCP 编排规范
 
@@ -1759,7 +1896,76 @@ docs/
 | Step 2 | 分批打开子任务 | 按依赖顺序启动，互不依赖的任务可并行 |
 | Step 3 | 等待任务完成 | 串行批次必须等前置任务完成后再进入下一批 |
 | Step 4 | 汇总结果 | 汇总所有子任务结果，检查缺失和冲突 |
-| Step 5 | 审查与返工 | 逐条审查任务结果；通过则标记 reviewed，不通过则 `request_rework` 并重新打开任务 |
+| Step 5 | 审查与返工 | 逐条审查任务结果；通过则标记 reviewed，不通过则 `agent_request_rework` 并重新打开任务 |
+
+#### 返工细节
+
+返工用于处理**已确认计划内的遗漏执行项**：原 `spec` / `implementation-plan.md` 已经写明，但子 Agent 漏做、做错或未满足验收标准。
+
+返工规则：
+
+- 审查不合格时不得直接标记通过。
+- 使用 `agent_request_rework` 写清返工原因。
+- 返工原因必须包含：问题点、缺失验收项、期望修改结果、是否允许改动范围。
+- `agent_request_rework` 必须生成 `reworks/task-<uuid>-rework-<N>.md`，并同步更新 `task.rework` 和追加 `task.reworks[]`。
+- 重新调用 `agent_open_task_chats` 打开返工任务，必须挂载原 `spec` 和当前 `rework.promptFile`。
+- 等待 `agent_wait_for_tasks` 完成后，再次 `agent_summarize_results`。
+- 返工完成后必须覆盖原任务 `resultFile`，不得新建独立返工结果文件。
+- 主 Agent 重新审查；通过后调用 `agent_mark_task_reviewed`。
+- 多次返工仍不通过时，暂停并向用户说明阻塞点。
+
+```text
+审查发现计划内遗漏
+  → agent_request_rework 写清返工原因
+    生成 reworks/task-<uuid>-rework-<N>.md
+    更新 task.rework 并追加 task.reworks[]
+  → agent_open_task_chats 重新打开返工任务
+    挂载原 spec + 当前 rework.promptFile
+  → agent_wait_for_tasks 等待完成
+  → agent_summarize_results 汇总
+  → 主 Agent 重新审查
+    ├─ 通过：agent_mark_task_reviewed
+    └─ 不通过：再次返工或暂停说明阻塞
+```
+
+#### 中途追加子任务
+
+Phase 4 原则上只能执行 Phase 3 已确认的计划，不允许主 Agent 自行扩展范围。**新发现的实现细节**可以追加子任务，但必须先暂停说明并获得用户确认。
+
+允许追加的条件：
+
+- 仍属于 Phase 1-3 已确认范围。
+- 不改变页面范围、接口契约、共享类型、共享样式、全局状态和验收标准。
+- 不影响已完成任务的主要产物。
+- 适合作为独立补充任务执行。
+- 主 Agent 已说明新增原因、任务边界、`spec` 文件路径、结果文件路径和对现有任务的影响，并获得用户确认。
+
+处理流程：
+
+```text
+发现新实现细节
+  → 暂停当前批次推进
+  → 说明新增原因、任务边界、spec 文件路径、结果文件路径
+  → 用户确认
+  → 在 spec/ 下新增子任务规格，如 02c-xxx-spec.md
+  → agent_create_task / agent_create_tasks 创建追加任务
+     inputFiles 指向新增 spec，resultFile 指向 results/<编号>-result.md
+     工具同步写入当前功能目录 tasks.json
+  → agent_open_task_chats 打开新任务
+  → agent_wait_for_tasks 等待完成
+  → agent_summarize_results 合并进当前批次结果
+  → 主 Agent 审查
+    ├─ 通过：agent_mark_task_reviewed
+    └─ 不通过：agent_request_rework
+```
+
+必须回到 Phase 3 的情况：
+
+- 新增页面、模块、接口、状态流或验收标准。
+- Swagger 字段与方案不一致，需要调整 API 契约。
+- 影响共享层、全局状态、路由或构建配置。
+- 与既有 `spec` 或技术方案冲突。
+- 发现未评估的 HIGH / CRITICAL 风险。
 
 任务拆分命名建议：
 
@@ -1802,6 +2008,7 @@ Phase 6 结束前逐项核对，任一未通过不得交付：
 
 - [ ] `docs/pages/pages.yaml` 包含本次方案涉及的全部页面条目。
 - [ ] `spec/` 下所有 spec 文件均已执行，并有对应执行产物。
+- [ ] 如使用 MCP 编排，`tasks.json`、`results/`、`reworks/` 的状态和路径均已同步。
 - [ ] `evidence/phase5-verification.md` 包含 test / typecheck / lint / build 四项结果或跳过原因。
 - [ ] 自动化验证、手动验收和代码审查三项结论均已记录。
 - [ ] 变更范围仅限本次需求，无无关文件改动。
@@ -1852,15 +2059,16 @@ Phase 6 结束前逐项核对，任一未通过不得交付：
 post-commit
 #!/usr/bin/env sh
 
-# post-commit: 每次 commit 后将 HEAD hash 记录到 doc-sync-commits
+# post-commit: 每次 commit 后将 HEAD hash 记录到 docs/pages/.doc-sync-commits
 # push 后对 Copilot 说 "sync docs" 即可触发 AI 读取并同步文档
 
 # 如果本次 commit 只修改了 doc-sync-commits 本身，跳过记录（避免自循环）
 CHANGED=$(git diff-tree --no-commit-id -r HEAD --name-only)
-if echo "$CHANGED" | grep -v '^$' | grep -vq '^docs/\.doc-sync-commits$'; then
+if echo "$CHANGED" | grep -v '^$' | grep -vq '^docs/pages/\.doc-sync-commits$'; then
   HASH=$(git rev-parse HEAD)
-  echo "$HASH" >> docs/.doc-sync-commits
-  git add docs/.doc-sync-commits
+  mkdir -p docs/pages
+  echo "$HASH" >> docs/pages/.doc-sync-commits
+  git add docs/pages/.doc-sync-commits
 fi
 
 
@@ -1869,7 +2077,7 @@ fi
 
 当用户说 **"sync docs"** / **"同步文档"** 时，AI 必须执行以下流程：
 
-1. **读取待同步列表**：读取 `docs/.doc-sync-commits`，获取所有待同步的 commit hash
+1. **读取待同步列表**：读取 `docs/pages/.doc-sync-commits`，获取所有待同步的 commit hash
 2. **逐个获取 diff**：对每个 hash 执行 `git show --stat <hash>` 和 `git show <hash>` 获取变更信息
 3. **匹配受影响文档**：根据变更文件路径，判断 `docs/design/` 和 `docs/prod/` 中哪些文档需要更新：
    - `src/pages/<page>/**` → `docs/design/<对应设计文档>` 和 `docs/prod/<对应生产文档>`
@@ -1879,7 +2087,7 @@ fi
    - `src/types/**` → 相关全局类型的文档
 4. **列出变更方案**：向用户展示本次变更影响哪些文档、建议如何更新
 5. **等待确认后执行**：用户确认后逐个更新文档
-6. **清空 hash 列表**：所有文档同步完成后，将 `docs/.doc-sync-commits` 恢复为空（仅保留注释头）
+6. **清空 hash 列表**：所有文档同步完成后，将 `docs/pages/.doc-sync-commits` 恢复为空（仅保留注释头）
 
 **触发词**：`sync docs`、`同步文档`、`文档同步`
 
