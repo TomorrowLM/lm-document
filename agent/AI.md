@@ -1563,7 +1563,13 @@ Spec-Kit 强调“先想清楚再动手”，它的核心工作流是严格的�
 
 这是一套基于 SDD 思想自研的 AI 驱动开发体系：用阶段门控约束 AI 行为，用文档沉淀需求、方案、计划、执行记录和验收证据，用 MCP 与 Agent 编排提高执行效率，用测试、审查、返工和结果同步形成可追溯闭环。
 
-### 设计目标
+### 1. 定位与设计目标
+
+#### 体系定位
+
+自研 SDD 开发体系面向复杂页面、完整功能模块、设计稿落地和 PRD 落地场景。它不是代码模板，而是一套从需求共识到交付验收的状态机：先形成文档事实来源，再按阶段执行、验证和归档。
+
+#### 设计目标
 
 - **先规范后实现**：Phase 4 编码前必须完成需求分析、技术方案和实现计划。
 - **文档作为事实来源**：以 `index.md`、`spec/*.md`、`tasks.json`、`results/*.md`、`reworks/*.md`、`evidence/*.md` 等产物记录需求、设计、任务、执行、返工和验收。
@@ -1572,11 +1578,20 @@ Spec-Kit 强调“先想清楚再动手”，它的核心工作流是严格的�
 - **验证闭环**：自动化测试、UI 验证、代码审查、返工复核和证据文档共同确认交付质量。
 - **过程可追溯**：通过设计文档、任务状态、任务结果、返工记录、验证证据和 commit 同步机制沉淀开发过程。
 
-### 开发流程
+#### 核心原则 / 铁律
+
+1. **禁止跳阶段**：Phase 1 → 2 → 3 → 4 → 5 → 6 顺序执行。
+2. **禁止直接写代码**：Phase 4 之前不得编写任何业务代码。
+3. **每阶段必须等用户确认**：展示产出 → 等待明确回复 → 才进入下一阶段。
+4. **无产出不停留**：每个 Phase 必须产出规定的交付物。
+5. **Phase 4 前置门禁**：Phase 1、Phase 2、Phase 3 任一未确认，禁止进入编码。
+6. **接口优先重新获取**：涉及接口、服务、请求参数或响应字段时，先用 `get_swagger_mcp` 且 `refresh: true` 获取最新接口信息。
+
+### 2. 标准开发流程
 
 来源：`page-development-workflow` SKILL.md
 
-```
+```text
 Phase 1 需求分析与技术调研
   → [⛔ 用户确认]
 Phase 2 技术方案编写
@@ -1592,11 +1607,7 @@ Phase 6 收尾交付
 
 轻量路径只允许合并 Phase 1-3 的展示和确认，不允许省略阶段产出，也不允许跳过 Phase 4-6。
 
-#### 流程图
-
-流程图拆成两层：第一张表达阶段状态机、门控、返工和中途追加任务回路；第二张表达 Phase 4 的执行方式与 MCP 编排细节。
-
-##### 总状态机
+#### 总状态机
 
 ```mermaid
 flowchart TD
@@ -1656,53 +1667,7 @@ flowchart TD
   Summary --> Done(["✅ 完成"])
 ```
 
-##### Phase 4 执行与 MCP 编排细节
-
-```mermaid
-flowchart TD
-  P4Start(["进入 Phase 4\n确认 Phase 1-3 均已通过"]) --> ReadPlan["读取已确认的实现计划\n或子任务规格"]
-  ReadPlan --> ExecMode{"确认执行方式"}
-
-  ExecMode -->|"内联串行"| Inline["当前对话按计划逐项执行"]
-  ExecMode -->|"子代理驱动"| SubAgent["按任务边界分派子代理\n主窗口审查结果"]
-  ExecMode -->|"多窗口并行"| MultiWindow["输出新窗口启动指令\n主窗口负责合流检查"]
-  ExecMode -->|"MCP 编排"| ReadMcp["读取 phase4-execution-modes.md\n和 agent-orchestrator-mcp.md"]
-
-  ReadMcp --> CreateTasks["agent_create_tasks\n创建任务并显式指定 resultFile"]
-  CreateTasks --> HasShared{"存在共享层依赖?"}
-  HasShared -->|"是"| OpenShared["agent_open_task_chats\n先打开共享层任务"]
-  OpenShared --> WaitShared["agent_wait_for_tasks\n等待共享层完成"]
-  WaitShared --> OpenRest["agent_open_task_chats\n打开依赖任务"]
-  HasShared -->|"否"| OpenAll["agent_open_task_chats\n一次打开可并行任务"]
-  OpenRest --> WaitTasks["agent_wait_for_tasks\n或 agent_poll_tasks"]
-  OpenAll --> WaitTasks
-  WaitTasks --> Summarize["agent_summarize_results\n汇总子任务结果"]
-  Summarize --> Review{"主窗口审查\n是否合格?"}
-  Review -->|"否"| Rework["agent_request_rework\n生成 reworks md\n更新 rework / reworks"]
-  Rework --> Reopen["agent_open_task_chats\n挂载 spec + rework.promptFile"]
-  Reopen --> WaitTasks
-  Review -->|"是"| MarkReviewed["agent_mark_task_reviewed\n标记已审查"]
-
-  Inline --> ProgressMode{"确认推进模式"}
-  SubAgent --> ProgressMode
-  MultiWindow --> ProgressMode
-  MarkReviewed --> ProgressMode
-  ProgressMode -->|"自动推进"| Auto["每个任务或批次完成后\n自动进入下一个"]
-  ProgressMode -->|"手动确认"| Manual["每个任务或批次完成后\n暂停等待确认"]
-  Auto --> Finish["产出代码、变更记录\n进入 Phase 5"]
-  Manual --> Finish
-```
-
-#### 铁律
-
-1. **禁止跳阶段** — Phase 1 → 2 → 3 → 4 → 5 → 6 顺序执行。
-2. **禁止直接写代码** — Phase 4 之前不得编写任何业务代码。
-3. **每阶段必须等用户确认** — 展示产出 → 等待明确回复 → 才进入下一阶段。
-4. **无产出不停留** — 每个 Phase 必须产出规定的交付物。
-5. **Phase 4 前置门禁** — Phase 1、Phase 2、Phase 3 任一未确认，禁止进入编码。
-6. **接口优先重新获取** — 涉及接口、服务、请求参数或响应字段时，先用 `get_swagger_mcp` 且 `refresh: true` 获取最新接口信息。
-
-### 阶段产出规范
+#### 阶段产出规范
 
 | 阶段 | 核心动作 | 产出 | 门控条件 |
 | ---- | -------- | ---- | -------- |
@@ -1713,23 +1678,23 @@ flowchart TD
 | Phase 5 测试验收 | 入口自检 → 读取验证规范 → 选择并运行 test/typecheck/lint/build → 手动验收 → 代码审查 → 记录证据 | `evidence/phase5-verification.md` + 验证证据 + 审查结论 | 用户确认验收结果 |
 | Phase 6 收尾交付 | 汇总验证和审查 → 检查变更范围 → 按需执行 `npm run sync:designs` → 输出交付摘要 | 交付摘要 + 文档路径 + 遗留风险 + 下一步 | 无未关闭 Critical / Important 问题 |
 
-### 产物目录规范
+### 3. 产物目录规范
 
-以下结构是 `page-development-workflow` 与当前 `agent-orchestrator-mcp` 落盘规则合并后的目录规范。
+一个功能的非代码产物集中在同一需求目录下，`docs/pages/pages.yaml` 作为全局页面索引单独维护。
 
-```
+```text
 docs/design/YYYY-MM-DD-<topic>-design/
 ├── index.md                         # Phase 2：技术方案，必需
 ├── spec/                            # Phase 3：可执行计划 / 子任务规格，必需
 │   ├── implementation-plan.md        # 不拆分时
 │   └── NNx-<module>-spec.md          # 拆分时；与 implementation-plan.md 默认二选一
-├── tasks.json                       # MCP 编排任务状态，按需
+├── tasks.json                       # Phase 4：MCP 编排任务状态，按需
 ├── results/                         # Phase 4：执行报告 / MCP 子任务结果，按需
 │   ├── <编号>-result.md
 │   └── task-<uuid>.md
 ├── reworks/                         # Phase 4：返工 prompt 历史，按需，文件平铺
-│   ├── task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90-rework-1.md
-│   └── task-dd5c35f5-32cb-4f06-85a0-cdcf8b1baf90-rework-2.md
+│   ├── task-<uuid>-rework-1.md
+│   └── task-<uuid>-rework-2.md
 ├── evidence/                        # Phase 5：验证证据，必需
 │   └── phase5-verification.md
 ├── assets/                          # 设计稿、截图、图表、导出资源，按需
@@ -1762,11 +1727,11 @@ docs/
 - `brainstorm/` 用于头脑风暴视觉伴侣产物，只有使用视觉伴侣时才创建。
 - `docs/pages/pages.yaml` 是全局页面索引，由 Phase 2 检查注册，Phase 6 按需同步。
 
-### `tasks.json` 字段说明
+#### 4. 任务状态账本：`tasks.json`
 
 `tasks.json` 是 MCP 编排在单个需求目录下的任务状态账本，用于让主 Agent、子 Agent 和后续审查流程共享同一份任务事实来源。
 
-#### 顶层结构
+##### 顶层结构
 
 ```json
 {
@@ -1778,7 +1743,7 @@ docs/
 | ---- | ---- | ---- | ---- |
 | `tasks` | `TaskRecord[]` | 是 | 当前需求目录下的全部 MCP 编排任务。追加任务时只能追加新项，不能覆盖已有任务。 |
 
-#### `TaskRecord` 字段
+##### `TaskRecord` 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 | ---- | ---- | ---- | ---- |
@@ -1800,7 +1765,7 @@ docs/
 | `reviewNote` | `string` | 否 | 主 Agent 审查说明；返工时可保留最新返工原因，兼容旧逻辑。 |
 | `error` | `string` | 否 | 失败信息，正常返工不再写入该字段。 |
 
-#### `TaskStatus` 状态
+##### `TaskStatus` 状态
 
 | 状态 | 含义 | 进入方式 |
 | ---- | ---- | -------- |
@@ -1811,7 +1776,7 @@ docs/
 | `reviewed` | 主 Agent 已审查通过 | `agent_mark_task_reviewed` |
 | `rework_requested` | 主 Agent 已请求返工 | `agent_request_rework` |
 
-#### `TaskReworkRecord` 字段
+##### `TaskReworkRecord` 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 | ---- | ---- | ---- | ---- |
@@ -1824,7 +1789,7 @@ docs/
 | `startedAt` | `string` | 否 | 返工窗口打开时间。 |
 | `completedAt` | `string` | 否 | 返工完成时间。 |
 
-返工状态同步规则：
+##### 返工状态同步规则
 
 ```text
 agent_request_rework
@@ -1843,7 +1808,7 @@ agent_complete_task
   → 覆盖原 resultFile
 ```
 
-#### 示例
+##### 示例
 
 ```json
 {
@@ -1884,9 +1849,57 @@ agent_complete_task
 }
 ```
 
-### MCP 编排规范
+### 4. Phase 4 执行与 MCP 编排
 
-当任务可以拆分为多个相对独立的规格时，优先使用 MCP 编排执行。
+#### Phase 4 执行方式总览
+
+Phase 4 只执行 Phase 3 已确认计划。进入前必须确认 Phase 1、Phase 2、Phase 3 均已通过，并选择执行方式和推进模式。
+
+| 执行方式 | 适用场景 |
+| -------- | -------- |
+| 内联串行 | 任务少、无并行需求，当前对话逐个执行 |
+| 子代理驱动 | 有可并行批次，子代理分工执行 |
+| 多窗口并行 | 用户愿意手动开多个聊天窗口 |
+| MCP 编排 | 已配置 agent-orchestrator-mcp，需要自动创建、等待、汇总和返工 |
+
+#### MCP 编排流程图
+
+```mermaid
+flowchart TD
+  P4Start(["进入 Phase 4\n确认 Phase 1-3 均已通过"]) --> ReadPlan["读取已确认的实现计划\n或子任务规格"]
+  ReadPlan --> ExecMode{"确认执行方式"}
+
+  ExecMode -->|"内联串行"| Inline["当前对话按计划逐项执行"]
+  ExecMode -->|"子代理驱动"| SubAgent["按任务边界分派子代理\n主窗口审查结果"]
+  ExecMode -->|"多窗口并行"| MultiWindow["输出新窗口启动指令\n主窗口负责合流检查"]
+  ExecMode -->|"MCP 编排"| ReadMcp["读取 phase4-execution-modes.md\n和 agent-orchestrator-mcp.md"]
+
+  ReadMcp --> CreateTasks["agent_create_tasks\n创建任务并显式指定 resultFile"]
+  CreateTasks --> HasShared{"存在共享层依赖?"}
+  HasShared -->|"是"| OpenShared["agent_open_task_chats\n先打开共享层任务"]
+  OpenShared --> WaitShared["agent_wait_for_tasks\n等待共享层完成"]
+  WaitShared --> OpenRest["agent_open_task_chats\n打开依赖任务"]
+  HasShared -->|"否"| OpenAll["agent_open_task_chats\n一次打开可并行任务"]
+  OpenRest --> WaitTasks["agent_wait_for_tasks\n或 agent_poll_tasks"]
+  OpenAll --> WaitTasks
+  WaitTasks --> Summarize["agent_summarize_results\n汇总子任务结果"]
+  Summarize --> Review{"主窗口审查\n是否合格?"}
+  Review -->|"否"| Rework["agent_request_rework\n生成 reworks md\n更新 rework / reworks"]
+  Rework --> Reopen["agent_open_task_chats\n挂载 spec + rework.promptFile"]
+  Reopen --> WaitTasks
+  Review -->|"是"| MarkReviewed["agent_mark_task_reviewed\n标记已审查"]
+
+  Inline --> ProgressMode{"确认推进模式"}
+  SubAgent --> ProgressMode
+  MultiWindow --> ProgressMode
+  MarkReviewed --> ProgressMode
+  ProgressMode -->|"自动推进"| Auto["每个任务或批次完成后\n自动进入下一个"]
+  ProgressMode -->|"手动确认"| Manual["每个任务或批次完成后\n暂停等待确认"]
+  Auto --> Finish["产出代码、变更记录\n进入 Phase 5"]
+  Manual --> Finish
+```
+
+#### Step 1-5 编排规范
 
 进入 MCP 编排前必须先读取 `mcp-exe/references/agent-orchestrator-mcp.md`，并按 Step 1→2→3→4→5 完整执行，禁止跳过打开子任务聊天窗口。
 
@@ -1898,21 +1911,15 @@ agent_complete_task
 | Step 4 | 汇总结果 | 汇总所有子任务结果，检查缺失和冲突 |
 | Step 5 | 审查与返工 | 逐条审查任务结果；通过则标记 reviewed，不通过则 `agent_request_rework` 并重新打开任务 |
 
-#### 返工细节
+#### 共享依赖批次规则
+
+- 有共享层依赖时，先执行共享层任务，等待完成后再启动依赖任务。
+- 无共享依赖时，可以一次性打开同批次可并行任务。
+- 修改同一文件、同一 symbol、同一 API 契约、同一共享样式或同一全局状态的任务禁止并行。
+
+#### 返工闭环
 
 返工用于处理**已确认计划内的遗漏执行项**：原 `spec` / `implementation-plan.md` 已经写明，但子 Agent 漏做、做错或未满足验收标准。
-
-返工规则：
-
-- 审查不合格时不得直接标记通过。
-- 使用 `agent_request_rework` 写清返工原因。
-- 返工原因必须包含：问题点、缺失验收项、期望修改结果、是否允许改动范围。
-- `agent_request_rework` 必须生成 `reworks/task-<uuid>-rework-<N>.md`，并同步更新 `task.rework` 和追加 `task.reworks[]`。
-- 重新调用 `agent_open_task_chats` 打开返工任务，必须挂载原 `spec` 和当前 `rework.promptFile`。
-- 等待 `agent_wait_for_tasks` 完成后，再次 `agent_summarize_results`。
-- 返工完成后必须覆盖原任务 `resultFile`，不得新建独立返工结果文件。
-- 主 Agent 重新审查；通过后调用 `agent_mark_task_reviewed`。
-- 多次返工仍不通过时，暂停并向用户说明阻塞点。
 
 ```text
 审查发现计划内遗漏
@@ -1927,6 +1934,13 @@ agent_complete_task
     ├─ 通过：agent_mark_task_reviewed
     └─ 不通过：再次返工或暂停说明阻塞
 ```
+
+返工规则：
+
+- 审查不合格时不得直接标记通过。
+- 返工原因必须包含：问题点、缺失验收项、期望修改结果、是否允许改动范围。
+- 返工完成后必须覆盖原任务 `resultFile`，不得新建独立返工结果文件。
+- 多次返工仍不通过时，暂停并向用户说明阻塞点。
 
 #### 中途追加子任务
 
@@ -1959,7 +1973,7 @@ Phase 4 原则上只能执行 Phase 3 已确认的计划，不允许主 Agent �
     └─ 不通过：agent_request_rework
 ```
 
-必须回到 Phase 3 的情况：
+#### 必须回退 Phase 3 的情况
 
 - 新增页面、模块、接口、状态流或验收标准。
 - Swagger 字段与方案不一致，需要调整 API 契约。
@@ -1976,13 +1990,17 @@ Phase 4 原则上只能执行 Phase 3 已确认的计划，不允许主 Agent �
 03-page-integration-spec.md     # Batch 3：串行，依赖 02a + 02b
 ```
 
-### 验证与验收规范
+### 5. Phase 5 验证与验收
 
 验收必须保留证据，优先写入 `evidence/phase5-verification.md`。
 
+#### 验收入口自检
+
 进入 Phase 5 前必须先读取 `references/phase5-verification.md` 和 `verification-before-completion`，并先确认已读取，再执行验证命令。
 
-进入 Phase 5 前必须完成入口自检：检查 `spec/` 下所有计划或子任务规格均已有对应执行产物；缺失则回到 Phase 4 补齐。
+进入 Phase 5 前必须检查 `spec/` 下所有计划或子任务规格均已有对应执行产物；缺失则回到 Phase 4 补齐。
+
+#### 自动化验证项
 
 | 验收项 | 示例命令 / 方式 | 产出 |
 | ------ | ---------------- | ---- |
@@ -1990,10 +2008,13 @@ Phase 4 原则上只能执行 Phase 3 已确认的计划，不允许主 Agent �
 | 类型检查 | `npx tsc --noEmit` | 类型错误范围和结果 |
 | 构建 | `pnpm build:test` / 项目构建脚本 | 构建耗时和结果 |
 | 单元测试 | 项目测试脚本；项目无脚本时记录跳过原因 | 通过/失败用例或跳过说明 |
+
+#### 手动验收与审查循环
+
+| 验收项 | 示例方式 | 产出 |
+| ------ | -------- | ---- |
 | UI 验证 | Playwright 截图或手动验收 | 截图、交互验证记录 |
 | 代码审查 | `requesting-code-review` | Critical / Minor 问题记录 |
-
-验收失败回退机制：
 
 ```text
 自动化测试失败 → 回到 Phase 4 修复 → 重新 Phase 5
@@ -2002,7 +2023,15 @@ UI 验证不通过  → 回到 Phase 4 修复 → 重新 Phase 5
 代码审查 Minor   → 记录 TODO(review) → 集中清理
 ```
 
-### 最终自检
+#### `evidence` 生成规则
+
+- `evidence/phase5-verification.md` 只在 Phase 5 生成。
+- Phase 4 的 MCP 编排只生成 `tasks.json`、`results/` 和按需 `reworks/`。
+- 证据文件必须记录 test / typecheck / lint / build 四项结果或跳过原因。
+
+### 6. Phase 6 收尾与文档同步
+
+#### 最终自检
 
 Phase 6 结束前逐项核对，任一未通过不得交付：
 
@@ -2014,7 +2043,57 @@ Phase 6 结束前逐项核对，任一未通过不得交付：
 - [ ] 变更范围仅限本次需求，无无关文件改动。
 - [ ] 交付摘要、文档路径和遗留风险已输出。
 
-### 技能调度规范
+#### 文档同步机制
+
+目的是为了同步项目说明文档。
+
+```text
+┌─ 日常工作 ──────────────────────────────────────┐
+│                                                  │
+│  git commit  →  hook 自动追加 hash 到列表         │
+│     ↓                                            │
+│  git commit  →  hook 追加 hash（上一个也带走）     │
+│     ↓                                            │
+│  git push    →  代码+hash列表一起到远程           │
+│     ↓                                            │
+│  在 Copilot 说 "sync docs"                       │
+│     ↓                                            │
+│  AI 逐个 git show 每个 hash → 分析影响 → 更新文档  │
+│     ↓                                            │
+│  AI 清空 hash 列表 → git add → 等待下一个 push   │
+│                                                  │
+└──────────────────────────────────────────────────┘
+```
+
+```sh
+#!/usr/bin/env sh
+
+# post-commit: 每次 commit 后将 HEAD hash 记录到 docs/pages/.doc-sync-commits
+# push 后对 Copilot 说 "sync docs" 即可触发 AI 读取并同步文档
+
+CHANGED=$(git diff-tree --no-commit-id -r HEAD --name-only)
+if echo "$CHANGED" | grep -v '^$' | grep -vq '^docs/pages/\.doc-sync-commits$'; then
+  HASH=$(git rev-parse HEAD)
+  mkdir -p docs/pages
+  echo "$HASH" >> docs/pages/.doc-sync-commits
+  git add docs/pages/.doc-sync-commits
+fi
+```
+
+当用户说 **"sync docs"** / **"同步文档"** 时，AI 必须执行以下流程：
+
+1. **读取待同步列表**：读取 `docs/pages/.doc-sync-commits`，获取所有待同步的 commit hash。
+2. **逐个获取 diff**：对每个 hash 执行 `git show --stat <hash>` 和 `git show <hash>` 获取变更信息。
+3. **匹配受影响文档**：根据变更文件路径，判断 `docs/design/` 和 `docs/prod/` 中哪些文档需要更新。
+4. **列出变更方案**：向用户展示本次变更影响哪些文档、建议如何更新。
+5. **等待确认后执行**：用户确认后逐个更新文档。
+6. **清空 hash 列表**：所有文档同步完成后，将 `docs/pages/.doc-sync-commits` 恢复为空（仅保留注释头）。
+
+**触发词**：`sync docs`、`同步文档`、`文档同步`
+
+若 hash 已被垃圾回收，对应的 hash 行跳过并标注 "hash not found"。警告用户该 commit 可能已被 rebase 或清理。
+
+### 7. 技能调度规范
 
 | 阶段 | 推荐技能 | 用途 |
 | ---- | -------- | ---- |
@@ -2033,69 +2112,9 @@ Phase 6 结束前逐项核对，任一未通过不得交付：
 | Phase 5 | `requesting-code-review` | 代码质量审查 |
 | 任意阶段 | `token-saving` | 长文档、多文件、Figma、并行任务、反复调试时减少上下文消耗 |
 
-### 文档同步机制
+### 8. 实践案例
 
-目的是为了同步项目说明文档
-
-```
-┌─ 日常工作 ──────────────────────────────────────┐
-│                                                  │
-│  git commit  →  hook 自动追加 hash 到列表         │
-│     ↓                                            │
-│  git commit  →  hook 追加 hash（上一个也带走）     │
-│     ↓                                            │
-│  git push    →  代码+hash列表一起到远程           │
-│     ↓                                            │
-│  在 Copilot 说 "sync docs"                       │
-│     ↓                                            │
-│  AI 逐个 git show 每个 hash → 分析影响 → 更新文档  │
-│     ↓                                            │
-│  AI 清空 hash 列表 → git add → 等待下一个 push   │
-│                                                  │
-└──────────────────────────────────────────────────┘
-```
-
-```
-post-commit
-#!/usr/bin/env sh
-
-# post-commit: 每次 commit 后将 HEAD hash 记录到 docs/pages/.doc-sync-commits
-# push 后对 Copilot 说 "sync docs" 即可触发 AI 读取并同步文档
-
-# 如果本次 commit 只修改了 doc-sync-commits 本身，跳过记录（避免自循环）
-CHANGED=$(git diff-tree --no-commit-id -r HEAD --name-only)
-if echo "$CHANGED" | grep -v '^$' | grep -vq '^docs/pages/\.doc-sync-commits$'; then
-  HASH=$(git rev-parse HEAD)
-  mkdir -p docs/pages
-  echo "$HASH" >> docs/pages/.doc-sync-commits
-  git add docs/pages/.doc-sync-commits
-fi
-
-
-
-```
-
-当用户说 **"sync docs"** / **"同步文档"** 时，AI 必须执行以下流程：
-
-1. **读取待同步列表**：读取 `docs/pages/.doc-sync-commits`，获取所有待同步的 commit hash
-2. **逐个获取 diff**：对每个 hash 执行 `git show --stat <hash>` 和 `git show <hash>` 获取变更信息
-3. **匹配受影响文档**：根据变更文件路径，判断 `docs/design/` 和 `docs/prod/` 中哪些文档需要更新：
-   - `src/pages/<page>/**` → `docs/design/<对应设计文档>` 和 `docs/prod/<对应生产文档>`
-   - `src/components/**` → 引用该组件的页面对应的文档
-   - `src/services/**` → 相关功能模块的文档
-   - `src/constants/**` → 相关业务领域的文档
-   - `src/types/**` → 相关全局类型的文档
-4. **列出变更方案**：向用户展示本次变更影响哪些文档、建议如何更新
-5. **等待确认后执行**：用户确认后逐个更新文档
-6. **清空 hash 列表**：所有文档同步完成后，将 `docs/pages/.doc-sync-commits` 恢复为空（仅保留注释头）
-
-**触发词**：`sync docs`、`同步文档`、`文档同步`
-
-**文件未找到时**
-
-若 hash 已被垃圾回收，对应的 hash 行跳过并标注 "hash not found"。警告用户该 commit 可能已被 rebase 或清理。
-
-### 实践案例：page-development-workflow
+#### page-development-workflow 验证案例
 
 | 项目 | 内容 |
 | ---- | ---- |
@@ -2113,7 +2132,7 @@ fi
 - 自动化验证结果：`pnpm lint`、`npx tsc --noEmit`、`pnpm build:test` 均通过；项目无测试脚本，单元测试跳过。
 - 收尾确认：变更仅限 `docs/` 目录，无与需求无关的文件变更。
 
-本次验证沉淀的规范改进：
+#### 沉淀的规范改进
 
 | 改进 | 说明 |
 | ---- | ---- |
