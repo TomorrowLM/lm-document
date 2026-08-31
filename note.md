@@ -462,8 +462,7 @@ $$
 - \leftrightarrow: ↔ \leftrightarrow↔
 - \Leftarrow: ⇐ \Leftarrow⇐
 - \Longrightarrow: ⟹ \Longrightarrow⟹
-- \Leftrightarrow: ⇔ \Leftrightarrow⇔
-- \Longleftrightarrow: ⟺ \Longleftrightarrow⟺
+- \Leftrightarrow: ⇔ \Leftrightarrow⇔》 
 - \uparrow: ↑ \uparrow↑
 - \Downarrow: ⇓ \Downarrow⇓
 - \Updownarrow: ⇕ \Updownarrow⇕

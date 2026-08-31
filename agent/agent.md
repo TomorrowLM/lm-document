@@ -15,17 +15,6 @@
 
 
 
-# 概念
-
-## 训练
-
-1.大模型阅读了人类说过的所有的话。这就是「机器学习」
-2.训练过程会把不同token同时出现的概率存入「神经网络」文件。保存的数据就是「参数」，也叫「权重」
-
-## 推理
-
-1.我们给推理程序若干token，程序会加载大模型权重，算出概率最高的下一个token是什么2.用生成的token，再加上上文，就能继续生成下一个token。以此类推，生成更多文字
-
 
 
 # python
@@ -404,13 +393,148 @@ async def async_counter(n):
 
 这时它既是协程（能 await）又是生成器（能 async for 迭代），两者不冲突。
 
+## json
+
+ `json.dumps()` 将 Python 字典转为 JSON 字符串，`ensure_ascii=False` 用于保留中文，不将中文转换成 `\u4f60\u597d`。这个结果随后交给 SSE 响应组件发送给前端。
+
+## 装饰器
+
+Python 装饰器（Decorator）是一种特殊的函数，它可以在不修改原函数代码和调用方式的前提下，为函数增加额外的功能。
+
+### 代码概念
+
+```
+def a_new_decorator(a_func):
+ 
+    def wrapTheFunction():
+        print("I am doing some boring work before executing a_func()")
+ 
+        a_func()
+ 
+        print("I am doing some boring work after executing a_func()")
+ 
+    return wrapTheFunction
+ 
+def a_function_requiring_decoration():
+    print("I am the function which needs some decoration to remove my foul smell")
+ 
+a_function_requiring_decoration()
+#outputs: "I am the function which needs some decoration to remove my foul smell"
+ 
+a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
+#now a_function_requiring_decoration is wrapped by wrapTheFunction()
+ 
+a_function_requiring_decoration()
+#outputs:I am doing some boring work before executing a_func()
+#        I am the function which needs some decoration to remove my foul smell
+#        I am doing some boring work after executing a_func()
+```
+
+```
+@a_new_decorator
+def a_function_requiring_decoration():
+    """Hey you! Decorate me!"""
+    print("I am the function which needs some decoration to "
+          "remove my foul smell")
+ 
+a_function_requiring_decoration()
+#outputs: I am doing some boring work before executing a_func()
+#         I am the function which needs some decoration to remove my foul smell
+#         I am doing some boring work after executing a_func()
+ 
+#the @a_new_decorator is just a short way of saying:
+a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
+```
+
+如果我们运行如下代码会存在一个问题：
+
+```
+print(a_function_requiring_decoration.__name__)
+# Output: wrapTheFunction
+```
+
+这并不是我们想要的！Ouput输出应该是"a_function_requiring_decoration"。这里的函数被warpTheFunction替代了。它重写了我们函数的名字和注释文档(docstring)。幸运的是Python提供给我们一个简单的函数来解决这个问题，那就是functools.wraps。我们修改上一个例子来使用functools.wraps：
+
+```
+from functools import wraps
+ 
+def a_new_decorator(a_func):
+    @wraps(a_func)
+    def wrapTheFunction():
+        print("I am doing some boring work before executing a_func()")
+        a_func()
+        print("I am doing some boring work after executing a_func()")
+    return wrapTheFunction
+ 
+@a_new_decorator
+def a_function_requiring_decoration():
+    """Hey yo! Decorate me!"""
+    print("I am the function which needs some decoration to "
+          "remove my foul smell")
+ 
+print(a_function_requiring_decoration.__name__)
+# Output: a_function_requiring_decoration
+```
+
+### 应用场景
+
+- **日志记录**：自动记录函数的调用日志、参数和返回值。
+- **权限验证**：在 Web 框架中检查用户是否登录。
+- **性能测试**：统计函数执行的耗时。
+- **缓存数据**：保存函数的返回结果，避免重复计算（如 `functools.lru_cache`）。
+
+## sse
+
+### EventSourceResponse
+
+```
+ # EventSourceResponse 是 sse-starlette 提供的 SSE（Server-Sent Events）流式响应类。
+    # 它会持续读取迭代器产生的数据，并通过 HTTP text/event-stream 响应逐条发送给客户端。
+    return EventSourceResponse(
+        stream_chat_events(
+            message=req.message,
+            model=req.model,
+            conversation_id=req.conversation_id,
+            client_request_id=req.client_request_id,
+        ),
+        sep="\n",
+    )
+```
+
+
+
+### sse_event
+
+`sse_event()作用是把事件名称和事件数据转换成 SSE 响应格式：
+
+```
+def sse_event(event: str, data: dict[str, Any]) -> dict[str, str]:
+    return {
+        'event': event,
+        'data': json.dumps(data, ensure_ascii=False),
+    }
+```
+
+例如调用：
+
+```
+sse_event('answer_delta', {'content': '你好'})
+```
+
+会返回类似：
+
+```
+{
+  'event': 'answer_delta',
+  'data': '{"content": "你好"}',
+}
+```
+
 
 
 # 入门
 
 https://www.modb.pro/db/1881156671699955712
-
-## 标量，向量，矩阵，张量
 
 ## 机器学习
 
@@ -436,43 +560,7 @@ https://www.modb.pro/db/1881156671699955712
 
 ‌自然语言处理（NLP）是人工智能领域的重要分支‌，旨在使计算机能够理解、解释和生成人类语言，实现人机之间的自然交互。其核心任务包括语言翻译、情感分析、文本生成等，广泛应用于机器翻译、问答系统、聊天机器人等领域
 
-##  LLM
 
-**LLM (Large Language Model)**大语言模型是一类基于深度学习的人工智能模型，旨在处理和生成自然语言文本。通过训练于大规模文本数据，使得大语言模型能够理解并生成与人类语言相似的文本，执行各类自然语言处理任务。 
-
-### LLM的训练及使用
-
-  LLM能够理解并生成与人类语言相似的文本，执行各类自然语言处理任务，具体可应用场景包括而不限于文本生成、机器翻译、摘要生成、对话系统、情感分析等。其具有强大的泛化能力、能够处理多种任务。
-
-### LLM的训练
-
-LLM的训练过程分为预训练和微调两个阶段。
-
-- 预训练阶段
-
-  模型在大规模未标注文本数据上进行自监督学习，学习通用的语言表示。
-
-- 微调阶段
-
-  模型在特定任务的标注数据上进行有监督学习，调整模型参数以适应具体任务需求。
-
-### LLM的使用
-
-  一方面，对于直观的日常使用，用户输入问题（提示词，Prompt），大模型给出该问题的回答。
-
-  另一方面，对于基于LLM的AI应用编程，可通过以指定格式调用LLM的API，获取问题的答案。
-
-### 基于LLM的Agent框架
-
-- LLM：对标人类大脑，思考如何解决问题、给出怎样的回答。
-
-- 记忆：长期记忆加短期记忆。即智能体使用的历史记录、系统数据，以及智能体执行过程中产生的各种中建信息。
-
-- 规划技能：提示词编排、意图理解、任务分解、自我反思。
-
-- 工具使用：智能体在执行任务中可能会使用到的各种工具接口。
-
-### **Transformer架构**
 
 
 
@@ -651,6 +739,334 @@ Hello, how are you doing today?
 
 
 
+#  LLM
+
+## LLM 概述
+
+### 定义
+
+LLM（大语言模型）是一类基于深度学习的人工智能模型，旨在处理和生成自然语言文本。通过在大规模文本数据上进行训练，大语言模型能够理解并生成与人类语言相似的文本，执行各类自然语言处理任务。
+
+### 应用场景
+
+大语言模型具有强大的泛化能力，能够处理多种任务。典型的应用场景包括：
+
+- 文本生成
+- 机器翻译
+- 摘要生成
+- 对话系统
+- 情感分析
+
+## LLM 的训练与使用
+
+### 训练阶段
+
+#### 预训练阶段
+
+模型在大规模未标注文本数据上进行自监督学习，学习通用的语言表示。
+
+#### 微调阶段
+
+模型在特定任务的标注数据上进行有监督学习，调整模型参数以适应具体任务需求。
+
+### 基于 LLM 的 Agent 框架
+
+#### 核心组件
+
+- **LLM**：对标人类大脑，思考如何解决问题、给出怎样的回答。
+- **记忆**：包含长期记忆与短期记忆。即智能体使用的历史记录、系统数据，以及智能体执行过程中产生的各种中间信息。
+- **规划技能**：涵盖提示词编排、意图理解、任务分解、自我反思。
+- **工具使用**：智能体在执行任务中可能会使用到的各种工具接口。
+
+## 整体架构概览
+
+### 架构流程
+
+LLM 的整体架构流程为：Tokenizer（分词器）→ Embedding（嵌入层）→ Transformer（核心处理层）→ Output（输出层）。
+
+#### Tokenizer（分词器）
+
+将输入文本切分成 Token，并为每个 Token 分配唯一整数 ID。不同模型使用不同的 Tokenizer 规则。
+
+#### Embedding（嵌入层）
+
+将 Token ID 转换为高维向量，赋予语义含义。维度越多，表示越复杂细致。同时编码位置信息。
+
+#### Transformer（核心处理层）
+
+作为 LLM 的大脑，通过 Self-Attention 机制让 Token 之间相互"交流"，计算注意力权重。输入 Embedding 被转化为 Q（Query）、K（Key）、V（Value）三种形态，通过矩阵运算理解上下文语境。
+
+#### Output（输出层）
+
+将 Transformer 处理后的结果转化为概率分布，预测下一个最可能出现的 Token。
+
+## 训练阶段的底层计算（Training）
+
+### 什么是训练
+
+#### 训练过程
+
+训练时，模型一次性看到完整的上下文序列，并行计算所有位置的预测。训练过程会把不同 token 同时出现的概率存入"神经网络"文件。保存的数据就是"参数"，也叫"权重"。大模型阅读了人类说过的所有的话，这就是"机器学习"。
+
+### Causal Mask 的作用
+
+#### 实现机制
+
+在训练时，使用因果掩码（Causal Mask）确保模型只能看到当前位置及之前的 Token，不能看到未来的 Token。
+
+- **实现方式**：在注意力得分矩阵上，将上三角部分（未来位置）设置为负无穷，经过 softmax 后对应位置概率为 0。
+- **目的**：这样训练出来的模型才能正确地进行自回归生成。
+
+## 推理阶段的底层计算（Inference）
+
+### 什么是推理
+
+#### 推理过程
+
+给推理程序若干 token，程序会加载大模型权重，算出概率最高的下一个 token 是什么。用生成的 token 再加上上文，就能继续生成下一个 token。以此类推，生成更多文字。
+
+### 推理 ≠ 训练
+
+#### 核心区别
+
+- 训练时是并行计算所有位置，推理时是逐个 Token 生成。
+- 训练需要完整序列和标签，推理只需要前面的上下文。
+
+## 自回归与注意力机制（Autoregressive & Attention）
+
+### 自回归的本质
+
+#### 串行生成特性
+
+自回归（Autoregressive）模型的本质是：生成第 n+1 个 Token 时，模型需要把前面所有内容（提示词 M 个 + 已输出 n 个）都当作输入重新计算一遍，才能预测下一个词。因为下一步必须依赖上一步的结果，所以无法并行，只能串行。
+
+#### 具体过程
+
+- 生成第 1 个 Token 时：输入 = M 个提示词 Token
+- 生成第 2 个 Token 时：输入 = M + 1 个 Token
+- 生成第 3 个 Token 时：输入 = M + 2 个 Token
+- ...
+- 生成第 n+1 个 Token 时：输入 = M + n 个 Token
+
+### 注意力机制：Q/K/V 的含义
+
+#### 核心概念
+
+- **Q（Query）**：当前 Token 的"查询"，表示"我想找什么"。
+- **K（Key）**：每个 Token 的"索引键"，表示"我有什么线索"。
+- **V（Value）**：每个 Token 的"实际内容"，表示"我的内容是什么"。
+
+#### 计算逻辑
+
+通过计算 Q 和所有 K 的相似度，得到"该关注谁"的权重（softmax 归一化），再对 V 做加权求和，得到"结合上下文后的新表示"。Multi-head 就是并行做多组注意力，让模型能同时学到多种关系（语法、指代、主题等）。
+
+### Causal Mask 原理
+
+#### 保证因果性
+
+在自回归推理时，Causal Mask 确保每个位置只能关注到自身及之前的位置。
+
+- **实现**：在注意力计算时，对当前行之后的位置（未来位置）的得分设为负无穷，使 softmax 后概率为 0。
+- **作用**：这保证了推理时的因果性——生成第 t 个 Token 时，不会"偷看"到第 t+1 个及之后的 Token。
+
+## 推理的两个阶段：预填充 vs 解码
+
+预填充阶段：
+┌─────────────────────────────────────────┐
+│  输入: [你, 好, ，, 今, 天]              │
+│       ↓ 一次性并行                      │
+│  Q: [q1, q2, q3, q4, q5]               │
+│  K: [k1, k2, k3, k4, k5]  ← 全部算出    │
+│  V: [v1, v2, v3, v4, v5]  ← 全部算出    │
+│       ↓                                 │
+│  Attention: 5×5 矩阵一次性算              │
+│       ↓                                 │
+│  输出: 5 个位置的预测 + KV Cache 存入显存 │
+└─────────────────────────────────────────┘
+
+解码阶段（生成第 6 个 Token）：
+┌─────────────────────────────────────────┐
+│  输入: [怎]  ← 只输入一个新 Token         │
+│       ↓                                 │
+│  Q: [q6]         ← 只算 1 个             │
+│  K: [k1..k5] + [k6]  ← 前5个读缓存，新算1个│
+│  V: [v1..v5] + [v6]  ← 前5个读缓存，新算1个│
+│       ↓                                 │
+│  Attention: 1×6 向量计算                  │
+│       ↓                                 │
+│  输出: 预测下一个 Token                   │
+└─────────────────────────────────────────┘
+
+### 预填充（Prefill）
+
+#### 阶段概述
+
+预填充等于首次把提示词完整过一遍模型（并行、高效），同时建立 KV Cache，为后续逐 Token 的解码铺路。
+
+#### 在 Transformer 中的操作
+
+把整段提示词一次性输入 Transformer，做一次完整的前向传播。所有 Token 同时算，矩阵乘法一次完成。提示词的所有 Token 并行输入，每层 Transformer 中先做注意力计算，再做前馈网络计算，同时把所有 Token 的 K、V 向量存入 KV Cache。
+
+#### 流程示意
+
+- 输入: [你, 好, ，, 今, 天]
+- 一次性并行 → Q/K/V 全部算出 → Attention 5×5 矩阵一次性算 → 输出 5 个位置的预测 + KV Cache 存入显存
+
+### 解码（Decode）
+
+#### 阶段概述
+
+每生成一个新 Token，就把它的信息喂进同一个 Transformer，再算一次前向传播，得到下一个 Token 的概率分布。如此循环，直到输出结束。
+
+#### 在 Transformer 中的操作
+
+每生成一个新 Token，就把这个 Token 输入 Transformer，做一次前向传播。只算新 Token 的注意力，复用之前缓存的 K/V。解码的瓶颈在显存数据传输，而非计算。
+
+#### 流程示意（生成第 6 个 Token）
+
+- 输入: [怎] ← 只输入一个新 Token
+- Q: [q6] ← 只算 1 个
+- K: [k1..k5] + [k6] ← 前5个读缓存，新算1个
+- V: [v1..v5] + [v6] ← 前5个读缓存，新算1个
+- Attention: 1×6 向量计算 → 输出: 预测下一个 Token
+
+### 预填充 vs 解码 对比表
+
+| 对比项     | 输入（Prefill） | 输出（Decode）         |
+| :--------- | :-------------- | :--------------------- |
+| 计算方式   | 一次性并行      | 逐个串行               |
+| 计算量     | O(M)            | O(N×M + N²)            |
+| GPU 利用率 | 高              | 低（显存带宽瓶颈）     |
+| 计费策略   | 通常较便宜      | 通常较贵（尤其长输出） |
+| 优化空间   | 可用缓存加速    | 可用投机解码等加速     |
+
+- 输出越长，每次计算都要带上更长的上文，成本越滚越大
+- 所以很多模型对超长输出**加价计费**——这不是玄学，是物理上算力成本决定的
+- 这也解释了为什么 **Prompt 尽量短、输出别太长**，能明显省成本
+
+一句话总结：**预填充可以并行、便宜；解码必须串行且成本随输出长度平方增长**，所以模型对长输出收更贵。
+
+## KV Cache 与前缀缓存（Prompt Caching）
+
+### 工作原理
+
+#### 核心原理
+
+Token 缓存（Prompt Caching / 前缀缓存）的核心原理是复用自注意力机制中计算好的 Key (K) 和 Value (V) 矩阵，也就是 KV Cache。
+
+#### 避免重复计算（Prefill 阶段优化）
+
+大模型在处理输入的 Prompt 时，需要进行大规模的矩阵运算来计算每个 Token 的 Q、K、V。如果多次请求拥有相同的公共前缀（如固定的 System Prompt、长代码库、长文档等），系统会将第一次计算好的各层 K 和 V 向量保存在 GPU 显存或持久化存储中。
+
+#### 前缀匹配（Prefix Matching）
+
+当新的请求到达时，推理引擎（如 vLLM、SGLang 或云厂商 API 后端）会检查新请求的 Token 序列是否与缓存的前缀完全一致。如果一致，则直接加载显存中现成的 KV 缓存，跳过这部分长文本的 Transformer 前向计算（Prefill 阶段），从而大幅降低首字延迟（TTFT）并显著节省算力和费用。
+
+#### 显存占用计算
+
+KV Cache 的显存占用计算公式：`cache_size = l × 4 × h × seq_len × bytes_per_element`（其中 l 为模型层数，h 为隐藏维度）。以 FP16 为例，Llama 2 70B 在 4096 token 序列长度下，单请求 KV Cache 约为 10.7 GB。
+
+### 前缀匹配规则
+
+#### 必须"完全一致"的原因
+
+![img](https://leovan.me/images/cn/2026-04-25-how-to-save-token-for-llm/prompt-caching.avif)
+
+Transformer 的计算具有强上下文依赖性。任何一个字符、空格、时间戳或 JSON 字段顺序的变化，都会导致 Token 化（Tokenizer）后的数值发生改变，进而引发"蝴蝶效应"，让后续所有位置的 K 和 V 矩阵计算结果全部失效（Cache Miss）。缓存是前缀匹配的，哪怕修改了一个字，后面的部分也都需要重新计算。此外，缓存通常具有一定的有效期，一般几分钟到几小时就会失效。
+
+### 缓存命中
+
+#### 命中机制
+
+模型的输入除了用户的提示词以外，往往还会包含系统提示词等内容，这部分在每次模型运行的过程中都是相同的。通过提示词缓存技术可以将这段前缀提示词计算的结果保存在高速缓存中，在下次预填充的时候，如果前缀一样则直接可以把这部分结果从高速缓存中读取出来，而不需要重复计算。此时的成本仅包含缓存的存储和加载开销，对 GPU 算力几乎没有占用，因此这部分价格会很低。
+
+### 最佳实践
+
+#### 优化策略
+
+- **静态前置，动态后置**：将长期不变的内容（如系统设定、角色人设、长背景文档、工具定义）放在 Prompt 的最前面；将每次都变的内容（如用户当前提问、实时时间戳、RAG 检索结果）放在最后面。
+- **保持序列化稳定**：在 Function Calling 中，保持 tools 列表和 JSON 字段的顺序完全一致。
+- **提示词长度要求**：提示词要够长（通常 ≥ 1024 tokens 才会开始命中）。
+- **多轮对话/Agent 注意事项**：消息数组要"只追加，不改历史"；工具定义必须完全一致，顺序也要一致。
+
+### 常见踩坑清单
+
+#### 避坑指南
+
+- 把时间戳/随机 ID 放在 system 开头：每次都变，等于主动让缓存失效。
+- JSON 序列化不稳定：同一份 tool schema 如果字段顺序、空格、换行变化，token 序列可能变 → miss。
+- 指令在每次请求里微调一两个字：看似小改动，可能让前 1024 tokens 出现差异，直接从"高命中"变成"全 miss"。
+
+### 缓存有效期
+
+#### 各平台策略
+
+- **Azure OpenAI**：缓存通常在空闲 5–10 分钟清理，最晚 1 小时内移除。
+- **OpenAI**：提供 prompt_cache_retention（默认 in_memory，也可选 24h 做更长保留）。
+- **Anthropic Claude**：通过在特定内容块上标注 cache_control 来启用/控制缓存。
+
+### PagedAttention
+
+#### 内存分页思想
+
+vLLM 提出的 PagedAttention 借鉴操作系统的虚拟内存分页思想，将 KV Cache 切分为固定大小的 Block（通常每块容纳 16 个 token 的 KV 数据）。
+
+#### 优势与性能
+
+- **效果**：按需分配无内部碎片；Block 大小统一消除外部碎片；相同前缀的多个请求可直接映射到同一组物理 Block，实现零成本共享。
+- **写时复制（Copy-on-Write）**：多个请求初始共享只读的物理 Block，当某请求在共享前缀后发生分叉时才复制对应 Block。
+- **性能提升**：vLLM vs HuggingFace Transformers 吞吐提升 14×–24×；PagedAttention 将可用显存利用率提升至 90% 以上。
+
+### RadixAttention
+
+#### 压缩前缀树
+
+SGLang 和较新版本的 vLLM 将请求前缀组织为 Radix 树（压缩前缀树），节点存储对应的 KV Block。新请求到达时沿树匹配最长公共前缀，自动复用缓存块。吞吐量最多提升 6.4 倍。
+
+### 实际应用场景
+
+#### 典型用例
+
+- **多轮对话（Chatbot）**：前 20 轮的历史记录就是"Cached Token"。
+- **文档问答（RAG）**：上传 PDF 后，只要文件没变，第二个问题开始就不需要重新处理。
+- **代码助手（Coding Agent）**：将整个项目的代码库结构作为 Prompt，适合缓存。
+- **角色扮演/Agent**：复杂的 System Prompt 通常很长且固定，缓存后每次调用都极快。
+
+## 成本对比与优化建议
+
+### 为什么输出比输入贵
+
+#### 计算量分析
+
+因为历史上下文常常会被反复带上重新计算。
+
+- 算第 n+1 个 Token 的计算量 = (M + n) × P（P 为模型参数规模，M 为提示词长度，n 为已输出长度）
+- 输出全部 N 个 Token 的总计算量 = Σ(i=1 to N) (M + i) × P = P × [N×M + N(N+1)/2] ≈ P × (N×M + N²/2)
+- 总计算量中有一个 N² 的项——输出长度越长，成本呈二次方（平方级）增长，而非线性。
+
+### 成本对比表
+
+| 对比项     | 输入（Prefill） | 输出（Decode）         |
+| :--------- | :-------------- | :--------------------- |
+| 计算方式   | 一次性并行      | 逐个串行               |
+| 计算量     | O(M)            | O(N×M + N²)            |
+| GPU 利用率 | 高              | 低（显存带宽瓶颈）     |
+| 计费策略   | 通常较便宜      | 通常较贵（尤其长输出） |
+| 优化空间   | 可用缓存加速    | 可用投机解码等加速     |
+
+### 实用建议
+
+#### 降本策略
+
+- Prompt 尽量短、输出别太长，能明显省成本。
+- 将静态内容（System Prompt、Tools）置顶，动态内容（User Query、Time）置底，利用缓存降低输入成本。
+- 缓存的输入 token 在成本上比常规输入 token 便宜 10 倍（OpenAI 和 Anthropic 数据）。
+- 监控缓存命中率（Cache Hit Rate）指标，确保不是在做负优化。
+
+### 一句话总结
+
+预填充可以并行、便宜；解码必须串行且成本随输出长度平方增长，所以模型对长输出收更贵。
+
 # 技术栈和流程架构
 
 ## 全景图
@@ -733,6 +1149,32 @@ RAG (Retrieval-Augmented Generation)
 - 向量搜索:根据输入向量，找到最相似的向量
 
 ### fine-tuning（微调）
+
+
+
+# langchain
+
+## 开源库
+
+<font style="color:rgb(28, 30, 33);">LangChain 简化了LLM应用程序生命周期的每个阶段：</font>
+
++ **<font style="color:rgb(28, 30, 33);">开发</font>**<font style="color:rgb(28, 30, 33);">：使用LangChain的开源构建模块和组件构建您的应用程序。利用第三方集成和模板快速启动。</font>
++ **<font style="color:rgb(28, 30, 33);">生产部署</font>**<font style="color:rgb(28, 30, 33);">：使用</font>[<font style="color:rgb(28, 30, 33);">LangSmith</font>](https://docs.smith.langchain.com/)<font style="color:rgb(28, 30, 33);">检查、监控和评估您的链，以便您可以持续优化并自信地部署。</font>
++ **<font style="color:rgb(28, 30, 33);">部署</font>**<font style="color:rgb(28, 30, 33);">：使用</font>[<font style="color:rgb(28, 30, 33);">LangServe</font>](http://www.aidoczh.com/langchain/v0.2/docs/langserve/)<font style="color:rgb(28, 30, 33);">将任何链转换为API。</font>
+
+<img src="https://cdn.nlark.com/yuque/0/2024/svg/2424104/1722307914551-22224519-abb1-4c70-9a19-dca2f95c805d.svg" style="zoom:50%;" />
+
+具体而言，该框架包括以下开源库：
+
+- **langchain-core**：基本抽象和 LangChain 表达语言。
+- langchain-community：第三方集成。
+  - 合作伙伴包（例如 langchain-openai、langchain-anthropic 等）：一些集成已进一步拆分为仅依赖于 langchain-core 的轻量级包。
+- **langchain**：构成应用程序认知架构的链、代理和检索策略。
+- **[langgraph](https://langchain-ai.github.io/langgraph)**：通过将步骤建模为图中的边缘和节点，使用 LLMs 构建稳健且有状态的多参与者应用程序。
+- **[langserve](http://www.aidoczh.com/langchain/v0.2/docs/langserve/)**：将 LangChain 链部署为 REST API。
+- **[LangSmith](https://docs.smith.langchain.com/)**：一个开发平台，可让您调试、测试、评估和监控 LLM 应用程序。
+
+
 
 # 跑通最简单的 Agent
 
