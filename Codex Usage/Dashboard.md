@@ -4,7 +4,7 @@
 > [!info] Cross-device dashboard
 > This note is generated on a desktop and can be read on any device through normal vault sync. It does not require Codex or this plugin to be installed on the reading device.
 
-_Last generated: 2026/9/8 14:05:15._
+_Last generated: 2026/9/14 22:14:32._
 
 ## Live limits
 
@@ -17,67 +17,66 @@ _Last generated: 2026/9/8 14:05:15._
 
 | Measure | Value |
 | --- | ---: |
-| Exact events | 309 |
-| Sessions | 42 |
-| Repositories | 15 |
-| Models | 6 |
-| Tracked days | 10 |
+| Exact events | 1,955 |
+| Sessions | 199 |
+| Repositories | 24 |
+| Models | 7 |
+| Tracked days | 16 |
 
 
 | Period | Tokens | Turns | Sessions |
 | --- | ---: | ---: | ---: |
-| Today | 1,245,705 | 15 | 2 |
-| Last 7 days | 1,245,705 | 15 | 2 |
-| Last 30 days | 3,172,166 | 48 | 10 |
-| This year | 26,176,630 | 309 | 42 |
-| All tracked time | 26,176,630 | 309 | 42 |
+| Today | 29,913,621 | 223 | 19 |
+| Last 7 days | 188,004,521 | 1,661 | 159 |
+| Last 30 days | 189,930,982 | 1,694 | 167 |
+| This year | 212,935,446 | 1,955 | 199 |
+| All tracked time | 212,935,446 | 1,955 | 199 |
 
-**Coverage:** 2026/7/20 to 2026/9/8. 124 events have no repository attribution.
+**Coverage:** 2026/7/20 to 2026/9/14. 10 events have no repository attribution.
 
 ## By repository
 
 | Name | Tokens | Turns |
 | --- | ---: | ---: |
-| Unknown repository | 14,927,857 | 124 |
-| an-admin | 7,431,414 | 127 |
-| lm-document | 1,245,705 | 15 |
+| lm-ai-future | 159,599,539 | 1,304 |
+| an-admin | 20,984,502 | 234 |
+| ni | 11,095,831 | 169 |
+| old | 9,359,635 | 67 |
+| https-codeup-aliyun-com-ifugle-yqa | 3,595,395 | 57 |
+| lm-document | 2,813,806 | 25 |
+| json-chrome-9224-09-09-10 | 1,080,394 | 31 |
+| dsb-admin | 1,063,440 | 14 |
+| Unknown repository | 1,019,485 | 10 |
 | dee | 664,031 | 10 |
-| sites-plugin-sites-openai-bundled-3 | 658,363 | 7 |
-| dsb-admin | 498,698 | 5 |
-| ni | 445,155 | 8 |
-| an-mobile | 64,329 | 1 |
-| new-chat-4 | 61,660 | 3 |
-| yqa-g-web-urban | 52,206 | 2 |
 
 ## By model
 
 | Name | Tokens | Turns |
 | --- | ---: | ---: |
-| gpt-5.6-terra | 10,665,493 | 114 |
-| gpt-5.6-sol | 7,378,270 | 79 |
+| codex-auto-review | 109,675,466 | 1,050 |
+| gpt-5.6-luna | 75,468,223 | 634 |
+| gpt-5.6-terra | 15,865,725 | 151 |
+| gpt-5.6-sol | 7,618,482 | 83 |
 | gpt-5.4-mini | 3,768,957 | 28 |
-| codex-auto-review | 3,165,327 | 73 |
-| gpt-5.6-luna | 1,136,923 | 12 |
+| Unknown model | 476,933 | 6 |
 | deepseek-v4-pro | 61,660 | 3 |
 
 ## By provider
 
 | Name | Tokens | Turns |
 | --- | ---: | ---: |
-| openai | 26,176,630 | 309 |
+| openai | 212,935,446 | 1,955 |
 
 ## By year
 
 | Name | Tokens | Turns |
 | --- | ---: | ---: |
-| 2026 | 26,176,630 | 309 |
+| 2026 | 212,935,446 | 1,955 |
 
 ## Daily activity
 
 | Date | Tokens | Turns |
 | --- | ---: | ---: |
-| 2026-07-20 | 12,931,558 | 160 |
-| 2026-07-21 | 2,212,361 | 23 |
 | 2026-07-23 | 5,492,394 | 49 |
 | 2026-07-24 | 1,008,170 | 11 |
 | 2026-07-25 | 1,224,714 | 16 |
@@ -85,15 +84,21 @@ _Last generated: 2026/9/8 14:05:15._
 | 2026-08-26 | 755,615 | 12 |
 | 2026-08-28 | 636,318 | 12 |
 | 2026-08-29 | 534,528 | 9 |
-| 2026-09-08 | 1,245,705 | 15 |
+| 2026-09-08 | 3,081,060 | 30 |
+| 2026-09-09 | 3,642,365 | 59 |
+| 2026-09-10 | 26,225,332 | 327 |
+| 2026-09-11 | 34,055,638 | 339 |
+| 2026-09-12 | 76,866,582 | 572 |
+| 2026-09-13 | 14,219,923 | 111 |
+| 2026-09-14 | 29,913,621 | 223 |
 
 ## Token composition
 
 | Token type | All tracked time |
 | --- | ---: |
-| Input | 25,383,514 |
-| Output | 104,613 |
-| Cached input | 23,315,453 |
-| Reasoning output | 38,294 |
+| Input | 211,134,142 |
+| Output | 554,634 |
+| Cached input | 195,236,221 |
+| Reasoning output | 230,225 |
 
 _The analytics ledger contains exact token events imported from local Codex session logs. Cost and quotas are helper-reported where available. Repository paths, prompts, raw logs, and credentials are not written to this note._

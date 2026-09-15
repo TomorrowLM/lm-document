@@ -1947,7 +1947,7 @@ RAG (Retrieval-Augmented Generation)
 
 Prompt Template（提示模板）用于定义如何将固定说明、动态变量和上下文信息组合成模型输入。它将一次性的提示词字符串转变为可复用、可维护的结构。
 
-Prompt Templates 主要包括以下能力：
+Prompt Templates 主要由以下核心组件构成：
 
 - 字符串模板：将变量填充到单段文本中
 - 聊天模板：将变量填充到带角色信息的消息列表中
@@ -1956,12 +1956,18 @@ Prompt Templates 主要包括以下能力：
 - 示例选择器：从候选示例中动态选择相关内容
 - 输出解析器：将模型输出转换为下游可使用的结构
 
+Prompt Template 的处理过程包括：
+
+1. 定义固定文本、消息角色和动态变量。
+2. 接收变量、历史消息或参考示例。
+3. 渲染为字符串提示词或消息列表。
+4. 调用模型并处理模型响应。
+
 其中，模板负责组织模型输入，聊天模型负责生成响应，输出解析器负责处理响应。Few-shot Selector 属于 Few-shot 模板的动态示例选择能力。
 
-### 2. 使用场景
+### 2. 支持场景
 
 Prompt Templates 适用于需要重复使用提示结构、动态替换输入或控制模型上下文的场景：
-
 - 文本生成：根据主题、语气或格式生成内容
 - 聊天问答：区分系统指令、用户问题和对话上下文
 - 历史对话：将历史消息插入当前对话的指定位置
@@ -1987,6 +1993,32 @@ prompt_template = PromptTemplate.from_template(
 
 prompt_value = prompt_template.invoke({"topic": "cats"})
 ```
+
+#### 消息对象（Message）
+
+LangChain 使用消息对象表示对话中的不同角色和内容。常见消息类型包括：
+
+| 消息类型            | 含义                |
+| --------------- | ----------------- |
+| `SystemMessage` | 系统指令，用于设定模型的行为和规则 |
+| `HumanMessage`  | 用户输入              |
+| `AIMessage`     | 模型生成的回复           |
+| `ToolMessage`   | 工具调用返回的结果         |
+
+`AIMessage` 不是 API 接口，而是一个用于封装模型回复的消息对象。模型调用通常返回 `AIMessage`，可以通过 `.content` 获取回复文本：
+
+```python
+from langchain_core.messages import AIMessage
+
+message = AIMessage(content="这是模型生成的回答")
+print(message)
+# content='这是模型生成的回答'
+
+print(message.content)
+# 这是模型生成的回答
+```
+
+`AIMessage(...)` 返回的是一个完整的消息对象，不是普通字符串。`message.content` 才是消息正文，类型为 `str`；消息对象还可以包含角色、响应元数据等信息。
 
 #### ChatPromptTemplate
 
@@ -2032,22 +2064,77 @@ prompt_template = ChatPromptTemplate.from_messages([
 
 传入的消息列表会按照原有顺序插入占位位置。
 
-#### FewShotPromptTemplate
+`msgs` 需要传入消息列表，参数名必须与 `MessagesPlaceholder("msgs")` 中的占位符名称一致：
+
+```python
+from langchain_core.messages import HumanMessage, AIMessage
+
+messages = prompt_template.invoke({
+    "msgs": [
+        HumanMessage(content="我叫小明"),
+        AIMessage(content="你好，小明！"),
+        HumanMessage(content="我叫什么？"),
+    ]
+})
+```
+
+也可以使用元组简写：
+
+```python
+messages = prompt_template.invoke({
+    "msgs": [
+        ("human", "我叫小明"),
+        ("ai", "你好，小明！"),
+        ("human", "我叫什么？"),
+    ]
+})
+```
+
+最终消息会按照以下顺序插入：系统消息、用户消息、助手消息、用户消息。`msgs` 必须是消息列表，不能直接传入单条字符串。
+
+#### Few-shot 模板与示例选择
+
+##### FewShotPromptTemplate
 
 用于将多个参考示例和当前输入组合成完整提示词。它可以接收固定示例，也可以使用 `example_selector` 动态选择示例。
 
-```python
-prompt = FewShotPromptTemplate(
-    examples=examples,
-    example_prompt=example_prompt,
-    suffix="输入：{input}",
-    input_variables=["input"],
-)
-```
+基本使用流程是：先准备示例数据，再定义每个示例的格式，最后把当前输入拼接到示例后面。
 
-#### SemanticSimilarityExampleSelector
+###### 接口概述
 
-用于根据语义相似度动态选择示例。它依赖 Embedding 模型将文本转换为向量，再通过向量存储执行相似度检索。
+FewShotPromptTemplate 负责格式化参考示例，并将示例与当前输入组合成最终提示词。
+
+###### 请求参数
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `examples` | `list[dict]` | 固定参考示例集合，与 `example_selector` 二选一 |
+| `example_prompt` | `PromptTemplate` | 单个示例的格式模板 |
+| `prefix` | `str` | 所有示例之前的固定说明 |
+| `suffix` | `str` | 所有示例之后的当前输入模板 |
+| `input_variables` | `list[str]` | 模板需要接收的变量 |
+| `example_selector` | `ExampleSelector` | 动态选择示例，与 `examples` 二选一 |
+
+###### 响应参数
+
+返回组合了参考示例和当前输入的提示词，通常是 `PromptValue` 对象。
+
+##### SemanticSimilarityExampleSelector
+
+用于根据当前输入的语义相似度，从候选示例中动态选择 Top-K 示例。它依赖 Embedding 模型将文本转换为向量，再通过向量存储执行相似度检索。
+
+###### 初始化参数
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `examples` | `list[dict]` | 候选示例集合 |
+| `embeddings` | `Embedding` | 文本向量化模型 |
+| `vectorstore_cls` | `VectorStore` | 向量存储实现 |
+| `k` | `int` | 返回的示例数量 |
+
+###### 选择方法
+
+先通过 `from_examples()` 创建选择器，再调用 `select_examples()` 获取与当前输入最相关的示例：
 
 ```python
 selector = SemanticSimilarityExampleSelector.from_examples(
@@ -2056,152 +2143,13 @@ selector = SemanticSimilarityExampleSelector.from_examples(
     vectorstore_cls=VectorStore,
     k=2,
 )
-```
 
-常用参数如下：
-
-| 参数 | 作用 |
-| --- | --- |
-| `examples` | 候选示例集合 |
-| `embeddings` | 文本向量化模型 |
-| `vectorstore_cls` | 向量存储实现 |
-| `k` | 返回的示例数量 |
-
-选择结果通常通过以下方式获取：
-
-```python
 selected_examples = selector.select_examples(
     {"input": current_input}
 )
 ```
 
-#### OutputParser
-
-用于接收模型输出并转换为目标格式。简单文本可以使用 `StrOutputParser`，结构化结果则应根据目标数据类型选择解析器。
-
-```python
-from langchain_core.output_parsers import StrOutputParser
-
-parser = StrOutputParser()
-result = parser.invoke(model_response)
-```
-
-如果模型原生支持函数调用或工具调用，结构化数据通常优先使用模型提供的结构化能力，而不是完全依赖文本解析。
-
-#### API 参数关系
-
-Prompt Template 相关参数通常围绕以下输入组织：
-
-| 参数 | 作用 |
-| --- | --- |
-| `prefix` | 示例或当前输入之前的固定说明 |
-| `suffix` | 示例之后的当前输入格式 |
-| `input_variables` | 模板需要的动态变量 |
-| `examples` | 固定参考示例集合 |
-| `example_selector` | 动态示例选择器 |
-| `example_prompt` | 单个示例的格式模板 |
-| `embeddings` | 文本向量化模型 |
-| `vectorstore_cls` | 向量存储实现 |
-| `k` | 返回的示例数量 |
-
-### 4. 示例
-
-#### 字符串模板
-
-字符串模板适合单段文本输入：
-
-```python
-prompt_template = PromptTemplate.from_template(
-    "请将以下主题总结为三句话：{topic}"
-)
-
-prompt = prompt_template.invoke({"topic": "人工智能"})
-```
-
-#### 聊天模板
-
-聊天模板适合需要角色区分的输入：
-
-```python
-prompt_template = ChatPromptTemplate.from_messages([
-    ("system", "你是一名技术助手"),
-    ("user", "请解释：{topic}"),
-])
-
-messages = prompt_template.invoke({"topic": "向量检索"})
-```
-
-#### 历史消息注入
-
-消息占位符适合将历史消息插入指定位置：
-
-```python
-prompt_template = ChatPromptTemplate.from_messages([
-    ("system", "你是一名技术助手"),
-    MessagesPlaceholder("history"),
-    ("user", "请继续回答：{question}"),
-])
-```
-
-#### Few-shot 示例
-
-Few-shot 模板适合使用参考案例约束输出：
-
-```python
-examples = [
-    {"input": "退款条件是什么？", "output": "请说明订单状态和退款原因。"},
-    {"input": "如何修改地址？", "output": "请在订单发货前修改地址。"},
-]
-
-example_prompt = PromptTemplate.from_template(
-    "问题：{input}\n回答：{output}"
-)
-
-prompt = FewShotPromptTemplate(
-    examples=examples,
-    example_prompt=example_prompt,
-    suffix="问题：{input}\n回答：",
-    input_variables=["input"],
-)
-```
-
-当示例数量较多时，可以使用选择器动态选例：
-
-```python
-selector = SemanticSimilarityExampleSelector.from_examples(
-    examples=examples,
-    embeddings=embeddings,
-    vectorstore_cls=VectorStore,
-    k=1,
-)
-
-prompt = FewShotPromptTemplate(
-    example_selector=selector,
-    example_prompt=example_prompt,
-    suffix="问题：{input}\n回答：",
-    input_variables=["input"],
-)
-```
-
-#### 输出解析
-
-模型生成响应后，可以通过输出解析器转换为下游需要的格式：
-
-```python
-response = model.invoke(messages)
-result = parser.invoke(response)
-```
-
-### 5. 技术原理
-
-Prompt Template 的处理过程包括：
-
-1. 定义固定文本、消息角色和动态变量。
-2. 接收变量、历史消息或参考示例。
-3. 渲染为字符串提示词或消息列表。
-4. 调用模型并处理模型响应。
-
-Few-shot Selector 的处理过程包括：
+###### 处理流程
 
 ```text
 候选示例
@@ -2213,23 +2161,208 @@ Few-shot Selector 的处理过程包括：
     -> 注入 Few-shot 模板
 ```
 
+##### 动态示例选择与调用示例
+
+```python
+from langchain_core.example_selectors import SemanticSimilarityExampleSelector
+from langchain_core.prompts import FewShotPromptTemplate, PromptTemplate
+
+# 对话示例：input 表示用户消息，output 表示助手回复
+examples = [
+    {"input": "我叫小明。", "output": "你好，小明！"},
+]
+
+example_prompt = PromptTemplate.from_template(
+    "用户：{input}\n助手：{output}"
+)
+
+# embeddings 和 VectorStore 需要根据实际项目进行配置
+selector = SemanticSimilarityExampleSelector.from_examples(
+    examples=examples,
+    embeddings=embeddings,
+    vectorstore_cls=VectorStore,
+    k=1,
+)
+
+prompt = FewShotPromptTemplate(
+    example_selector=selector,
+    example_prompt=example_prompt,
+    prefix="请参考下面的用户与助手对话示例：\n\n",
+    suffix="用户：{input}\n助手：",
+    input_variables=["input"],
+)
+
+prompt_value = prompt.invoke({"input": "我叫什么？"})
+print(prompt_value.to_string())
+```
+
+生成的聊天提示词大致如下：
+
+```text
+请参考下面的用户与助手对话示例：
+
+用户：我叫小明。
+助手：你好，小明！
+用户：我叫什么？
+助手：
+```
+
+模型根据示例理解对话格式后，可能生成：
+
+```text
+你叫小明。
+```
+
+这里由 `selector` 根据当前输入动态选择示例，再由 `FewShotPromptTemplate` 格式化并拼接最终提示词。`examples` 和 `example_selector` 通常二选一。
+
+##### 错误码与注意事项
+
+该组件通常直接抛出运行时异常，没有统一的业务错误码。业务层可以根据实际需要封装以下错误类型：
+
+| 错误类型 | 说明 |
+| --- | --- |
+| `INVALID_INPUT` | 当前输入为空，或缺少模板所需字段 |
+| `INVALID_K` | `k` 不是正整数 |
+| `EMBEDDING_ERROR` | Embedding 模型调用失败 |
+| `VECTORSTORE_ERROR` | 向量存储初始化或检索失败 |
+| `NO_MATCHED_EXAMPLES` | 没有检索到可用示例 |
+
 相似度只表示文本在向量空间中的相关程度，不代表示例内容一定正确。示例质量、字段一致性和数据分布会影响最终结果。
+
+#### OutputParser
+
+OutputParser 用于接收模型输出并转换为目标格式。简单文本可以使用 `StrOutputParser`，结构化结果则应根据目标数据类型选择解析器。
+
+| 类型 | 解析结果 | 常见解析器 |
+| --- | --- | --- |
+| 普通文本 | `str` | `StrOutputParser` |
+| JSON 对象/数组 | `dict` / `list` | `JsonOutputParser` |
+| Pydantic 模型 | 强类型对象 | `PydanticOutputParser` |
+| 结构化字段 | 字段化字典 | `StructuredOutputParser` |
+| 逗号分隔列表 | `list[str]` | `CommaSeparatedListOutputParser` |
+| XML | XML 结构 | `XMLOutputParser` |
+| 自定义格式 | 任意类型 | 自定义 Runnable 或解析函数 |
+
+##### StrOutputParser
+
+`StrOutputParser` 用于将模型的输出转换为普通字符串。聊天模型通常返回一个 `AIMessage` 对象，解析器会提取其中的 `content` 内容，方便后续代码直接使用文本。
+
+```python
+from langchain_core.messages import AIMessage
+from langchain_core.output_parsers import StrOutputParser
+
+parser = StrOutputParser()
+
+model_response = AIMessage(content="这是模型生成的回答。")
+result = parser.invoke(model_response)
+
+print(result)
+# 这是模型生成的回答。
+```
+
+##### JsonOutputParser
+
+`JsonOutputParser` 用于将模型输出的 JSON 文本解析为 Python 字典或列表，适合处理结构化结果。
+
+```python
+from langchain_core.messages import AIMessage
+from langchain_core.output_parsers import JsonOutputParser
+
+parser = JsonOutputParser()
+
+model_response = AIMessage(
+    content='{"title": "LangChain 入门", "level": "beginner"}'
+)
+result = parser.invoke(model_response)
+
+print(result)
+# {'title': 'LangChain 入门', 'level': 'beginner'}
+```
+
+在实际链路中，通常将提示模板、模型和输出解析器连接起来：
+
+```python
+chain = prompt_template | model | StrOutputParser()
+
+answer = chain.invoke({"topic": "cats"})
+print(answer)
+```
+
+执行顺序是：提示模板生成输入，模型生成 `AIMessage`，`StrOutputParser` 提取消息内容并返回字符串。
+
+如果需要结构化 JSON 结果，可以将链末尾的 `StrOutputParser` 替换为 `JsonOutputParser`。
+
+如果模型原生支持函数调用或工具调用，结构化数据通常优先使用模型提供的结构化能力，而不是完全依赖文本解析。
+
+#### Pydantic
+
+Pydantic 是 Python 中用于数据校验、类型转换和结构化建模的库。它可以通过 Python 类型注解定义数据结构，并在运行时校验输入数据。
+
+##### 基本用法
+
+```python
+from pydantic import BaseModel
+
+class User(BaseModel):
+    name: str
+    age: int
+
+user = User(name="小明", age="18")
+
+print(user.age)             # 18，自动转换为 int
+print(user.model_dump())    # {"name": "小明", "age": 18}
+```
+
+##### 与 TypeScript 的对比
+
+Pydantic 可以类比 TypeScript，但两者的作用时机不同：
+
+| Pydantic | TypeScript |
+| --- | --- |
+| 运行时校验数据 | 主要在编译期进行类型检查 |
+| 使用 `BaseModel` 定义数据结构 | 使用 `interface` 或 `type` 定义类型 |
+| 可以自动转换和校验输入 | 通常不会自动校验运行时 JSON |
+| 可以生成字典和 JSON Schema | 主要用于类型推导和编辑器提示 |
+
+简单来说，TypeScript 主要保证代码编写时的类型安全；Pydantic 主要保证程序运行时接收到的数据符合预期。
+
+##### 在 LangChain 中的使用
+
+在 LangChain 中，`PydanticOutputParser` 可以将模型输出的 JSON 解析为指定的 Pydantic 对象。相比直接得到 `dict`，Pydantic 对象具有明确的字段结构和类型约束。
+
+```python
+from langchain_core.messages import AIMessage
+from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel
+
+class Movie(BaseModel):
+    title: str
+    year: int
+
+parser = PydanticOutputParser(pydantic_object=Movie)
+result = parser.invoke(
+    AIMessage(content='{"title": "LangChain 入门", "year": 2026}')
+)
+
+print(result.title)  # LangChain 入门
+print(result.year)   # 2026
+```
 
 ### 6. 组件协作与数据流
 
 各组件之间的职责边界如下：
 
-| 组件 | 职责 |
-| --- | --- |
-| `PromptTemplate` | 格式化字符串提示词 |
-| `ChatPromptTemplate` | 格式化角色消息列表 |
-| `MessagesPlaceholder` | 插入动态消息列表 |
-| `FewShotPromptTemplate` | 组合参考示例与当前输入 |
-| `Example Selector` | 选择与当前输入相关的示例 |
-| `Embedding` | 将文本转换为向量 |
-| `Vector Store` | 保存向量并执行相似度检索 |
-| `Chat Model` | 根据最终上下文生成响应 |
-| `Output Parser` | 将响应转换为目标格式 |
+| 组件                      | 职责           |
+| ----------------------- | ------------ |
+| `PromptTemplate`        | 格式化字符串提示词    |
+| `ChatPromptTemplate`    | 格式化角色消息列表    |
+| `MessagesPlaceholder`   | 插入动态消息列表     |
+| `FewShotPromptTemplate` | 组合参考示例与当前输入  |
+| `Example Selector`      | 选择与当前输入相关的示例 |
+| `Embedding`             | 将文本转换为向量     |
+| `Vector Store`          | 保存向量并执行相似度检索 |
+| `Chat Model`            | 根据最终上下文生成响应  |
+| `Output Parser`         | 将响应转换为目标格式   |
 
 完整数据流如下：
 
@@ -2246,62 +2379,31 @@ Few-shot Selector 的处理过程包括：
 
 组件之间应通过明确的数据结构协作，避免在模板中混入业务查询、向量检索或结果持久化等无关职责。
 
-## Chains(链式调用)
-
-Chains 是 LangChain 中用于将多个步骤组合成一个工作流程的模块。它们允许你定义一系列操作，并将它们链接在一起。比如<font style="color:rgb(28, 30, 33);">在这个Chain中，每次都会调用输出解析器。这个链条的输入类型是语言模型的输出（字符串或消息列表），输出类型是输出解析器的输出（字符串）。</font>
-
-我们可以使用`|" 运算符轻松创建这个Chain。|`<font style="color:rgb(28, 30, 33);"> 运算符在 LangChain 中用于将两个元素组合在一起。</font>
-
-如果我们现在看一下 LangSmith，我们会发现这个链条有两个步骤：首先调用语言模型，然后将其结果传递给输出解析器。我们可以在LangSmith 跟踪 中看到这一点。
-
-[https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r](https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r)
-
-示例代码
-
-```python
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import StrOutputParser
-
-model = ChatOpenAI(model="gpt-4")
-
-messages = [
-    SystemMessage(content="将以下内容从英语翻译成中文"),
-    HumanMessage(content="Let's go for a run"),
-]
-parser = StrOutputParser()
-
-# 使用Chains方式调用
-chain = model | parser  #等于 model.invoke() + parser.invoke()
-response = chain.invoke(messages)
-print(response)
-#我们去跑步吧
-
-```
-
 ## LCEL 与 Runnable 接口
 
-```
-组件：具体做事情的对象
-Runnable：组件遵循的统一接口
-invoke / stream：Runnable 接口中定义的调用方法
-LCEL：组合多个 Runnable 组件的方式
-```
+### 概念
+
+这几个概念可以先理解为：
+
+| 概念                        | 说明                          |
+| ------------------------- | --------------------------- |
+| 组件                        | 执行具体任务的对象，例如提示模板、模型或输出解析器，并提供 `invoke`、`stream`、`batch` 等调用方法 |
+| `Runnable`                | 组件遵循的统一调用协议                 |
+| LCEL                      | 用于组合多个 `Runnable` 的声明式表达式语法 |
+
+组件负责具体工作，`Runnable` 负责统一调用方式，LCEL 负责将多个组件组合成可执行的链。
 
 ### LCEL
 
-LCEL 的英文全称是 LangChain Expression Language，即 LangChain 表达式语言。它是一种声明式语法，用于组合提示模板、聊天模型、输出解析器、检索器和工具等 LangChain 组件。
+LCEL 的英文全称是 LangChain Expression Language，即 LangChain 表达式语言。它是一种声明式语法，用于组合提示模板、聊天模型、输出解析器、检索器和工具等 `Runnable` 组件。
 
-LCEL 的目标是让同一套链式代码既能用于快速原型，也能直接扩展到生产环境。使用 LCEL 构建的链通常可以获得以下能力：
+LCEL 的核心作用是描述多个 `Runnable` 组件之间的数据流转关系，并将它们组合成一条可执行的链。最常见的组合方式是使用 `|` 运算符：
 
-- **流式输出**：尽早返回第一个输出块，并持续返回增量结果。
-- **异步调用**：同一条链既可以使用同步 API，也可以使用异步 API。
-- **并行执行**：可以并行执行的步骤会被自动调度，以降低整体延迟。
-- **重试与回退**：可以为链或链中的某个步骤配置重试策略和备用方案。
-- **中间结果访问**：可以观察和流式传输链中间步骤的执行结果。
-- **输入输出模式**：根据链的结构推断 Pydantic 模型和 JSON Schema，用于校验输入输出。
-- **LangSmith 追踪**：链中的各个步骤都可以被记录，便于调试和监控。
-- **LangServe 部署**：LCEL 链可以方便地部署为服务接口。
+```python
+chain = prompt | model | parser
+```
+
+这里的 `|` 是 LCEL 提供的组合语法；组合后的 `chain` 本身仍然是一个 `Runnable`。具体的同步、异步、流式和批量调用方式，参见下方的「Runnable」章节。
 
 ### Runnable
 
@@ -2396,6 +2498,8 @@ invoke、stream、batch 等调用方法
 - `stream`：以数据块的形式流式返回结果。
 - `batch`：对一组输入执行调用。
 
+异步调用适合模型请求、向量检索和外部工具调用等 I/O 密集型操作。当程序等待这些操作返回时，可以将执行权交给事件循环，处理其他任务，从而提高并发处理能力。异步调用不会自动让单次请求变快，主要收益体现在同时处理多个请求时。
+
 对应的异步方法包括：
 
 - `ainvoke`：异步调用一次并返回完整结果。
@@ -2417,16 +2521,18 @@ invoke、stream、batch 等调用方法
 
 所有 `Runnable` 都提供输入输出模式：
 
-- `input_schema`：根据组件结构生成的输入 Pydantic 模型。
-- `output_schema`：根据组件结构生成的输出 Pydantic 模型。
+- `input_schema`：表示组件输入结构的 Pydantic 模型。
+- `output_schema`：表示组件输出结构的 Pydantic 模型。
 
-#### 自定义
+#### 自定义 Runnable
 
 LCEL 中，**Runnable 是可组合的最小执行单元**。自定义实现通常继承 `Runnable[Input, Output]`，至少实现 `invoke()`；框架会默认提供 `batch()`、`ainvoke()` 和非增量 `stream()`。
 
-##### 什么是自定义 Runnable
+##### 概念关系
 
-在 LCEL 中，`Runnable` 是可调用、可组合的执行单元。自定义 Runnable 用于补充框架没有提供的确定性转换，例如给输入增加指令、清洗文本或格式化模型输出。
+“自定义 Runnable”和 `Runnable[Input, Output]` 不是两个不同的概念：前者说明组件是由开发者自行实现的 Runnable，后者说明这个 Runnable 的输入和输出类型。
+
+自定义 Runnable 用于补充框架没有提供的确定性转换，例如给输入增加指令、清洗文本或格式化模型输出。
 
 当前示例中的 `PrefixRunnable` 接收一段文本，并在文本前拼接固定前缀。
 
@@ -2594,6 +2700,56 @@ Runnable 接口中的流式方法主要分为两类：
 2. `astream_events` 和 `astream_log`：流式传输链的**中间步骤、执行事件和最终输出**。
 
 因此，只有需要实时显示最终文本时，通常使用 `stream` 或 `astream`；需要观察提示模板、检索器、模型和解析器等中间步骤时，则使用 `astream_events` 或 `astream_log`。
+
+## Chains（链式调用）
+
+Chain 用于将多个处理步骤组合成一个可复用的工作流。在 LangChain 中，每个步骤通常都遵循统一的 `Runnable` 接口，因此可以通过链式组合的方式连接提示模板、模型、输出解析器、检索器和工具。
+
+在 LCEL 中，`|` 是管道运算符，用于按照从左到右的顺序连接多个 `Runnable`。例如：
+
+```python
+chain = model | parser
+```
+
+这条链包含两个步骤：
+
+1. `model` 接收输入并生成模型响应，通常是字符串或 `AIMessage`。
+2. `parser` 接收模型响应，并将其转换为下游需要的格式，例如普通字符串。
+
+调用链时，输入会依次传递给每个步骤：
+
+```text
+输入
+    -> Chat Model
+    -> Output Parser
+    -> 最终结果
+```
+
+Chain 的输入类型和输出类型由组成它的各个步骤共同决定。使用 LangSmith 可以查看每个步骤的执行过程、输入输出和耗时，便于调试和监控。
+
+[https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r](https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r)
+
+### 调用示例
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
+
+model = ChatOpenAI(model="gpt-4o-mini")
+
+messages = [
+    SystemMessage(content="将以下内容从英语翻译成中文"),
+    HumanMessage(content="Let's go for a run"),
+]
+parser = StrOutputParser()
+
+# 使用管道运算符组合模型和输出解析器
+chain = model | parser
+response = chain.invoke(messages)
+print(response)
+# 我们去跑步吧
+```
 
 ## 事件
 
