@@ -2379,9 +2379,9 @@ print(result.year)   # 2026
 
 组件之间应通过明确的数据结构协作，避免在模板中混入业务查询、向量检索或结果持久化等无关职责。
 
-## LCEL 与 Runnable 接口
+## Runnable 接口
 
-### 概念
+### 核心概念
 
 这几个概念可以先理解为：
 
@@ -2393,19 +2393,7 @@ print(result.year)   # 2026
 
 组件负责具体工作，`Runnable` 负责统一调用方式，LCEL 负责将多个组件组合成可执行的链。
 
-### LCEL
-
-LCEL 的英文全称是 LangChain Expression Language，即 LangChain 表达式语言。它是一种声明式语法，用于组合提示模板、聊天模型、输出解析器、检索器和工具等 `Runnable` 组件。
-
-LCEL 的核心作用是描述多个 `Runnable` 组件之间的数据流转关系，并将它们组合成一条可执行的链。最常见的组合方式是使用 `|` 运算符：
-
-```python
-chain = prompt | model | parser
-```
-
-这里的 `|` 是 LCEL 提供的组合语法；组合后的 `chain` 本身仍然是一个 `Runnable`。具体的同步、异步、流式和批量调用方式，参见下方的「Runnable」章节。
-
-### Runnable
+### 组件与 Runnable
 
 `Runnable` 不是某一个具体的模型或链，而是一套统一的调用协议。只要一个组件实现了 `Runnable`，就可以用相同的方法调用它、组合它，并获取它的输入输出模式。
 
@@ -2490,7 +2478,7 @@ invoke、stream、batch 等调用方法
 
 因此，`invoke` 和 `stream` 不是组件本身，而是组件遵循 `Runnable` 规范后提供的调用方法。`model` 是聊天模型组件，`model.invoke(...)` 和 `model.stream(...)` 分别表示以完整结果或流式数据块的方式调用这个组件。
 
-#### API
+### API 与调用方法
 
 最常用的同步方法包括：
 
@@ -2524,11 +2512,92 @@ invoke、stream、batch 等调用方法
 - `input_schema`：表示组件输入结构的 Pydantic 模型。
 - `output_schema`：表示组件输出结构的 Pydantic 模型。
 
-#### 自定义 Runnable
+#### `invoke` 与 `stream` 的区别
+
+对于聊天模型，`invoke` 和 `stream` 的输入可以是字符串、消息列表或 `PromptValue`。二者的主要区别是返回时机和返回类型。
+
+| 方法 | 返回形式 | 适用场景 |
+| --- | --- | --- |
+| `invoke` | 一个完整的 `AIMessage` | 普通问答、翻译、需要完整结果的调用 |
+| `stream` | 多个 `AIMessageChunk` | 聊天窗口、打字机效果、长文本生成 |
+
+##### `invoke`
+
+`invoke` 会等待模型生成完成，然后一次性返回完整的消息：
+
+```python
+response = model.invoke(messages)
+print(response.content)
+```
+
+调用过程可以理解为：
+
+```text
+发送请求 → 等待模型生成完成 → 返回完整 AIMessage
+```
+
+##### `stream`
+
+`stream` 返回一个迭代器，需要通过 `for` 循环逐块读取：
+
+```python
+for chunk in model.stream(messages):
+   print(chunk.content, end="", flush=True)
+```
+
+调用过程可以理解为：
+
+```text
+发送请求 → 返回第一个 chunk → 返回后续 chunk → 输出完成
+```
+
+每个 `chunk` 只是最终消息的一部分，例如：
+
+```text
+content='你'
+content='好'
+content='！'
+```
+
+因此，下面的写法只能打印迭代器对象，不能直接得到模型文本：
+
+```python
+response = model.stream(messages)
+print(response)
+```
+
+如果模型或底层接口不支持流式调用，`stream` 可能退化为调用 `invoke`，最终一次性返回完整结果。
+
+#### 异步调用
+
+异步方法需要配合 `asyncio` 和 `await` 使用：
+
+```python
+response = await model.ainvoke(messages)
+print(response.content)
+```
+
+异步流式调用示例：
+
+```python
+async for chunk in model.astream(messages):
+   print(chunk.content, end="", flush=True)
+```
+
+#### 流式方法的层次
+
+Runnable 接口中的流式方法主要分为两类：
+
+1. `stream` 和 `astream`：流式传输链的**最终输出**。
+2. `astream_events` 和 `astream_log`：流式传输链的**中间步骤、执行事件和最终输出**。
+
+因此，只有需要实时显示最终文本时，通常使用 `stream` 或 `astream`；需要观察提示模板、检索器、模型和解析器等中间步骤时，则使用 `astream_events` 或 `astream_log`。
+
+### 自定义 Runnable
 
 LCEL 中，**Runnable 是可组合的最小执行单元**。自定义实现通常继承 `Runnable[Input, Output]`，至少实现 `invoke()`；框架会默认提供 `batch()`、`ainvoke()` 和非增量 `stream()`。
 
-##### 概念关系
+#### 概念关系
 
 “自定义 Runnable”和 `Runnable[Input, Output]` 不是两个不同的概念：前者说明组件是由开发者自行实现的 Runnable，后者说明这个 Runnable 的输入和输出类型。
 
@@ -2536,7 +2605,7 @@ LCEL 中，**Runnable 是可组合的最小执行单元**。自定义实现通�
 
 当前示例中的 `PrefixRunnable` 接收一段文本，并在文本前拼接固定前缀。
 
-##### 输入输出契约
+#### 输入输出契约
 
 `Runnable[Input, Output]` 使用泛型明确约束输入和输出类型：
 
@@ -2554,7 +2623,7 @@ result = runnable.invoke("苹果")
 
 `result` 的类型应与 `Runnable` 声明的输出类型一致。
 
-##### 最小可运行示例
+#### 最小可运行示例
 
 ```python
 from typing import Any
@@ -2588,7 +2657,7 @@ print(result)
 
 输出为 `请翻译为英文：苹果`。
 
-##### 接入 LCEL 链
+#### 接入 LCEL 链
 
 Runnable 可以通过 `|` 组成执行链，前一个节点的输出会传给后一个节点：
 
@@ -2606,7 +2675,7 @@ print(chain.invoke("苹果"))
 
 `PrefixRunnable` 生成提示文本；`model` 根据提示调用模型；`StrOutputParser` 从模型响应中取出字符串内容。
 
-##### 异步、批处理与流式扩展
+#### 异步、批处理与流式扩展
 
 只实现 `invoke()` 时，Runnable 已具备最基础的同步调用能力。LangChain 还提供以下调用方式：
 
@@ -2618,90 +2687,19 @@ print(chain.invoke("苹果"))
 
 当自定义逻辑只是简单的同步转换时，只实现 `invoke()` 即可。只有底层业务本身支持原生异步、批量接口或持续输出时，才需要重写对应方法。
 
+## LCEL
 
+LCEL 的英文全称是 LangChain Expression Language，即 LangChain 表达式语言。它是一种声明式语法，用于组合提示模板、聊天模型、输出解析器、检索器和工具等 `Runnable` 组件。
 
-### `invoke` 与 `stream` 的区别
-
-对于聊天模型，`invoke` 和 `stream` 的输入可以是字符串、消息列表或 `PromptValue`。二者的主要区别是返回时机和返回类型。
-
-| 方法 | 返回形式 | 适用场景 |
-| --- | --- | --- |
-| `invoke` | 一个完整的 `AIMessage` | 普通问答、翻译、需要完整结果的调用 |
-| `stream` | 多个 `AIMessageChunk` | 聊天窗口、打字机效果、长文本生成 |
-
-#### `invoke`
-
-`invoke` 会等待模型生成完成，然后一次性返回完整的消息：
+LCEL 的核心作用是描述多个 `Runnable` 组件之间的数据流转关系，并将它们组合成一条可执行的链。最常见的组合方式是使用 `|` 运算符：
 
 ```python
-response = model.invoke(messages)
-print(response.content)
+chain = prompt | model | parser
 ```
 
-调用过程可以理解为：
+这里的 `|` 是 LCEL 提供的组合语法；组合后的 `chain` 本身仍然是一个 `Runnable`。具体的同步、异步、流式和批量调用方式，参见上方的「Runnable 接口」章节。
 
-```text
-发送请求 → 等待模型生成完成 → 返回完整 AIMessage
-```
-
-#### `stream`
-
-`stream` 返回一个迭代器，需要通过 `for` 循环逐块读取：
-
-```python
-for chunk in model.stream(messages):
-   print(chunk.content, end="", flush=True)
-```
-
-调用过程可以理解为：
-
-```text
-发送请求 → 返回第一个 chunk → 返回后续 chunk → 输出完成
-```
-
-每个 `chunk` 只是最终消息的一部分，例如：
-
-```text
-content='你'
-content='好'
-content='！'
-```
-
-因此，下面的写法只能打印迭代器对象，不能直接得到模型文本：
-
-```python
-response = model.stream(messages)
-print(response)
-```
-
-如果模型或底层接口不支持流式调用，`stream` 可能退化为调用 `invoke`，最终一次性返回完整结果。
-
-### 异步调用
-
-异步方法需要配合 `asyncio` 和 `await` 使用：
-
-```python
-response = await model.ainvoke(messages)
-print(response.content)
-```
-
-异步流式调用示例：
-
-```python
-async for chunk in model.astream(messages):
-   print(chunk.content, end="", flush=True)
-```
-
-### 流式方法的层次
-
-Runnable 接口中的流式方法主要分为两类：
-
-1. `stream` 和 `astream`：流式传输链的**最终输出**。
-2. `astream_events` 和 `astream_log`：流式传输链的**中间步骤、执行事件和最终输出**。
-
-因此，只有需要实时显示最终文本时，通常使用 `stream` 或 `astream`；需要观察提示模板、检索器、模型和解析器等中间步骤时，则使用 `astream_events` 或 `astream_log`。
-
-## Chains（链式调用）
+### Chains（链式调用）
 
 Chain 用于将多个处理步骤组合成一个可复用的工作流。在 LangChain 中，每个步骤通常都遵循统一的 `Runnable` 接口，因此可以通过链式组合的方式连接提示模板、模型、输出解析器、检索器和工具。
 
@@ -2729,7 +2727,7 @@ Chain 的输入类型和输出类型由组成它的各个步骤共同决定。�
 
 [https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r](https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r)
 
-### 调用示例
+#### 调用示例
 
 ```python
 from langchain_openai import ChatOpenAI
