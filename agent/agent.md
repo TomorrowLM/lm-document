@@ -19,7 +19,7 @@
 
 # python
 
-## API
+## 内置函数与常用 API
 
 ### print
 
@@ -27,7 +27,7 @@
 
 在异步流式输出中，如果不设置 `flush=True`，多个分片可能会先积存在缓冲区，直到缓冲区满或程序结束才显示；设置后每次收到模型输出就立即打印。
 
-## 编码
+## 编码与文本处理
 
 ### 一、常见字符编码标准
 
@@ -538,17 +538,17 @@ d = {"a": 1, "b": 2}
 
 列表和字典都保存对象引用，而不是对象本身。
 
-## 基础
+## 标准库与数据交换
 
 ### json
 
  `json.dumps()` 将 Python 字典转为 JSON 字符串，`ensure_ascii=False` 用于保留中文，不将中文转换成 `\u4f60\u597d`。这个结果随后交给 SSE 响应组件发送给前端。
 
-### 异常
+## 异常处理
 
 ![image-20260802140015021](img/python/image-20260802140015021.png)
 
-### 模块化
+## 模块与包
 
 #### 一、模块
 
@@ -729,6 +729,92 @@ pyproject.toml → 构建和打包配置
 一句话理解：
 
 > 模块是文件，包是目录，`__init__.py` 负责包的入口和导出，模块化负责让代码清晰、复用和易维护。
+
+## 函数与装饰器
+
+Python 装饰器（Decorator）是一种特殊的函数，它可以在不修改原函数代码和调用方式的前提下，为函数增加额外的功能。
+
+### 代码概念
+
+```
+def a_new_decorator(a_func):
+ 
+    def wrapTheFunction():
+        print("I am doing some boring work before executing a_func()")
+ 
+        a_func()
+ 
+        print("I am doing some boring work after executing a_func()")
+ 
+    return wrapTheFunction
+ 
+def a_function_requiring_decoration():
+    print("I am the function which needs some decoration to remove my foul smell")
+ 
+a_function_requiring_decoration()
+#outputs: "I am the function which needs some decoration to remove my foul smell"
+ 
+a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
+#now a_function_requiring_decoration is wrapped by wrapTheFunction()
+ 
+a_function_requiring_decoration()
+#outputs:I am doing some boring work before executing a_func()
+#        I am the function which needs some decoration to remove my foul smell
+#        I am doing some boring work after executing a_func()
+```
+
+```
+@a_new_decorator
+def a_function_requiring_decoration():
+    """Hey you! Decorate me!"""
+    print("I am the function which needs some decoration to "
+          "remove my foul smell")
+ 
+a_function_requiring_decoration()
+#outputs: I am doing some boring work before executing a_func()
+#         I am the function which needs some decoration to remove my foul smell
+#         I am doing some boring work after executing a_func()
+ 
+#the @a_new_decorator is just a short way of saying:
+a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
+```
+
+如果我们运行如下代码会存在一个问题：
+
+```
+print(a_function_requiring_decoration.__name__)
+# Output: wrapTheFunction
+```
+
+这并不是我们想要的！Ouput输出应该是"a_function_requiring_decoration"。这里的函数被warpTheFunction替代了。它重写了我们函数的名字和注释文档(docstring)。幸运的是Python提供给我们一个简单的函数来解决这个问题，那就是functools.wraps。我们修改上一个例子来使用functools.wraps：
+
+```
+from functools import wraps
+ 
+def a_new_decorator(a_func):
+    @wraps(a_func)
+    def wrapTheFunction():
+        print("I am doing some boring work before executing a_func()")
+        a_func()
+        print("I am doing some boring work after executing a_func()")
+    return wrapTheFunction
+ 
+@a_new_decorator
+def a_function_requiring_decoration():
+    """Hey yo! Decorate me!"""
+    print("I am the function which needs some decoration to "
+          "remove my foul smell")
+ 
+print(a_function_requiring_decoration.__name__)
+# Output: a_function_requiring_decoration
+```
+
+### 应用场景
+
+- **日志记录**：自动记录函数的调用日志、参数和返回值。
+- **权限验证**：在 Web 框架中检查用户是否登录。
+- **性能测试**：统计函数执行的耗时。
+- **缓存数据**：保存函数的返回结果，避免重复计算（如 `functools.lru_cache`）。
 
 ## 内存管理与垃圾回收机制
 
@@ -1106,64 +1192,9 @@ async def chat_stream(req: ChatRequest):
 
 如果异步函数中直接执行耗时的同步阻塞代码，事件循环会被卡住，其他异步任务也无法及时运行。阻塞任务应根据情况放入线程池或进程池。
 
-## LangChain 流式调用
+### SSE 流式接口
 
-### LangChain 调用方式
-
-#### `invoke()`
-
-同步调用模型，并等待完整结果：
-
-```python
-response = model.invoke(messages)
-print(response.content)
-```
-
-它通常会发起一次模型请求，返回一个完整的 `AIMessage`。
-
-#### `ainvoke()`
-
-异步调用模型，并等待完整结果：
-
-```python
-response = await model.ainvoke(messages)
-```
-
-它仍然是一次性返回完整结果，但调用方式可以融入异步程序。
-
-#### `stream()`
-
-同步流式调用，模型生成内容时逐块返回：
-
-```python
-for chunk in model.stream(messages):
-		print(chunk.content, end="")
-```
-
-#### `astream()`
-
-异步流式调用，需要使用 `async for`：
-
-```python
-async for chunk in model.astream(messages):
-		print(chunk.content, end="")
-```
-
-#### 完整响应与流式响应的区别
-
-```text
-invoke / ainvoke
-	请求 → 等待 → 返回完整响应
-
-stream / astream
-	请求 → 返回片段 → 返回片段 → 返回片段 → 完成
-```
-
-`invoke()` 与 `stream()` 的区别是返回时机；`ainvoke()` 与 `astream()` 的区别是是否使用异步流式迭代。
-
-## SSE 流式接口
-
-### SSE 基础
+#### SSE 基础
 
 #### SSE 是什么
 
@@ -1203,7 +1234,7 @@ async def event_generator():
 
 客户端保持 HTTP 连接，并在收到新的 SSE 事件时触发处理逻辑。与普通 HTTP 请求等待完整响应不同，SSE 可以及时显示服务端已经生成的内容。
 
-### FastAPI SSE 实现
+#### FastAPI SSE 实现
 
 #### `event_generator()`
 
@@ -1252,94 +1283,6 @@ yield event
 	↓
 SSE 推送给客户端
 ```
-
-
-
-## 装饰器
-
-Python 装饰器（Decorator）是一种特殊的函数，它可以在不修改原函数代码和调用方式的前提下，为函数增加额外的功能。
-
-### 代码概念
-
-```
-def a_new_decorator(a_func):
- 
-    def wrapTheFunction():
-        print("I am doing some boring work before executing a_func()")
- 
-        a_func()
- 
-        print("I am doing some boring work after executing a_func()")
- 
-    return wrapTheFunction
- 
-def a_function_requiring_decoration():
-    print("I am the function which needs some decoration to remove my foul smell")
- 
-a_function_requiring_decoration()
-#outputs: "I am the function which needs some decoration to remove my foul smell"
- 
-a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
-#now a_function_requiring_decoration is wrapped by wrapTheFunction()
- 
-a_function_requiring_decoration()
-#outputs:I am doing some boring work before executing a_func()
-#        I am the function which needs some decoration to remove my foul smell
-#        I am doing some boring work after executing a_func()
-```
-
-```
-@a_new_decorator
-def a_function_requiring_decoration():
-    """Hey you! Decorate me!"""
-    print("I am the function which needs some decoration to "
-          "remove my foul smell")
- 
-a_function_requiring_decoration()
-#outputs: I am doing some boring work before executing a_func()
-#         I am the function which needs some decoration to remove my foul smell
-#         I am doing some boring work after executing a_func()
- 
-#the @a_new_decorator is just a short way of saying:
-a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
-```
-
-如果我们运行如下代码会存在一个问题：
-
-```
-print(a_function_requiring_decoration.__name__)
-# Output: wrapTheFunction
-```
-
-这并不是我们想要的！Ouput输出应该是"a_function_requiring_decoration"。这里的函数被warpTheFunction替代了。它重写了我们函数的名字和注释文档(docstring)。幸运的是Python提供给我们一个简单的函数来解决这个问题，那就是functools.wraps。我们修改上一个例子来使用functools.wraps：
-
-```
-from functools import wraps
- 
-def a_new_decorator(a_func):
-    @wraps(a_func)
-    def wrapTheFunction():
-        print("I am doing some boring work before executing a_func()")
-        a_func()
-        print("I am doing some boring work after executing a_func()")
-    return wrapTheFunction
- 
-@a_new_decorator
-def a_function_requiring_decoration():
-    """Hey yo! Decorate me!"""
-    print("I am the function which needs some decoration to "
-          "remove my foul smell")
- 
-print(a_function_requiring_decoration.__name__)
-# Output: a_function_requiring_decoration
-```
-
-### 应用场景
-
-- **日志记录**：自动记录函数的调用日志、参数和返回值。
-- **权限验证**：在 Web 框架中检查用户是否登录。
-- **性能测试**：统计函数执行的耗时。
-- **缓存数据**：保存函数的返回结果，避免重复计算（如 `functools.lru_cache`）。
 
 ## 项目搭建和配置
 
