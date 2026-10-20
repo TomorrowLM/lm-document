@@ -550,185 +550,187 @@ d = {"a": 1, "b": 2}
 
 ## 模块与包
 
-#### 一、模块
+### 1. 模块与包是什么
 
-模块就是一个 `.py` 文件，用于组织和复用代码。
-
-```python
-# math_utils.py
-def add(a, b):
-  return a + b
-```
-
-导入模块：
-
-```python
-import math_utils
-
-math_utils.add(1, 2)
-```
-
-导入指定内容：
-
-```python
-from math_utils import add
-
-add(1, 2)
-```
-
-使用别名：
-
-```python
-import math_utils as mu
-```
-
-不建议使用：
-
-```python
-from math_utils import *
-```
-
-因为名称来源不清晰，可能覆盖已有变量。
-
-#### 二、包
-
-包是用于组织多个模块的目录：
+**模块**是一个 `.py` 文件，用于拆分和复用代码；**包**是组织多个模块的目录，用于按职责管理代码。
 
 ```text
 app/
-├── __init__.py
-├── user.py
-└── order/
-  ├── __init__.py
-  └── service.py
+├── main.py          # 应用入口
+├── services/        # 业务能力
+│   └── chat_service.py
+└── api/             # 对外接口
+        └── routes/
+                └── chat.py
 ```
 
-- `user.py`：模块
-- `order`：子包
-- `service.py`：子包中的模块
+模块化的目标是让每个文件职责单一、同类代码集中，并通过明确的导入关系连接起来。
 
-包的作用是按功能划分代码，形成清晰的目录结构。
+### 2. 如何导入
 
-#### 三、`__init__.py`
-
-`__init__.py` 是包的初始化文件，主要用于：
-
-- 标记目录为 Python 包
-- 执行包初始化代码
-- 统一导出公共对象
-- 简化导入路径
-
-例如：
+常用导入方式：
 
 ```python
-# user/__init__.py
-from .service import create_user
-
-__all__ = ["create_user"]
+import math_utils
+from math_utils import add
+import math_utils as mu
 ```
 
-外部可以直接导入：
+推荐优先使用**绝对导入**，从项目顶层包开始写：
 
 ```python
-from user import create_user
+from app.services.chat_service import build_reply
 ```
 
-而不必写：
-
-```python
-from user.service import create_user
-```
-
-现代 Python 在部分场景下允许没有 `__init__.py` 的命名空间包，但普通项目通常仍然保留该文件。
-
-#### 四、导入方式
-
-##### 1. 绝对导入
-
-从项目顶层路径开始：
-
-```python
-from app.core.config import settings
-```
-
-##### 2. 相对导入
-
-以当前包为基准：
+同一个包内部也可以使用相对导入：
 
 ```python
 from .service import create_user
 from ..core.config import settings
 ```
 
-- `.`：当前包
-- `..`：上一级包
+- `.` 表示当前包，`..` 表示上一级包。
+- 不建议使用 `from module import *`，因为名称来源不清晰，也可能覆盖已有变量。
+- 模块首次导入时会执行顶层代码，后续导入通常复用 `sys.modules` 中的缓存。
 
-相对导入通常要求代码处于包环境中，直接运行文件可能出现导入错误。
+### 3. `__init__.py` 与公共接口
 
-#### 五、直接运行和被导入
+`__init__.py` 是包的初始化文件。Python 3.3+ 支持没有它的命名空间包，但普通业务项目仍建议在每个参与导入的包目录中保留一个空文件：
 
-`__name__` 可以区分模块是被直接运行，还是被其他模块导入：
+```text
+app/__init__.py
+app/api/__init__.py
+app/api/routes/__init__.py
+app/services/__init__.py
+```
+
+不需要为每个 `.py` 文件创建它，也不需要放在不参与 Python 导入的 `docs/`、`static/`、`templates/` 等目录中。它可以为空；保留它的意义是明确包边界，并为统一导出公共对象提供位置：
+
+```python
+# app/services/__init__.py
+from .chat_service import build_reply
+
+__all__ = ["build_reply"]
+```
+
+外部即可写成：
+
+```python
+from app.services import build_reply
+```
+
+`__init__.py` + `__all__` = 声明“推荐对外使用什么”。  
+`__init__.py` + `__all__` ≠ 强制禁止访问其他内容。
+
+这表示 `build_reply` 是 `app.services` 推荐提供的公共入口。`__all__` 主要控制 `from app.services import *` 会导入哪些名称，并不构成访问控制；其他函数仍可通过具体模块直接导入：
+
+```python
+from app.services.chat_service import other_function
+```
+
+因此，`__init__.py` 更像前端的 `index.ts`：集中声明推荐的公共 API。内部函数通常以 `_` 开头表示不应被外部依赖，但 Python 不会强制禁止访问。`__init__.py` 本身也不应承担大量业务逻辑，否则容易引入循环导入。
+
+### 4. 入口与运行方式
+
+`__name__` 用于区分模块是被导入还是直接运行。Python 会为每个模块设置该变量：直接运行文件时，当前入口模块的 `__name__` 固定为 `"__main__"`；被其他模块导入时，则是它的实际模块名。
+
+因此，`if __name__ == "__main__":` 的含义是“只有当前文件作为程序入口直接启动时，才执行下面的代码”。**这样同一个文件既可以作为脚本运行，也可以被其他模块导入而不自动启动。**
 
 ```python
 def main():
-  print("程序启动")
+    print("程序启动")
 
 
 if __name__ == "__main__":
-  main()
+    main()
 ```
 
-- 直接运行文件：`__name__ == "__main__"`
-- 被导入：`__name__` 通常是模块名
+例如执行 `python main.py` 时，条件成立并调用 `main()`；其他文件执行 `import main` 时，`__name__` 为 `"main"`，条件不成立。
 
-这样可以避免模块被导入时自动执行启动逻辑。
+包内代码推荐在项目根目录使用模块方式启动：
 
-#### 六、模块化原则
-
-- **单一职责**：一个模块主要负责一类功能
-- **高内聚**：模块内部代码相互关联
-- **低耦合**：模块之间减少不必要的依赖
-- **信息隐藏**：只暴露必要的公共接口
-- **依赖接口**：调用方不依赖具体实现细节
-
-示例：
-
-```text
-user_model.py       # 数据结构
-user_service.py     # 业务逻辑
-user_repository.py  # 数据访问
+```bash
+python -m app.main
 ```
 
-#### 七、`pyproject.toml` 的关系
+不要直接执行包内文件，例如 `python app/main.py`。这种方式会让 `app` 不再作为顶层包参与解析，包内相对导入可能报错：`attempted relative import with no known parent package`。
 
-`__init__.py` 负责 Python 包的组织和导出；`pyproject.toml` 负责项目构建、依赖和打包配置。
+### 5. 常见问题
 
-例如：
+| 问题 | 常见原因 | 处理方式 |
+| --- | --- | --- |
+| `ModuleNotFoundError` | 启动目录不对、包名写错或目录未加入模块搜索路径 | 回到项目根目录，用 `python -m` 启动 |
+| 相对导入报错 | 直接运行了包内文件 | 改为模块方式运行 |
+| 循环导入 | A 导入 B，同时 B 又导入 A | 提取共同依赖到第三个模块，或让依赖保持单向 |
+
+模块设计应遵循：一个模块负责一类能力；上层调用下层；对外只暴露稳定接口，避免跨层直接访问内部实现。
+
+### 6. `pyproject.toml` 的职责
+
+`__init__.py` 解决的是**代码如何组织和导出**；`pyproject.toml` 解决的是**项目如何安装依赖、构建和打包**。二者职责不同，不能互相替代。
 
 ```toml
-[tool.setuptools]
-py-modules = ["main"]
-
-[tool.setuptools.packages.find]
-include = ["api*", "core*", "models*"]
+[project]
+name = "agent-demo"
+requires-python = ">=3.11"
+dependencies = []
 ```
 
-- `py-modules`：指定独立的 Python 文件
-- `packages.find`：指定需要打包的包
+使用 `uv`、`pip` 或构建工具时，依赖和项目元数据都放在 `pyproject.toml` 中；具体包发现和构建配置按所选构建后端补充。
 
-#### 八、核心关系
+### 7. 最小项目闭环
+
+下面是一条从入口到服务层的最小导入链路：
 
 ```text
-.py 文件       → 模块
-模块目录       → 包
-__init__.py    → 包入口和导出位置
-import         → 导入模块或包
-pyproject.toml → 构建和打包配置
+app/
+├── __init__.py
+├── main.py
+├── api/
+│   ├── __init__.py
+│   └── routes/
+│       ├── __init__.py
+│       └── chat.py
+└── services/
+        ├── __init__.py
+        └── chat_service.py
 ```
 
-一句话理解：
+```python
+# app/services/chat_service.py
+def build_reply(message: str) -> str:
+        return f"收到：{message}"
+```
 
-> 模块是文件，包是目录，`__init__.py` 负责包的入口和导出，模块化负责让代码清晰、复用和易维护。
+```python
+# app/api/routes/chat.py
+from app.services.chat_service import build_reply
+
+
+def handle_chat(message: str) -> str:
+        return build_reply(message)
+```
+
+```python
+# app/main.py
+from app.api.routes.chat import handle_chat
+
+
+def main() -> None:
+        print(handle_chat("你好"))
+
+
+if __name__ == "__main__":
+        main()
+```
+
+在项目根目录执行 `python -m app.main` 后，调用链为：
+
+```text
+main.py → api/routes/chat.py → services/chat_service.py
+```
+
+这套结构迁移到 FastAPI 或 Agent 项目时，只需将 `handle_chat()` 替换为路由处理函数，服务层的职责和导入方向保持不变。
 
 ## 函数与装饰器
 
