@@ -5378,6 +5378,37 @@ const Husky = props => {
 };
 ```
 
+**location 对象常用属性**
+
+| 属性 | 说明 |
+| ---- | ---- |
+| `pathname` | 当前路径，如 `/about` |
+| `search` | 查询字符串，如 `?id=1` |
+| `hash` | 锚点，如 `#section` |
+| `state` | 路由跳转时携带的状态数据 |
+
+**典型用法：根据路径变化执行副作用**
+
+```react
+import { useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
+
+const Page = () => {
+  const location = useLocation();
+
+  // 路由切换时回到页面顶部
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
+
+  // 读取 query 参数：/about?id=1
+  const params = new URLSearchParams(location.search);
+  const id = params.get('id');
+
+  return <div>当前路径：{location.pathname}，id：{id}</div>;
+};
+```
+
 ### useParams
 
 useParams和props.match.params可以获取路由参数
