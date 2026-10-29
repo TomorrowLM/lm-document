@@ -1039,7 +1039,9 @@ Python 的内存管理由引用计数和循环垃圾回收协同完成：引用�
 
 ## 异步与事件循环
 
-### 异步基础
+### 1. 为什么需要异步？
+
+如果你写过 JavaScript，其实已经天天在用异步：`fetch()` 请求接口时不会卡住页面，`setTimeout` 到点才执行回调。Python 的异步解决的是同样的问题——I/O 等待期间不让程序干等，只是语法和运行方式不同。
 
 #### 同步与异步
 
@@ -1047,30 +1049,40 @@ Python 的内存管理由引用计数和循环垃圾回收协同完成：引用�
 
 异步主要解决的是 I/O 等待期间的并发问题，并不等于创建多个线程。
 
-#### `async` 的作用
+### 2. 异步核心概念地图
 
-`async` 用于定义异步函数：
+在深入细节之前，先用一张表建立全局认知。异步体系有 5 个核心角色，后续章节会逐一展开：
 
-```python
-async def get_answer():
-	return "天空是蓝色的"
+| 概念 | 一句话定义 | 角色 | 详细章节 |
+| --- | --- | --- | --- |
+| 事件循环 | 调度异步任务的"发动机"，不断检查哪个任务可以继续执行 | 驱动者 | 第 3 节 |
+| 协程对象 | 调用 `async def` 函数返回的"待执行任务"包裹，自己不会跑 | 被调度的任务 | 第 4 节 |
+| `await` | 等待一个异步操作完成，等待期间让出执行权 | 让出/恢复的开关 | 第 6 节 |
+| 异步生成器 | 用 `async def` + `yield` 定义的函数，逐个**产生**数据 | 生产者 | 第 7 节 |
+| 异步迭代器 | "取下一个元素"这个动作需要 `await` 的数据源 | 消费者面对的接口 | 第 5、7 节 |
+
+它们的关系可以概括为：
+
+```text
+事件循环（驱动）
+	↓ 调度
+协程 / 异步生成器（生产数据）
+	↓ 逐个产出
+异步迭代器（消费接口）
+	↓ async for 逐个接收
+业务代码（消费数据）
 ```
 
-调用异步函数时，得到的是协程对象；函数体通常要由事件循环调度执行。
-
-#### `await` 的作用
-
-`await` 用于等待一个可等待对象完成：
+一个最直观的例子——流式对话中，模型一边生成、你一边接收：
 
 ```python
-async def chat():
-	response = await get_answer()
-	return response
+async for chunk in model.astream("天空是什么颜色？"):
+    print(chunk.content, end="", flush=True)
 ```
 
-等待期间，当前异步任务暂停，事件循环可以执行其他任务。
+这行代码背后：`astream()` 返回异步迭代器（第 5 节讲它的底层协议），`async for` 逐个等待并接收数据（第 7 节讲怎么用好它），等待期间事件循环可以去处理其他请求（第 3 节讲它怎么调度）。
 
-### 事件循环
+### 3. 事件循环：异步的"发动机"
 
 #### 什么是事件循环
 
@@ -1099,17 +1111,167 @@ I/O 完成后恢复原任务
 
 事件循环通常运行在线程中，一个线程可以通过协作式调度运行多个异步任务。异步任务之间通过 `await` 主动让出执行权。
 
-#### `asyncio.run()` 的作用
+#### 异步任务的暂停与恢复
 
-`asyncio.run()` 适合在普通同步脚本的入口启动异步程序：
+当异步任务执行到 `await` 或等待异步迭代器数据时，事件循环可以暂停它；条件满足后，再从暂停位置继续执行。
+
+这种切换通常发生在同一个线程中，不等于创建新的线程。
+
+### 4. 协程对象：懒执行的任务包裹
+
+协程对象（coroutine object）是调用 `async def` 函数后得到的可等待对象，代表这一次函数调用。它不会自动运行，也不等同于已经调度的 `asyncio.Task`。
+
+#### 创建协程对象
+
+调用 `call()` 会创建协程对象；此时函数体尚未执行。
+
+#### 驱动协程对象
+
+`await coro` 在异步函数中等待指定的协程对象；`asyncio.run(coro)` 在普通脚本入口驱动传入的协程。`asyncio.run(main())` 驱动 `main()`，而 `main()` 内的 `await call()` 等待 `call()` 新创建的另一个协程。
+
+示例中，A 由 `asyncio.run(coro_a)` 驱动（当前注释掉以演示警告）；B 由 `await coro_b` 驱动：
 
 ```python
+import asyncio
+
+
+async def call():
+    return "天空是蓝色的"
+
+
+# 1. 调用 async 函数不会执行函数体，只返回协程对象（懒执行）
+coro = call()
+print(coro)  # <coroutine object call at 0x...>
+
+# 2. 普通脚本没有正在运行的事件循环，必须用 asyncio.run() 启动
+#    （等价于 JS 中事件循环自动 await；Python 需要显式驱动）
+#    注意：如果注释掉下面这行，coro 从未被驱动，GC 回收时会警告
+#    RuntimeWarning: coroutine 'call' was never awaited
+print(asyncio.run(coro))  # 天空是蓝色的
+
+# 3. 如果已经在 async 函数内部（事件循环中），才可以直接 await：
+async def main():
+    print('在 main 函数内部调用 call()')
+    print(await call())
+
 asyncio.run(main())
 ```
 
-它会在当前线程中创建事件循环，运行 `main()`，结束后关闭事件循环。它通常不会创建新线程。
+#### 未等待警告
 
-#### 普通脚本如何运行异步代码
+上例未驱动的 A 会触发 `RuntimeWarning: coroutine 'call' was never awaited`；`await coro_b` 只运行 B，不能代替 A。要消除警告，可取消注释 `asyncio.run(coro_a)`。警告出现时机和 `sys:1:` 前缀会因对象释放时机而异。
+
+与 JavaScript 不同，Python 调用异步函数只返回协程对象，函数体要等它被驱动后才执行。
+
+### 5. 异步迭代器协议：async for 的底层
+
+#### 一句话本质
+
+**异步迭代器 = "取下一个元素"这个动作本身需要 `await` 的迭代器。**
+
+普通迭代器的数据已经在手边（如列表），问一下就立刻给；异步迭代器的数据往往"在路上"（如网络流），取值过程中可能要等网络、等模型生成——"要等"就意味着取值动作是异步的，必须 `await`。
+
+#### 同步迭代器 vs 异步迭代器
+
+| 同步迭代器 | 异步迭代器 | 说明 |
+| --- | --- | --- |
+| `__iter__()` | `__aiter__()` | 迭代开始时调用，返回迭代器自身 |
+| `__next__()` | `async def __anext__()` | 取下一个元素；异步版的取值是可等待的 |
+| 抛出 `StopIteration` | 抛出 `StopAsyncIteration` | 表示没有更多元素，循环结束 |
+| `for x in ...` | `async for x in ...` | 遍历语法 |
+
+唯一的区别就是 `__anext__` 前面多了个 `async`——**取值这个动作变成了可等待的**。
+
+#### `async for` 的等价展开
+
+`async for` 是语法糖，它自动帮你反复 `await __anext__()`，直到抛出 `StopAsyncIteration`：
+
+```python
+async for chunk in model.astream("天空是什么颜色？"):
+    print(chunk.content)
+```
+
+等价于手动写：
+
+```python
+aiter = model.astream("天空是什么颜色？").__aiter__()
+while True:
+    try:
+        chunk = await aiter.__anext__()   # 每次取值都可能异步等待
+        print(chunk.content)
+    except StopAsyncIteration:
+        break
+```
+
+注意：它是"拿一个 → 处理一个 → 再拿下一个"，**串行**的。异步体现在"等数据"期间事件循环可以去跑别的任务，而不是几个 chunk 同时到达。
+
+#### 手写一个最小的异步迭代器
+
+实际开发中很少手写协议（通常用异步生成器，见第 7 节），但手写一次能彻底理解机制：
+
+```python
+import asyncio
+
+class SlowCounter:
+    def __init__(self, n):
+        self.n = n
+        self.i = 0
+
+    def __aiter__(self):          # 迭代开始时调用
+        return self
+
+    async def __anext__(self):    # 每次要下一个元素时调用
+        if self.i >= self.n:
+            raise StopAsyncIteration   # 没数据了，结束循环
+        await asyncio.sleep(0.5)       # 模拟"取数据要等"（真实场景=等网络）
+        self.i += 1
+        return self.i
+
+async def main():
+    async for num in SlowCounter(3):
+        print("拿到", num)
+
+asyncio.run(main())
+# 每隔 0.5 秒打印：拿到 1 / 拿到 2 / 拿到 3
+```
+
+#### 与 JavaScript 的对照
+
+| JavaScript | Python |
+| --- | --- |
+| `Symbol.asyncIterator` | `__aiter__` / `__anext__` |
+| `for await (const chunk of stream)` | `async for chunk in stream:` |
+| `async function* gen() { yield ... }` | `async def gen(): yield ...`（异步生成器） |
+
+JS 的 `for await` 底层调用 `Symbol.asyncIterator`，Python 的 `async for` 底层调用 `__aiter__`/`__anext__`。**机制完全同构，只是名字不同。**
+
+### 6. async/await 语法与三种启动方式
+
+#### `await` 的作用
+
+`await` 用于等待一个可等待对象完成：
+
+```python
+async def chat():
+	response = await get_answer()
+	return response
+```
+
+等待期间，当前异步任务暂停，事件循环可以执行其他任务。
+
+#### 与 JavaScript 的对比
+
+Python 的 `async/await` 和 JavaScript 几乎一样：
+
+| JavaScript | Python |
+| --- | --- |
+| `async function getAnswer() {}` | `async def get_answer():` |
+| `await fetch(url)` | `await get_answer()` |
+| `for await (const chunk of stream)` | `async for chunk in stream:` |
+
+区别在于运行方式：JS 的异步由浏览器或 Node.js 的事件循环自动驱动；Python 的协程对象需要事件循环调度，通常通过 `asyncio.run()` 或 Web 框架启动（见下文三种启动方式）。
+
+#### 方式一：普通脚本用 `asyncio.run()`
 
 普通脚本一般没有正在运行的事件循环，因此需要手动启动：
 
@@ -1122,52 +1284,11 @@ async def main():
 asyncio.run(main())
 ```
 
-#### FastAPI 如何管理事件循环
+`asyncio.run()` 会在当前线程中创建事件循环，运行 `main()`，结束后关闭事件循环。它通常不会创建新线程。
 
-FastAPI 运行在 Uvicorn、Hypercorn 等 ASGI 服务器中。ASGI 服务器负责启动和管理事件循环，并将异步请求处理函数交给事件循环执行。
+#### 方式二：FastAPI 由 ASGI 服务器管理
 
-因此，FastAPI 异步路由中不需要再次调用 `asyncio.run()`。
-
-### 异步函数与异步生成器
-
-#### `async def`
-
-`async def` 定义异步函数。函数内部可以使用 `await`，调用它会产生协程对象。
-
-#### `async for`
-
-`async for` 用于遍历异步迭代器：
-
-```python
-async for chunk in model.astream("天空是什么颜色？"):
-	print(chunk.content)
-```
-
-每次获取下一个元素时，都可能发生异步等待。
-
-#### `async def` + `yield`
-
-异步函数中使用 `yield`，就会形成异步生成器：
-
-```python
-async def event_generator():
-	yield {"event": "started"}
-	yield {"event": "finished"}
-```
-
-它不会一次性返回全部数据，而是可以逐个产生结果。
-
-#### 异步任务的暂停与恢复
-
-当异步任务执行到 `await` 或等待异步迭代器数据时，事件循环可以暂停它；条件满足后，再从暂停位置继续执行。
-
-这种切换通常发生在同一个线程中，不等于创建新的线程。
-
-### FastAPI 异步执行流程
-
-#### ASGI 服务器与 Uvicorn
-
-ASGI 是 Python 异步 Web 应用与服务器之间的接口规范，Uvicorn 是常用的 ASGI 服务器实现。
+FastAPI 运行在 Uvicorn、Hypercorn 等 ASGI 服务器中。ASGI 是 Python 异步 Web 应用与服务器之间的接口规范，Uvicorn 是常用的 ASGI 服务器实现。ASGI 服务器负责启动和管理事件循环，并将异步请求处理函数交给事件循环执行：
 
 ```text
 Uvicorn Worker
@@ -1175,7 +1296,7 @@ Uvicorn Worker
 				└── FastAPI 请求任务
 ```
 
-#### 异步路由
+异步路由的写法：
 
 ```python
 @router.post("/stream")
@@ -1184,19 +1305,60 @@ async def chat_stream(req: ChatRequest):
 		return result
 ```
 
-请求到达后，ASGI 服务器会在已有事件循环中调度 `chat_stream()`。
+请求到达后，ASGI 服务器会在已有事件循环中调度 `chat_stream()`。因此 FastAPI 异步路由中不需要再次调用 `asyncio.run()`——在正在运行的事件循环中再次调用它，可能产生事件循环嵌套错误。
 
-#### 为什么不需要 `asyncio.run()`
+#### 方式三：已在事件循环中，直接 `await`
 
-因为 Uvicorn 已经启动了事件循环。在正在运行的事件循环中再次调用 `asyncio.run()`，可能产生事件循环嵌套错误。
+如果代码本身已经运行在事件循环里（例如异步函数内部、Jupyter Notebook），直接使用 `await` 即可，不需要再启动事件循环。
 
-#### 阻塞代码对事件循环的影响
+#### 注意：阻塞代码的影响
 
 如果异步函数中直接执行耗时的同步阻塞代码，事件循环会被卡住，其他异步任务也无法及时运行。阻塞任务应根据情况放入线程池或进程池。
 
-### SSE 流式接口
+### 7. 流式数据：生产与消费
 
-#### SSE 基础
+流式场景中，异步生成器和异步迭代器是一对搭档：**生成器负责生产数据，`async for` 负责消费数据**。
+
+#### 生产：`async def` + `yield`（异步生成器）
+
+异步函数中使用 `yield`，就会形成异步生成器：
+
+```python
+async def event_generator():
+    yield {"event": "started"}
+    yield {"event": "finished"}
+```
+
+它不会一次性返回全部数据，而是可以逐个产生结果。**异步生成器自动实现了异步迭代器协议**（`__aiter__`/`__anext__`），所以可以直接被 `async for` 遍历——这是实际开发中创建异步迭代器最常用的方式，很少手写协议。
+
+#### 消费：`async for` 遍历异步迭代器
+
+`async for` 用于遍历异步迭代器：
+
+```python
+async for chunk in model.astream("天空是什么颜色？"):
+    print(chunk.content)
+```
+
+每次获取下一个元素时，都可能发生异步等待。底层机制见第 5 节。
+
+#### 与 JavaScript 的对照
+
+| JavaScript | Python |
+| --- | --- |
+| `async function* gen() { yield ... }` | `async def gen(): yield ...` |
+| `for await (const chunk of stream)` | `async for chunk in stream:` |
+
+#### 两个常见误区
+
+1. **`async for` ≠ 并发**。它只是"逐个等待式"消费。想并发处理多个流，要用 `asyncio.create_task()` 跑多个 `async for`。
+2. **不能用普通 `for` 遍历**。`for chunk in model.astream(...)` 会报错，因为普通 `for` 调用的是 `__next__`（同步的），而这里只有异步的 `__anext__`。
+
+#### 与 SSE 的衔接
+
+这正是后面 SSE 流式接口的基础：服务端用异步生成器逐个产生事件，客户端用 `async for` 逐个接收。
+
+### 8. SSE 流式接口
 
 #### SSE 是什么
 
@@ -1238,15 +1400,15 @@ async def event_generator():
 
 #### FastAPI SSE 实现
 
-#### `event_generator()`
+##### `event_generator()`
 
 `event_generator()` 是异步生成器，负责包装底层事件流，并在流结束或连接断开时执行清理逻辑。
 
-#### `stream_chat_events()`
+##### `stream_chat_events()`
 
 `stream_chat_events()` 负责产生聊天过程中的事件，例如创建流、开始消息、输出内容和结束消息。
 
-#### `async for` 获取事件
+##### `async for` 获取事件
 
 ```python
 async for event in stream_chat_events(...):
@@ -1255,11 +1417,11 @@ async for event in stream_chat_events(...):
 
 路由不会一次性等待全部事件，而是异步获取一个、转发一个。
 
-#### `yield event` 发送事件
+##### `yield event` 发送事件
 
 `yield event` 将当前事件交给 `EventSourceResponse`。响应对象再将它编码为 SSE 数据并发送给客户端。
 
-#### `finally` 执行清理逻辑
+##### `finally` 执行清理逻辑
 
 ```python
 finally:

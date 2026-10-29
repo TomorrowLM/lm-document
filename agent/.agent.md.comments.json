@@ -1,0 +1,29 @@
+{
+  "file": ".agent.md",
+  "comments": [
+    {
+      "id": "c1792574187107",
+      "anchor": "<!--@c1792574187107-->",
+      "startOffset": 1448,
+      "endOffset": 1456,
+      "blockType": "heading",
+      "blockPreview": "# python",
+      "comment": "123",
+      "role": "user",
+      "timestamp": "2026-10-21T09:16:27.107Z",
+      "resolved": false
+    },
+    {
+      "id": "c1792574195799",
+      "anchor": "<!--@c1792574195799-->",
+      "startOffset": 1448,
+      "endOffset": 1456,
+      "blockType": "heading",
+      "blockPreview": "# python",
+      "comment": "123",
+      "role": "user",
+      "timestamp": "2026-10-21T09:16:35.799Z",
+      "resolved": false
+    }
+  ]
+}
