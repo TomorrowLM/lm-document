@@ -734,6 +734,68 @@ main.py → api/routes/chat.py → services/chat_service.py
 
 ## 函数与装饰器
 
+### 函数参数传递
+
+#### 1. 概念
+
+**形参**是函数定义中的参数，**实参**是调用时传入的值。实参与形参可以按位置或按名称匹配：位置参数看顺序，关键字参数看名字。
+
+```python
+def introduce(name, age):
+    return f"{name}，{age} 岁"
+```
+
+这里的 `name`、`age` 是形参；调用 `introduce("小明", 18)` 时，`"小明"`、`18` 是实参。
+
+#### 2. 使用场景
+
+- 参数少、顺序明确时，可以使用位置参数。
+- 参数较多或需要强调含义时，可以使用关键字参数，并调整这些关键字参数的书写顺序。
+- 设计函数接口时，可以用 `/` 和 `*` 限制传参方式，避免调用含义不明确。
+
+#### 3. API 说明
+
+| 写法 | 规则 |
+| --- | --- |
+| `introduce("小明", 18)` | 按位置匹配，交换实参会改变对应关系 |
+| `introduce(age=18, name="小明")` | 按名称匹配，关键字参数的顺序可以调整 |
+| `introduce("小明", age=18)` | 可以混合使用，普通位置实参必须放在关键字实参之前 |
+| `introduce(name="小明", 18)` | 语法错误：普通位置实参出现在关键字实参之后 |
+| `introduce("小明", name="小红")` | 调用错误：同一个形参被重复赋值 |
+
+`tools=tools` 左边是函数的形参名，右边是调用方的变量名，二者不必相同，例如 `tools=search_tools`。
+
+函数定义中的 `/` 和 `*` 是传参方式的分隔符，不是需要传入的参数：
+
+```python
+def configure(model, /, tools=None, *, debug=False):
+    return model, tools, debug
+```
+
+- `/` 前面的 `model`：只能按位置传入。
+- `/` 与 `*` 之间的 `tools`：可以按位置，也可以按名称传入。
+- `*` 后面的 `debug`：只能按名称传入。
+- 没有 `/`、`*` 等限制的普通形参，通常既支持位置传参，也支持关键字传参。
+
+#### 4. 示例
+
+下面两次调用效果相同，关键字参数可以调换顺序：
+
+```python
+introduce(name="小明", age=18)
+introduce(age=18, name="小明")
+```
+
+结合前面的 `configure()` 定义，以下调用也等价：
+
+```python
+configure("chat-model", ["search"], debug=True)
+configure("chat-model", tools=["search"], debug=True)
+configure("chat-model", debug=True, tools=["search"])
+```
+
+但 `configure(model="chat-model")` 不合法，因为 `model` 被 `/` 限制为仅限位置参数；`configure("chat-model", ["search"], True)` 也不合法，因为 `debug` 位于 `*` 后，必须写成 `debug=True`。
+
 Python 装饰器（Decorator）是一种特殊的函数，它可以在不修改原函数代码和调用方式的前提下，为函数增加额外的功能。
 
 ### 代码概念
@@ -2163,23 +2225,7 @@ Prompt Templates 适用于需要重复使用提示结构、动态替换输入或
 
 当提示结构简单且只使用一次时，直接使用字符串即可；当提示需要复用、维护、组合或校验时，应优先使用模板。
 
-### 3. API 说明
-
-#### PromptTemplate
-
-用于格式化单个字符串。模板变量必须与调用时传入的数据字段一致。
-
-```python
-from langchain_core.prompts import PromptTemplate
-
-prompt_template = PromptTemplate.from_template(
-    "Tell me a joke about {topic}"
-)
-
-prompt_value = prompt_template.invoke({"topic": "cats"})
-```
-
-#### 消息对象（Message）
+### 消息对象（Message）
 
 LangChain 使用消息对象表示对话中的不同角色和内容。常见消息类型包括：
 
@@ -2205,9 +2251,25 @@ print(message.content)
 
 `AIMessage(...)` 返回的是一个完整的消息对象，不是普通字符串。`message.content` 才是消息正文，类型为 `str`；消息对象还可以包含角色、响应元数据等信息。
 
+### 3. API 说明
+
+#### PromptTemplate
+
+用于格式化单个字符串。模板变量必须与调用时传入的数据字段一致。
+
+```python
+from langchain_core.prompts import PromptTemplate
+
+prompt_template = PromptTemplate.from_template(
+    "Tell me a joke about {topic}"
+)
+
+prompt_value = prompt_template.invoke({"topic": "cats"})
+```
+
 #### ChatPromptTemplate
 
-用于格式化消息列表。每条消息包含角色和消息内容，适合聊天模型输入。
+用于格式化消息列表。**每条消息包含角色和消息内容，适合聊天模型输入。**
 
 ```python
 from langchain_core.prompts import ChatPromptTemplate
@@ -2281,124 +2343,253 @@ messages = prompt_template.invoke({
 
 ##### FewShotPromptTemplate
 
-用于将多个参考示例和当前输入组合成完整提示词。它可以接收固定示例，也可以使用 `example_selector` 动态选择示例。
+先想一个场景：你希望模型把中文翻译成英文，而且只回答英文单词。除了直接告诉它规则，还可以先给它看两道已经答好的题，再让它回答一道新题：
 
-基本使用流程是：先准备示例数据，再定义每个示例的格式，最后把当前输入拼接到示例后面。
+```text
+请把中文翻译成英文，只回答英文单词。
+
+问题：苹果
+答案：apple
+
+问题：香蕉
+答案：banana
+
+问题：橙子
+答案：
+```
+
+这里，“苹果 → apple”和“香蕉 → banana”是你提前准备的**参考示例**；“橙子”才是本次要问的问题。最后的答案留空，等待模型回答。
+
+**Few-shot 就是“先给几个示范，再让模型做新题”。`FewShotPromptTemplate` 负责把这些文字拼好，不负责回答问题，也不会训练模型。**
 
 ###### 接口概述
 
-FewShotPromptTemplate 负责格式化参考示例，并将示例与当前输入组合成最终提示词。
+可以先把它理解为一个“提示词拼接器”：
+
+```text
+开头说明（prefix）
+    + 已经答好的参考题（examples，按照 example_prompt 排版）
+    + 本次的新问题（suffix，调用时填入 input）
+    = 最终提示词
+```
+
+先学固定示例：把准备好的题全部放进去。示例多了以后，再使用 `example_selector` 自动挑几道相关的题，后面会讲这个过程。
 
 ###### 请求参数
 
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `examples` | `list[dict]` | 固定参考示例集合，与 `example_selector` 二选一 |
-| `example_prompt` | `PromptTemplate` | 单个示例的格式模板 |
-| `prefix` | `str` | 所有示例之前的固定说明 |
-| `suffix` | `str` | 所有示例之后的当前输入模板 |
-| `input_variables` | `list[str]` | 模板需要接收的变量 |
-| `example_selector` | `ExampleSelector` | 动态选择示例，与 `examples` 二选一 |
-
-###### 响应参数
-
-返回组合了参考示例和当前输入的提示词，通常是 `PromptValue` 对象。
-
-##### SemanticSimilarityExampleSelector
-
-用于根据当前输入的语义相似度，从候选示例中动态选择 Top-K 示例。它依赖 Embedding 模型将文本转换为向量，再通过向量存储执行相似度检索。
-
-###### 初始化参数
+这些是创建模板时传入的 Python 参数，不是发送 HTTP 请求的参数：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `examples` | `list[dict]` | 候选示例集合 |
-| `embeddings` | `Embedding` | 文本向量化模型 |
-| `vectorstore_cls` | `VectorStore` | 向量存储实现 |
-| `k` | `int` | 返回的示例数量 |
+| `examples` | `list[dict]` | 参考题列表，每个字典保存一道题及其答案 |
+| `example_prompt` | `PromptTemplate` | 一道参考题怎么排版，例如“问题：…\n答案：…” |
+| `prefix` | `str` | 写在最前面的说明，例如“请把中文翻译成英文” |
+| `suffix` | `str` | 写在最后的新题格式，例如 `"问题：{input}\n答案："` |
+| `input_variables` | `list[str]` | 调用时需要填写的变量名；上述新题使用 `{input}`，所以填 `["input"]` |
+| `example_selector` | 示例选择器对象 | 自动从候选参考题中挑选示例；与 `examples` 二选一，初学时可以先不用 |
 
-###### 选择方法
-
-先通过 `from_examples()` 创建选择器，再调用 `select_examples()` 获取与当前输入最相关的示例：
-
-```python
-selector = SemanticSimilarityExampleSelector.from_examples(
-    examples=examples,
-    embeddings=embeddings,
-    vectorstore_cls=VectorStore,
-    k=2,
-)
-
-selected_examples = selector.select_examples(
-    {"input": current_input}
-)
-```
-
-###### 处理流程
-
-```text
-候选示例
-    -> Embedding 向量化
-    -> 写入向量存储
-    -> 当前输入向量化
-    -> 相似度检索
-    -> 选择 Top-K 示例
-    -> 注入 Few-shot 模板
-```
-
-##### 动态示例选择与调用示例
+下面是一个完整例子，只拼接并打印提示词，不需要 API Key，也不会调用模型：
 
 ```python
-from langchain_core.example_selectors import SemanticSimilarityExampleSelector
 from langchain_core.prompts import FewShotPromptTemplate, PromptTemplate
 
-# 对话示例：input 表示用户消息，output 表示助手回复
 examples = [
-    {"input": "我叫小明。", "output": "你好，小明！"},
+    {"question": "苹果", "answer": "apple"},
+    {"question": "香蕉", "answer": "banana"},
 ]
 
 example_prompt = PromptTemplate.from_template(
-    "用户：{input}\n助手：{output}"
+    "问题：{question}\n答案：{answer}"
 )
 
-# embeddings 和 VectorStore 需要根据实际项目进行配置
+prompt = FewShotPromptTemplate(
+    examples=examples,
+    example_prompt=example_prompt,
+    prefix="请把中文翻译成英文，只回答英文单词。",
+    suffix="问题：{input}\n答案：",
+    input_variables=["input"],
+)
+
+prompt_value = prompt.invoke({"input": "橙子"})
+print(prompt_value.to_string())
+```
+
+运行后打印的就是本节开头那段文字。重点区分两份数据：
+
+- `examples`：你提前写好的参考题，既有 `question`，也有 `answer`。
+- `{"input": "橙子"}`：这次调用传入的新问题，还没有答案。
+
+`example_prompt` 中的 `{question}`、`{answer}` 从每条参考题中取值；`suffix` 中的 `{input}` 从 `invoke()` 的参数中取值。**字段名与各自的占位符对应即可，不要求参考题和新问题使用同一个字段名。**
+
+###### 响应参数
+
+`prompt.invoke(...)` 返回一个保存了最终提示词的对象。示例中的 `.to_string()` 把它转成普通字符串，方便打印查看。
+
+注意：输出最后仍然是空的“答案：”，不会自动出现 `orange`。要得到答案，还需要把拼好的提示词交给聊天模型。
+
+对照你的自动选例代码：`from_examples(examples, ...)` 接收的是**全部候选参考题**，`k=1` 表示每次最多选一道；`FewShotPromptTemplate(example_selector=example_selector, ...)` 再把选中的题和新问题拼起来。因此，`k=1` 不是“生成一个答案”，而是“挑一条参考示例”。
+
+##### SemanticSimilarityExampleSelector
+
+`SemanticSimilarityExampleSelector` 是**语义相似度示例选择器**：根据当前问题，从事先准备的候选示例中挑选最相关的最多 `k` 条，交给 Few-shot 模板作为参考。它不生成回答，也不负责保存聊天历史。
+
+先区分三个对象的作用：
+
+| 对象 | 作用 | 输入与输出 |
+| --- | --- | --- |
+| `SemanticSimilarityExampleSelector` | 组织示例入库和相似度检索，返回选中的示例 | 当前问题字典 → 示例字典列表 |
+| `OpenAIEmbeddings` | 调用 OpenAI Embedding 接口，将文本转换为向量 | 文本 → 浮点数列表 |
+| `Chroma` | 存储文本、向量和元数据，并按相似度查找 | 查询文本或向量 → 相关文档 |
+
+###### SemanticSimilarityExampleSelector 的使用
+
+`from_examples()` 用候选示例、Embedding 对象和向量存储类创建选择器；`select_examples()` 返回选中的示例，不会调用聊天模型生成答案。
+
+```python
 selector = SemanticSimilarityExampleSelector.from_examples(
     examples=examples,
     embeddings=embeddings,
-    vectorstore_cls=VectorStore,
+    vectorstore_cls=Chroma,
+    k=2,
+    input_keys=["question"],
+)
+
+selected_examples = selector.select_examples({"question": "苹果的英文是什么？"})
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `examples` | 候选示例列表，每条可以包含 `question`、`answer` 等字段 |
+| `embeddings` | 已创建的 Embedding 对象，例如 `OpenAIEmbeddings(...)` |
+| `vectorstore_cls` | 向量存储类，例如 `Chroma`，这里传类而不是 `Chroma()` 实例 |
+| `k` | 希望取出的示例数量；候选不足时不保证能取满 |
+| `input_keys` | 哪些字段参与向量化和检索；这里仅比较 `question` |
+| `example_keys` | 可选，限定选中后返回哪些示例字段；与控制检索字段的 `input_keys` 不同 |
+
+不设置 `input_keys` 时，选择器默认会将示例的各字段值组合成检索文本，可能把答案也纳入相似度比较。设置为 `["question"]` 后，仅问题参与比较，但返回的示例仍可保留 `answer` 用于模板展示。
+
+###### OpenAIEmbeddings 的作用与使用
+
+`OpenAIEmbeddings` 是 LangChain 对 OpenAI 嵌入模型的封装，属于 `langchain-openai` 包。它与 `ChatOpenAI` 不同：前者返回向量，后者生成聊天消息。
+
+```python
+from langchain_openai import OpenAIEmbeddings
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+query_vector = embeddings.embed_query("苹果的英文是什么？")
+document_vectors = embeddings.embed_documents(["苹果", "香蕉"])
+```
+
+`embed_query()` 将一条查询转为 `list[float]`；`embed_documents()` 将多条文本转为 `list[list[float]]`。在选择器中，这些调用由向量存储协同完成，不需要提前手动计算再传入。
+
+使用 OpenAI 官方服务需要配置 `OPENAI_API_KEY`。创建对象本身不代表已经完成向量化，执行嵌入方法、示例入库和查询才会触发相应请求。聊天模型的密钥和接口不能直接当作嵌入服务使用，目标服务必须支持所选 Embedding 模型及接口。
+
+###### Chroma 的作用与使用
+
+`from langchain_chroma import Chroma` 导入的是 LangChain 的 Chroma 向量存储集成类。它负责管理和检索向量数据，不是 Embedding 模型，也不是聊天模型。
+
+可以独立创建和查询向量库：
+
+```python
+from langchain_chroma import Chroma
+
+vector_store = Chroma(
+    collection_name="example_selector_demo",
+    embedding_function=embeddings,
+)
+vector_store.add_texts(["苹果的英文是 apple。", "香蕉的英文是 banana。"])
+documents = vector_store.similarity_search("苹果用英语怎么说？", k=1)
+print(documents[0].page_content)
+```
+
+本地 Chroma 不需要 Chroma 云端密钥，但使用 OpenAIEmbeddings 时仍需要嵌入服务的密钥。上述配置不持久化到磁盘；需要跨进程保留数据时，可以传入 `persist_directory="./chroma_examples"`。
+
+在 `from_examples(..., vectorstore_cls=Chroma)` 中，选择器会通过 Chroma 创建向量存储并写入示例，不需要再手动执行上面的 `add_texts()`。示例字段会保存为元数据，检索后用于还原完整示例。
+
+###### 三者协作流程
+
+```text
+创建选择器：
+候选示例 → 提取 question → OpenAIEmbeddings 向量化
+    → Chroma 保存向量、检索文本和完整示例元数据
+
+使用选择器：
+当前 question → OpenAIEmbeddings 向量化 → Chroma 相似度检索
+    → Selector 返回示例字典列表 → FewShotPromptTemplate 格式化
+    → 生成完整提示词 → 按需交给聊天模型回答
+```
+
+向量检索只负责挑选参考示例，不负责验证示例中的事实，也不会训练或修改模型参数。
+
+##### 动态示例选择与调用示例
+
+先安装依赖，并在运行前配置 `OPENAI_API_KEY`；若密钥放在 `.env`，必须先由程序加载它：
+
+```bash
+uv add langchain-core langchain-openai langchain-chroma python-dotenv
+```
+
+下面的示例串联选例、向量化、向量存储和提示模板。它只打印提示词，不调用聊天模型；但示例入库与选例需要调用嵌入服务。
+
+```python
+from dotenv import load_dotenv
+from langchain_chroma import Chroma
+from langchain_core.example_selectors import SemanticSimilarityExampleSelector
+from langchain_core.prompts import FewShotPromptTemplate, PromptTemplate
+from langchain_openai import OpenAIEmbeddings
+
+load_dotenv()
+
+examples = [
+    {"question": "苹果的英文是什么？", "answer": "apple"},
+    {"question": "香蕉的英文是什么？", "answer": "banana"},
+    {"question": "一加一等于几？", "answer": "2"},
+]
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+selector = SemanticSimilarityExampleSelector.from_examples(
+    examples=examples,
+    embeddings=embeddings,
+    vectorstore_cls=Chroma,
     k=1,
+    input_keys=["question"],
+    collection_name="few_shot_learning_demo",
+)
+
+example_prompt = PromptTemplate.from_template(
+    "问题：{question}\n答案：{answer}"
 )
 
 prompt = FewShotPromptTemplate(
     example_selector=selector,
     example_prompt=example_prompt,
-    prefix="请参考下面的用户与助手对话示例：\n\n",
-    suffix="用户：{input}\n助手：",
-    input_variables=["input"],
+    prefix="请参考示例，简短回答问题。",
+    suffix="问题：{question}\n答案：",
+    input_variables=["question"],
 )
 
-prompt_value = prompt.invoke({"input": "我叫什么？"})
+question = "苹果用英语怎么说？"
+print(selector.select_examples({"question": question}))
+prompt_value = prompt.invoke({"question": question})
 print(prompt_value.to_string())
 ```
 
-生成的聊天提示词大致如下：
+如果选中了苹果示例，生成的提示词如下；实际选例由嵌入模型和向量检索结果决定：
 
 ```text
-请参考下面的用户与助手对话示例：
+请参考示例，简短回答问题。
 
-用户：我叫小明。
-助手：你好，小明！
-用户：我叫什么？
-助手：
+问题：苹果的英文是什么？
+答案：apple
+
+问题：苹果用英语怎么说？
+答案：
 ```
 
-模型根据示例理解对话格式后，可能生成：
+`prompt.invoke()` 会自动调用选择器，所以无需手动把 `selected_examples` 再传给模板。上面单独调用 `select_examples()` 是为了观察选例结果，会额外执行一次查询；正式使用时可省略。
 
-```text
-你叫小明。
-```
-
-这里由 `selector` 根据当前输入动态选择示例，再由 `FewShotPromptTemplate` 格式化并拼接最终提示词。`examples` 和 `example_selector` 通常二选一。
+候选示例是任务演示，不是当前用户的聊天记忆。要回答“我叫什么”之类的会话问题，应传入真实历史消息，而不是依赖相似示例推断用户身份。
 
 ##### 错误码与注意事项
 
@@ -2564,9 +2755,9 @@ print(result.year)   # 2026
 
 组件之间应通过明确的数据结构协作，避免在模板中混入业务查询、向量检索或结果持久化等无关职责。
 
-## Runnable 接口
+## Runnable 与 LCEL
 
-### 核心概念
+### 1. 概念与关系
 
 这几个概念可以先理解为：
 
@@ -2578,7 +2769,9 @@ print(result.year)   # 2026
 
 组件负责具体工作，`Runnable` 负责统一调用方式，LCEL 负责将多个组件组合成可执行的链。
 
-### 组件与 Runnable
+LCEL 全称为 LangChain Expression Language（LangChain 表达式语言）。`prompt | model | parser` 描述的是组件之间的数据流；组合后的链本身仍然是 Runnable，继续使用同一套调用方法。
+
+#### 组件与 Runnable
 
 `Runnable` 不是某一个具体的模型或链，而是一套统一的调用协议。只要一个组件实现了 `Runnable`，就可以用相同的方法调用它、组合它，并获取它的输入输出模式。
 
@@ -2663,7 +2856,7 @@ invoke、stream、batch 等调用方法
 
 因此，`invoke` 和 `stream` 不是组件本身，而是组件遵循 `Runnable` 规范后提供的调用方法。`model` 是聊天模型组件，`model.invoke(...)` 和 `model.stream(...)` 分别表示以完整结果或流式数据块的方式调用这个组件。
 
-### API 与调用方法
+### 2. Runnable 调用方法
 
 最常用的同步方法包括：
 
@@ -2778,7 +2971,7 @@ Runnable 接口中的流式方法主要分为两类：
 
 因此，只有需要实时显示最终文本时，通常使用 `stream` 或 `astream`；需要观察提示模板、检索器、模型和解析器等中间步骤时，则使用 `astream_events` 或 `astream_log`。
 
-### 自定义 Runnable
+### 3. 自定义 Runnable
 
 LCEL 中，**Runnable 是可组合的最小执行单元**。自定义实现通常继承 `Runnable[Input, Output]`，至少实现 `invoke()`；框架会默认提供 `batch()`、`ainvoke()` 和非增量 `stream()`。
 
@@ -2872,21 +3065,13 @@ print(chain.invoke("苹果"))
 
 当自定义逻辑只是简单的同步转换时，只实现 `invoke()` 即可。只有底层业务本身支持原生异步、批量接口或持续输出时，才需要重写对应方法。
 
-## LCEL
+### 4. LCEL 顺序组合
 
-LCEL 的英文全称是 LangChain Expression Language，即 LangChain 表达式语言。它是一种声明式语法，用于组合提示模板、聊天模型、输出解析器、检索器和工具等 `Runnable` 组件。
-
-LCEL 的核心作用是描述多个 `Runnable` 组件之间的数据流转关系，并将它们组合成一条可执行的链。最常见的组合方式是使用 `|` 运算符：
-
-```python
-chain = prompt | model | parser
-```
-
-这里的 `|` 是 LCEL 提供的组合语法；组合后的 `chain` 本身仍然是一个 `Runnable`。具体的同步、异步、流式和批量调用方式，参见上方的「Runnable 接口」章节。
-
-### Chains（链式调用）
+`RunnableSequence` 表示按顺序执行多个步骤，通常通过 `|` 创建。前一步的输出直接成为后一步的输入，连接时应确保类型和字段匹配。
 
 Chain 用于将多个处理步骤组合成一个可复用的工作流。在 LangChain 中，每个步骤通常都遵循统一的 `Runnable` 接口，因此可以通过链式组合的方式连接提示模板、模型、输出解析器、检索器和工具。
+
+Chain 是工作流的泛称，不是所有 Chain 都通过 LCEL 实现。
 
 在 LCEL 中，`|` 是管道运算符，用于按照从左到右的顺序连接多个 `Runnable`。例如：
 
@@ -2934,196 +3119,142 @@ print(response)
 # 我们去跑步吧
 ```
 
-## 事件
+### 5. LCEL 并行组合
 
-<font style="color:rgb(28, 30, 33);">下面是一个参考表，显示各种可运行对象可能发出的一些事件。</font>
-
-当流式传输正确实现时，对于可运行项的输入直到输入流完全消耗后才会知道。这意味着`inputs`通常仅包括`end`事件，而不包括`start`事件。
-
-| 事件                | 名称         | 块                             | 输入                                          | 输出                                            |
-| ------------------- | ------------ | ------------------------------ | --------------------------------------------- | ----------------------------------------------- |
-| on_chat_model_start | [模型名称]   |                                | {"messages": [[SystemMessage, HumanMessage]]} |                                                 |
-| on_chat_model_end   | [模型名称]   |                                | {"messages": [[SystemMessage, HumanMessage]]} | AIMessageChunk(content="hello world")           |
-| on_llm_start        | [模型名称]   |                                | {'input': 'hello'}                            |                                                 |
-| on_llm_stream       | [模型名称]   | 'Hello'                        |                                               |                                                 |
-| on_llm_end          | [模型名称]   |                                | 'Hello human!'                                |                                                 |
-| on_chain_start      | format_docs  |                                |                                               |                                                 |
-| on_chain_stream     | format_docs  | "hello world!, goodbye world!" |                                               |                                                 |
-| on_chain_end        | format_docs  |                                | [Document(...)]                               | "hello world!, goodbye world!"                  |
-| on_tool_start       | some_tool    |                                | {"x": 1, "y": "2"}                            |                                                 |
-| on_tool_end         | some_tool    |                                |                                               | {"x": 1, "y": "2"}                              |
-| on_retriever_start  | [检索器名称] |                                | {"query": "hello"}                            |                                                 |
-| on_retriever_end    | [检索器名称] |                                | {"query": "hello"}                            | [Document(...), ..]                             |
-| on_prompt_start     | [模板名称]   |                                | {"question": "hello"}                         |                                                 |
-| on_prompt_end       | [模板名称]   |                                | {"question": "hello"}                         | ChatPromptValue(messages: [SystemMessage, ...]) |
-
-## 调试
-
-### 为什么需要调试 LangChain
-
-LangChain 的一次请求可能经过模型、提示词、Agent 和工具多个环节。只查看最终答案，无法确认：
-
-- 是否调用了工具；
-- 工具传入了什么参数；
-- Agent 执行了几轮；
-- 错误发生在哪一步。
-
-调试日志可以展示完整执行过程，帮助定位问题。
-
-### 模型、工具、Agent 的关系
-
-```text
-用户问题 → Agent 判断 → 模型决策 → 调用工具 → 模型整理结果 → 最终答案
-```
-
-- **模型**：理解问题并生成回答。
-- **工具**：提供搜索、数据库查询等外部能力。
-- **Agent**：根据任务决定是否调用工具，并组织执行流程。
-
-
-### `verbose` 和 `debug` 的概念与区别
-
-`verbose` 用于输出更详细的普通运行日志：
+`RunnableParallel` 将同一份输入传给多个分支并发处理，最后按分支名称汇总为字典。与 `batch()` 对多份输入运行同一组件不同，它对一份输入运行多个分支。
 
 ```python
-from langchain_core.globals import set_verbose
+from langchain_core.runnables import RunnableLambda, RunnableParallel
 
-set_verbose(True)
-```
-
-`debug` 用于观察 Agent 图的节点执行、状态更新和流程转换：
-
-```python
-from langchain.agents import create_agent
-
-agent = create_agent(model, tools=tools, debug=True)
-```
-
-| 配置 | 作用范围 | 适用场景 |
-|---|---|---|
-| `set_verbose(True)` | 全局 | 查看模型、链和工具的调用日志 |
-| `set_debug(True)` | 全局 | 调试旧版或全局执行流程 |
-| `debug=True` | 当前 Agent | 调试 LangChain 1.x Agent 图 |
-
-三者都用于调试，但作用范围和输出重点不同，并不完全等价。
-
-### LangSmith 如何监听 LangChain
-
-LangSmith 的接入主要通过环境变量完成，不需要在业务代码中显式调用 `langsmith`：
-
-```dotenv
-LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=你的 LangSmith API Key
-LANGSMITH_PROJECT=day4-langchain-debug
-```
-
-- `LANGSMITH_TRACING`：开启或关闭自动追踪；
-- `LANGSMITH_API_KEY`：用于 LangSmith 身份认证，不负责单独开启追踪；
-- `LANGSMITH_PROJECT`：指定 trace 归属的项目。
-
-运行 `AgentExecutor.invoke()` 后，LangChain 内部的 Runnable 和 Callback 系统会将 Agent、模型、工具等执行节点交给 LangSmith Tracer，再上传到指定项目：
-
-```text
-AgentExecutor.invoke()
-    ↓
-LangChain Runnable / Callback
-    ↓
-LangSmith Tracer
-    ↓
-LangSmith 项目
-```
-
-脚本需要在创建模型和执行 Agent 之前加载 `.env`：
-
-```python
-from pathlib import Path
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
-```
-
-这样可以在 LangSmith 控制台查看提示词、模型输入输出、工具参数、工具返回值和 Agent 的完整执行链路。
-
-### 旧版 Agent 与 LangChain 1.x 的演进
-
-旧版 Agent 的结构是：
-
-```text
-ChatPromptTemplate → create_tool_calling_agent → AgentExecutor
-```
-
-旧版通常使用 `input` 调用：
-
-```python
-agent_executor.invoke({"input": "请回答问题"})
-```
-
-#### 提示词模板数据来源
-
-`ChatPromptTemplate.from_messages()` 只是定义消息模板，模板中的变量由不同环节提供：
-
-| 模板变量 | 数据来源 |
-|---|---|
-| `system` | 当前代码中直接写入的系统提示词 |
-| `{input}` | 调用 `invoke()` 时传入的用户问题 |
-| `{chat_history}` | 调用者传入的历史消息；未传入时通常为空 |
-| `{agent_scratchpad}` | `create_tool_calling_agent()` 和 `AgentExecutor` 自动生成的工具调用中间过程 |
-
-例如：
-
-```python
-agent_executor.invoke({
-    "input": "继续刚才的问题",
-    "chat_history": [
-        ("human", "你好"),
-        ("ai", "你好，有什么可以帮你？"),
-    ],
-})
-```
-
-当 Agent 决定调用工具时，工具参数、工具返回结果以及后续推理过程会被写入 `agent_scratchpad`，再交给模型生成最终答案。
-
-在当前 LangChain 1.x 中，旧版 API 从 `langchain.agents` 迁移到了 `langchain_classic.agents`：
-
-```python
-from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
-```
-
-新版推荐使用 `create_agent`：
-
-```python
-from langchain.agents import create_agent
-
-agent = create_agent(
-    model,
-    tools=tools,
-    system_prompt="你是一位得力的助手。",
-    debug=True,
+parallel = RunnableParallel(
+    normalized=RunnableLambda(lambda text: text.strip()),
+    length=RunnableLambda(lambda text: len(text)),
 )
 
-response = agent.invoke({
-    "messages": [
-        {"role": "user", "content": "请回答问题"}
-    ]
-})
+print(parallel.invoke(" hello "))
+# {'normalized': 'hello', 'length': 7}
 ```
 
-新版使用 `messages` 输入，并从返回结果的消息列表中读取答案：
+两个分支都收到原始字符串，因此 `length` 是 7，而不是清洗后的 5。在 LCEL 管道中，字典形式的分支映射也会被转换为 RunnableParallel：
 
 ```python
-print(response["messages"][-1].content)
+chain = RunnableLambda(lambda text: text.strip()) | {
+    "upper": RunnableLambda(lambda text: text.upper()),
+    "length": RunnableLambda(lambda text: len(text)),
+}
+
+print(chain.invoke(" hello "))
+# {'upper': 'HELLO', 'length': 5}
 ```
 
-### Agent 调试思路
+裸字典本身不是 Runnable，不能脱离组合语境直接调用 `.invoke()`。并发也不等于 CPU 密集型计算一定更快。
 
-1. **确认环境**：检查 Python 解释器、依赖和环境变量。
-2. **单独测试模型**：确认模型接口和密钥有效。
-3. **单独测试工具**：确认 Tavily 配置和网络正常。
-4. **开启日志**：使用 `set_verbose(True)` 或 `debug=True`。
-5. **观察执行过程**：确认 Agent 是否调用了预期工具。
-6. **检查返回结果**：确认新版结果中存在 `messages`。
+### 6. 自定义逻辑与数据转换
 
-不要直接修改多个地方，应先根据日志定位具体失败环节。
+`RunnableLambda` 将普通函数包装成 Runnable，适合字段提取、格式转换和轻量清洗，不必为每个简单函数编写 Runnable 子类。
+
+```python
+from langchain_core.runnables import RunnableLambda
+
+def normalize_text(text):
+    return text.strip().lower()
+
+chain = RunnableLambda(normalize_text) | RunnableLambda(
+    lambda text: {"text": text, "length": len(text)}
+)
+
+print(chain.invoke(" HELLO "))
+# {'text': 'hello', 'length': 5}
+```
+
+需要维护组件配置或定制调用行为时，可以使用前面的自定义 Runnable 类。普通 RunnableLambda 不会自动将函数结果拆成增量流；流式链路中的转换节点需要注意是否会等待上游收集完成。
+
+### 7. 数据透传与字段扩展
+
+`RunnablePassthrough()` 原样传递输入，常用于在并行分支中保留原始问题；`RunnablePassthrough.assign()` 接收字典输入，保留原字段并合并新计算出的字段。
+
+```python
+from langchain_core.runnables import (
+    RunnableLambda,
+    RunnableParallel,
+    RunnablePassthrough,
+)
+
+chain = RunnableParallel(
+    original=RunnablePassthrough(),
+    normalized=RunnableLambda(lambda text: text.strip()),
+) | RunnablePassthrough.assign(
+    length=lambda data: len(data["normalized"]),
+)
+
+print(chain.invoke(" hello "))
+# {'original': ' hello ', 'normalized': 'hello', 'length': 5}
+```
+
+`assign()` 中的计算读取进入该节点的字典；同一次 assign 内的多个字段不能依赖彼此的新计算结果。有先后依赖时，应串联多个 assign 节点。同名字段会被新结果覆盖。
+
+### 8. 条件路由
+
+`RunnableBranch` 按声明顺序判断条件，只执行第一个满足条件的分支；全部不满足时执行最后指定的默认分支。
+
+```python
+from langchain_core.runnables import RunnableBranch, RunnableLambda
+
+router = RunnableBranch(
+    (
+        lambda data: data["kind"] == "upper",
+        RunnableLambda(lambda data: data["text"].upper()),
+    ),
+    RunnableLambda(lambda data: data["text"]),
+)
+
+print(router.invoke({"kind": "upper", "text": "hello"}))
+# HELLO
+print(router.invoke({"kind": "other", "text": "hello"}))
+# hello
+```
+
+条件路由不是自动的模型意图识别：上例由明确的字段规则决定分支。需要模型分类时，应先生成分类结果，再将该结果传入路由。
+
+### 9. 运行配置、重试与降级
+
+这些能力属于 Runnable 通用能力，对单个组件和组合后的链都适用。
+
+| 能力 | API | 作用与边界 |
+| --- | --- | --- |
+| 运行配置 | `invoke(input, config=...)`、`with_config()` | 设置运行名称、标签、元数据、回调等，不等于模型业务参数 |
+| 失败重试 | `with_retry()` | 指定异常发生时重新执行，适合暂时性故障 |
+| 备用方案 | `with_fallbacks()` | 原组件抛出指定异常时，按顺序尝试备用组件 |
+
+```python
+from langchain_core.runnables import RunnableLambda
+
+def parse_number(text):
+    return int(text)
+
+primary = RunnableLambda(parse_number).with_retry(
+    retry_if_exception_type=(ValueError,),
+    stop_after_attempt=2,
+    wait_exponential_jitter=False,
+)
+safe_parser = primary.with_fallbacks(
+    [RunnableLambda(lambda text: None)],
+    exceptions_to_handle=(ValueError,),
+)
+
+print(safe_parser.invoke("42", config={
+    "run_name": "parse_number",
+    "tags": ["learning"],
+    "metadata": {"source": "demo"},
+}))
+# 42
+print(safe_parser.invoke("invalid"))
+# None
+```
+
+这里使用转换错误演示重试后降级的顺序；真实业务中，非法输入通常应直接校验失败，而不是重试。`stop_after_attempt=2` 包含首次尝试。优先给可能失败的最小节点添加重试，避免整个链重复执行；发邮件、写数据库等有副作用的操作需要考虑幂等性。降级组件应接受相同输入，并返回下游能处理的结果类型。
+
+参考：LangChain 官方 Runnable API、RunnableBranch API 与 RunnablePassthrough 源码；示例用于说明数据流，不依赖模型服务。
 
 ## 工具
 
@@ -3320,6 +3451,185 @@ result = graph.invoke({"messages": [{"role": "user", "content": "..."}]})
 - 输入格式从 `{"input": "..."}` 变为 `{"messages": [{"role": "user", "content": "..."}]}`
 - 不再需要 `ChatPromptTemplate` 和 `AgentExecutor`
 - 系统提示词直接通过 `system_prompt` 参数传入
+
+## 事件
+
+<font style="color:rgb(28, 30, 33);">下面是一个参考表，显示各种可运行对象可能发出的一些事件。</font>
+
+当流式传输正确实现时，对于可运行项的输入直到输入流完全消耗后才会知道。这意味着`inputs`通常仅包括`end`事件，而不包括`start`事件。
+
+| 事件                | 名称         | 块                             | 输入                                          | 输出                                            |
+| ------------------- | ------------ | ------------------------------ | --------------------------------------------- | ----------------------------------------------- |
+| on_chat_model_start | [模型名称]   |                                | {"messages": [[SystemMessage, HumanMessage]]} |                                                 |
+| on_chat_model_end   | [模型名称]   |                                | {"messages": [[SystemMessage, HumanMessage]]} | AIMessageChunk(content="hello world")           |
+| on_llm_start        | [模型名称]   |                                | {'input': 'hello'}                            |                                                 |
+| on_llm_stream       | [模型名称]   | 'Hello'                        |                                               |                                                 |
+| on_llm_end          | [模型名称]   |                                | 'Hello human!'                                |                                                 |
+| on_chain_start      | format_docs  |                                |                                               |                                                 |
+| on_chain_stream     | format_docs  | "hello world!, goodbye world!" |                                               |                                                 |
+| on_chain_end        | format_docs  |                                | [Document(...)]                               | "hello world!, goodbye world!"                  |
+| on_tool_start       | some_tool    |                                | {"x": 1, "y": "2"}                            |                                                 |
+| on_tool_end         | some_tool    |                                |                                               | {"x": 1, "y": "2"}                              |
+| on_retriever_start  | [检索器名称] |                                | {"query": "hello"}                            |                                                 |
+| on_retriever_end    | [检索器名称] |                                | {"query": "hello"}                            | [Document(...), ..]                             |
+| on_prompt_start     | [模板名称]   |                                | {"question": "hello"}                         |                                                 |
+| on_prompt_end       | [模板名称]   |                                | {"question": "hello"}                         | ChatPromptValue(messages: [SystemMessage, ...]) |
+
+## 调试
+
+### 1. 概念
+
+**调试，就是在程序运行时查看它做了什么，找出问题发生在哪里。**
+
+例如，你让 Agent 搜索电影信息，最后却得到了错误答案。只看答案还不够，你还想知道：
+
+- 有没有调用搜索工具？
+- 搜索的关键词对不对？
+- 工具有没有返回结果？
+
+开启调试日志后，可以在终端中查看这些过程。不需要一开始就读懂每个字段，先学会找到工具调用和返回结果即可。
+
+### 2. 使用场景
+
+| 遇到的问题 | 先检查什么 |
+| --- | --- |
+| 期待搜索，但 Agent 直接回答了 | 是否出现工具调用 |
+| 工具执行失败 | 工具名称、传入参数和报错 |
+| 最终答案不正确 | 工具实际返回了什么 |
+| 程序一直没有结束 | 最后的日志停在哪一步 |
+
+**初学时，使用新版 `create_agent(..., debug=True)` 就可以开始排查，不必同时打开所有日志开关。**
+
+### 3. API 说明
+
+#### 0. 输出与区别
+
+| 方式 | 输出什么 | 主要区别 |
+| --- | --- | --- |
+| debug | 较详细的执行过程、输入和输出 | 在终端排查细节；`debug=True` 针对当前 Agent，`set_debug(True)` 是全局设置 |
+| verbose | 较简洁的执行过程 | 看程序大致走到了哪一步，是否输出取决于组件 |
+| LangSmith | 可在网页回看的运行记录、输入和输出 | 需要单独配置，适合保存记录、之后回看 |
+
+#### 1. debug
+
+在创建 Agent 时加上 `debug=True`，运行时就会在终端输出执行过程。
+
+```python
+agent = create_agent(model, tools=tools, debug=True)
+```
+
+它只负责当前 Agent 的调试输出。排查结束后，删除这个参数或改为 `debug=False` 即可。
+
+**debug 控制的是“是否自动打印执行信息”，不是“是否生成工具调用数据”。** 如果本次确实发生了工具调用：
+
+| 配置 | 是否自动输出调试日志 | 消息数据是否仍然存在 |
+| --- | --- | --- |
+| `debug=True` | 自动输出执行过程，可以看到含 `tool_calls` 的模型消息和工具返回的 `ToolMessage` | 存在 |
+| `debug=False` | 不通过这个开关自动输出；手动 `print()` 或其他日志配置仍可能输出 | 仍然存在 |
+
+`tool_calls` 保存模型请求调用的工具及参数，`ToolMessage` 保存工具返回的结果，它们本身不是 debug 日志。**关闭 debug 后，仍可手动打印返回的消息：**
+
+```python
+response = agent.invoke(inputs)
+
+for message in response["messages"]:
+    print(message)
+```
+
+这里的 `inputs` 是传给 Agent 的输入，例如 `{"messages": [{"role": "user", "content": "请搜索电影资料"}]}`。没有发生工具调用时，不会凭空出现工具调用请求或结果。
+
+也可以使用全局开关 `set_debug(True)`，可能影响同一程序中的多个组件：
+
+```python
+from langchain_core.globals import set_debug
+
+set_debug(True)
+set_debug(False)
+```
+
+#### 2. verbose
+
+`set_verbose(True)` 是全局设置，用于查看较简洁的执行过程，可能影响同一程序中的多个组件。
+
+```python
+from langchain_core.globals import set_verbose
+
+set_verbose(True)
+set_verbose(False)
+```
+
+以上代码仅展示开关写法。实际使用时，先开启，执行要检查的代码，再关闭；`set_verbose(True)` 应放在创建相关组件之前。
+
+**注意：`set_verbose(True)` 不保证所有组件都有日志，也不能替代新版 Agent 的 `debug=True`。** 这两个函数也不是旧版专属，不需要把它们理解成“旧版开关”。
+
+#### 3. LangSmith
+
+LangSmith 是一个可以在网页中查看运行记录的平台。终端日志适合临时检查；想保存记录、之后回看模型和工具的输入输出时，再学习 LangSmith。
+
+它需要单独配置账号和追踪开关，**不是加上 `debug=True` 就会自动上传**。初学阶段可以先跳过，等本地调试熟悉后再接入。
+
+### 4. 示例
+
+#### 给已有 Agent 打开日志
+
+假设前面已经创建好模型 `model` 和工具列表 `tools`，只需要在创建 Agent 时加一行 `debug=True`，其他调用方式保持不变：
+
+```python
+from langchain.agents import create_agent
+
+agent = create_agent(
+    model,
+    tools=tools,
+    system_prompt="你是一位助手，需要查找资料时请使用搜索工具。",
+    debug=True,
+)
+
+response = agent.invoke({
+    "messages": [
+        {"role": "user", "content": "请搜索：谁执导了电影《奥本海默》？"}
+    ]
+})
+
+print(response["messages"][-1].content)
+```
+
+`invoke()` 在这里负责执行 Agent，`debug=True` 才负责开启日志。示例仍需要有效的模型与搜索工具配置，运行可能产生服务费用。
+
+#### 运行后看哪里
+
+先在日志中找三类内容，不用逐字阅读整段输出：
+
+| 日志中的内容 | 可以怎么理解 |
+| --- | --- |
+| `tool_calls` | 模型准备调用什么工具，以及传什么参数 |
+| `ToolMessage` | 工具执行后返回的结果 |
+| 最后一条 AI 回复 | 模型给用户的回答 |
+
+如果本次确实调用了搜索工具，过程可以简化理解为下面这样；这不是终端日志的固定格式：
+
+```text
+模型请求搜索 → 搜索工具返回资料 → 模型根据资料回答
+```
+
+提示词不保证模型一定调用工具，应以实际日志为准。日志也不是模型完整的内部思考过程。分享日志前，先检查有没有密钥或个人信息。
+
+### 排查顺序
+
+1. **先看报错**：找到异常类型和最后的错误说明。
+2. **模型有问题**：检查模型名称、接口地址和 API Key。
+3. **工具有问题**：检查工具参数、工具自己的密钥和网络。
+4. **没有明显报错但结果不对**：开启 `debug=True`，检查是否调用工具、返回内容是否正确。
+5. **排查结束**：关闭调试输出，保留正常的结果打印。
+
+初学时记住：**新版 Agent 先用 `debug=True`；verbose 看大致过程，debug 看更多细节；需要保存运行记录时再学 LangSmith。**
+
+### 参考资料
+
+需要深入时再阅读，入门阶段不要求查看源码；日志的具体格式以安装版本为准。
+
+- [LangSmith 与 LangChain 集成](https://docs.langchain.com/langsmith/trace-with-langchain)
+- [Agent 工厂源码](https://github.com/langchain-ai/langchain/blob/master/libs/langchain_v1/langchain/agents/factory.py)
+- [全局配置源码](https://github.com/langchain-ai/langchain/blob/master/libs/core/langchain_core/globals.py)
 
 
 
