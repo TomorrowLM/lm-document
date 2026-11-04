@@ -2470,7 +2470,18 @@ selected_examples = selector.select_examples({"question": "苹果的英文是什
 
 ###### OpenAIEmbeddings 的作用与使用
 
-`OpenAIEmbeddings` 是 LangChain 对 OpenAI 嵌入模型的封装，属于 `langchain-openai` 包。它与 `ChatOpenAI` 不同：前者返回向量，后者生成聊天消息。
+`OpenAIEmbeddings` 用来调用 OpenAI 的嵌入模型，把文字转换成一组数字，这组数字称为**向量**。
+
+为什么要转换？因为程序不能直接理解两句话的意思，但可以通过比较向量，判断它们在含义上是否接近。例如，“苹果的英文是什么”和“苹果用英语怎么说”表达不同，但意思相近。
+
+可以先这样区分：
+
+- `ChatOpenAI`：接收问题，生成回答。
+- `OpenAIEmbeddings`：接收文字，生成向量，用于相似度比较。
+
+**使用示例**
+
+使用前安装 `langchain-openai`，并配置 `OPENAI_API_KEY`。
 
 ```python
 from langchain_openai import OpenAIEmbeddings
@@ -2481,15 +2492,28 @@ query_vector = embeddings.embed_query("苹果的英文是什么？")
 document_vectors = embeddings.embed_documents(["苹果", "香蕉"])
 ```
 
-`embed_query()` 将一条查询转为 `list[float]`；`embed_documents()` 将多条文本转为 `list[list[float]]`。在选择器中，这些调用由向量存储协同完成，不需要提前手动计算再传入。
+这段代码分为三步：
 
-使用 OpenAI 官方服务需要配置 `OPENAI_API_KEY`。创建对象本身不代表已经完成向量化，执行嵌入方法、示例入库和查询才会触发相应请求。聊天模型的密钥和接口不能直接当作嵌入服务使用，目标服务必须支持所选 Embedding 模型及接口。
+1. `OpenAIEmbeddings(...)`：创建一个调用嵌入模型的对象。
+2. `embed_query(...)`：把一条查询转换成向量，返回一个数字列表。
+3. `embed_documents(...)`：把多条文本分别转换成向量，返回多个数字列表。
+
+**这里只是把文字转换成数字，还没有保存数据，也没有执行搜索。** 执行嵌入方法时会请求模型服务，可能产生费用。
 
 ###### Chroma 的作用与使用
 
-`from langchain_chroma import Chroma` 导入的是 LangChain 的 Chroma 向量存储集成类。它负责管理和检索向量数据，不是 Embedding 模型，也不是聊天模型。
+Chroma 用来**保存文本及其向量，并根据含义查找相似内容**。`langchain_chroma` 中的 `Chroma` 是在 LangChain 中使用它的集成类。
 
-可以独立创建和查询向量库：
+例如，你保存的是“苹果的英文是 apple”，用户问的是“苹果用英语怎么说”。即使文字不完全相同，也可以通过向量相似度找到相关内容。
+
+可以把两者理解为一组搭档：
+
+- `OpenAIEmbeddings`：负责把文字转换成向量。
+- `Chroma`：负责保存数据，并利用向量查找相似内容。
+
+**使用示例**
+
+使用前安装 `langchain-chroma`。下面沿用上一段创建的 `embeddings`：
 
 ```python
 from langchain_chroma import Chroma
@@ -2498,14 +2522,37 @@ vector_store = Chroma(
     collection_name="example_selector_demo",
     embedding_function=embeddings,
 )
-vector_store.add_texts(["苹果的英文是 apple。", "香蕉的英文是 banana。"])
-documents = vector_store.similarity_search("苹果用英语怎么说？", k=1)
+
+vector_store.add_texts([
+    "苹果的英文是 apple。",
+    "香蕉的英文是 banana。",
+])
+
+documents = vector_store.similarity_search(
+    "苹果用英语怎么说？",
+    k=1,
+)
+
 print(documents[0].page_content)
 ```
 
-本地 Chroma 不需要 Chroma 云端密钥，但使用 OpenAIEmbeddings 时仍需要嵌入服务的密钥。上述配置不持久化到磁盘；需要跨进程保留数据时，可以传入 `persist_directory="./chroma_examples"`。
+这段代码分为四步：
 
-在 `from_examples(..., vectorstore_cls=Chroma)` 中，选择器会通过 Chroma 创建向量存储并写入示例，不需要再手动执行上面的 `add_texts()`。示例字段会保存为元数据，检索后用于还原完整示例。
+1. `Chroma(...)`：创建向量存储。`collection_name` 是集合名称，可以理解为给这组数据起名字。
+2. `embedding_function=embeddings`：告诉 Chroma 使用哪个对象把文字转换成向量，不需要手动传入数字列表。
+3. `add_texts(...)`：将文本转换成向量，并保存文本和向量。
+4. `similarity_search(...)`：将问题转换成向量，查找最相似的内容。`k=1` 表示取一条结果，`page_content` 用来读取结果中的原文。
+
+整个过程可以理解为：
+
+```text
+保存：文字 → OpenAIEmbeddings 转成向量 → Chroma 保存
+查询：问题 → OpenAIEmbeddings 转成向量 → Chroma 查找相似内容
+```
+
+**Chroma 返回的是找到的原文，不是模型新生成的回答。** 本地使用 Chroma 不需要 Chroma 云端密钥，但这里的文字向量化仍需要 OpenAI 密钥。
+
+在前面的 `from_examples(..., vectorstore_cls=Chroma)` 中，选择器会自动完成示例入库和检索，不需要再手动调用 `add_texts()`。
 
 ###### 三者协作流程
 
