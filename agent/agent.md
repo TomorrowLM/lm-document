@@ -550,91 +550,118 @@ d = {"a": 1, "b": 2}
 
 ## 模块与包
 
-### 1. 模块与包是什么
+### 1. 模块：一个 `.py` 文件
 
-**模块**是一个 `.py` 文件，用于拆分和复用代码；**包**是组织多个模块的目录，用于按职责管理代码。
+模块就是一个 Python 文件。可以把它想成一个工具箱：把相关功能放在里面，其他文件就能导入使用。
 
-```text
-app/
-├── main.py          # 应用入口
-├── services/        # 业务能力
-│   └── chat_service.py
-└── api/             # 对外接口
-        └── routes/
-                └── chat.py
-```
-
-模块化的目标是让每个文件职责单一、同类代码集中，并通过明确的导入关系连接起来。
-
-### 2. 如何导入
-
-常用导入方式：
+例如，`math_utils.py` 中有一个加法函数：
 
 ```python
-import math_utils
-from math_utils import add
-import math_utils as mu
+def add(left, right):
+    return left + right
 ```
 
-推荐优先使用**绝对导入**，从项目顶层包开始写：
+在 `main.py` 中导入它：
+
+```python
+from math_utils import add
+
+print(add(2, 3))
+```
+
+导入时写文件名 `math_utils`，不用写 `.py`。
+
+### 2. 包：装模块的文件夹
+
+包就是用来整理多个模块的文件夹。可以把包想成工具箱里的分隔盒：`app` 下面再放 `services`，里面放具体功能模块。
+
+```text
+project/
+├── main.py
+└── app/
+    ├── __init__.py
+    └── services/
+        ├── __init__.py
+        └── chat_service.py
+```
+
+从项目根目录导入 `chat_service.py` 中的 `build_reply`：
 
 ```python
 from app.services.chat_service import build_reply
 ```
 
-同一个包内部也可以使用相对导入：
+### 3. 导入搜索路径：`sys.path` 与 `PYTHONPATH`
+
+#### `sys.path`：Python 会去哪些目录找
+
+可以把 `sys.path` 想成 Python 的“查找目录清单”。执行 `import app` 时，Python 会按清单逐个找 `app` 文件夹。
+
+所以，如果目录是 `project/app/`，清单里要有 `project/`，而不是只写 `project/app/`。当前清单可以这样查看：
 
 ```python
-from .service import create_user
-from ..core.config import settings
+import sys
+
+print(*sys.path, sep="\n")
 ```
 
-- `.` 表示当前包，`..` 表示上一级包。
-- 不建议使用 `from module import *`，因为名称来源不清晰，也可能覆盖已有变量。
-- 模块首次导入时会执行顶层代码，后续导入通常复用 `sys.modules` 中的缓存。
+#### `PYTHONPATH`：给查找清单加目录
 
-### 3. `__init__.py` 与公共接口
+如果 Python 找不到某个包，可以在启动程序前把包所在项目的**上一级目录**加到 `PYTHONPATH`。
 
-`__init__.py` 是包的初始化文件。Python 3.3+ 支持没有它的命名空间包，但普通业务项目仍建议在每个参与导入的包目录中保留一个空文件：
+PowerShell：
 
-```text
-app/__init__.py
-app/api/__init__.py
-app/api/routes/__init__.py
-app/services/__init__.py
+```powershell
+$env:PYTHONPATH = 'D:\path\to\project'
 ```
 
-不需要为每个 `.py` 文件创建它，也不需要放在不参与 Python 导入的 `docs/`、`static/`、`templates/` 等目录中。它可以为空；保留它的意义是明确包边界，并为统一导出公共对象提供位置：
+Bash（包括 Git Bash）：
+
+```bash
+export PYTHONPATH='D:/path/to/project'
+```
+
+设置后要在同一个终端启动程序；关闭终端后需要重新设置。`PYTHONPATH` 只帮助 Python 找代码，不会安装依赖，也不会读取 `.env`。
+
+### 4. 绝对导入与相对导入
+
+绝对导入从最外层的包名开始写，路径完整，初学时优先用这种写法：
 
 ```python
-# app/services/__init__.py
+from app.services.chat_service import build_reply
+```
+
+相对导入从当前包开始写，通常用于同一个包里的模块：
+
+```python
+from .chat_service import build_reply
+```
+
+`.` 表示当前包，`..` 表示上一级包。如果还不熟悉包之间的关系，先使用绝对导入。
+
+### 5. `__init__.py` 与 `__all__`
+
+在包目录中放置 `__init__.py`，可以清楚地表示这是一个包。它可以是空文件，也可以集中提供常用的导入名称。
+
+例如，在 `app/services/__init__.py` 中：
+
+```python
 from .chat_service import build_reply
 
 __all__ = ["build_reply"]
 ```
 
-外部即可写成：
+这样可以从包入口导入：
 
 ```python
 from app.services import build_reply
 ```
 
-`__init__.py` + `__all__` = 声明“推荐对外使用什么”。  
-`__init__.py` + `__all__` ≠ 强制禁止访问其他内容。
+`__all__` 列出使用 `from app.services import *` 时要导出的名称。它只是导出清单，不是权限控制。
 
-这表示 `build_reply` 是 `app.services` 推荐提供的公共入口。`__all__` 主要控制 `from app.services import *` 会导入哪些名称，并不构成访问控制；其他函数仍可通过具体模块直接导入：
+### 6. 程序入口与运行方式
 
-```python
-from app.services.chat_service import other_function
-```
-
-因此，`__init__.py` 更像前端的 `index.ts`：集中声明推荐的公共 API。内部函数通常以 `_` 开头表示不应被外部依赖，但 Python 不会强制禁止访问。`__init__.py` 本身也不应承担大量业务逻辑，否则容易引入循环导入。
-
-### 4. 入口与运行方式
-
-`__name__` 用于区分模块是被导入还是直接运行。Python 会为每个模块设置该变量：直接运行文件时，当前入口模块的 `__name__` 固定为 `"__main__"`；被其他模块导入时，则是它的实际模块名。
-
-因此，`if __name__ == "__main__":` 的含义是“只有当前文件作为程序入口直接启动时，才执行下面的代码”。**这样同一个文件既可以作为脚本运行，也可以被其他模块导入而不自动启动。**
+下面的判断表示：直接运行这个文件时执行 `main()`；被其他文件导入时不执行入口代码。
 
 ```python
 def main():
@@ -645,92 +672,19 @@ if __name__ == "__main__":
     main()
 ```
 
-例如执行 `python main.py` 时，条件成立并调用 `main()`；其他文件执行 `import main` 时，`__name__` 为 `"main"`，条件不成立。
-
-包内代码推荐在项目根目录使用模块方式启动：
+包内模块建议从项目根目录用 `-m` 启动：
 
 ```bash
 python -m app.main
 ```
 
-不要直接执行包内文件，例如 `python app/main.py`。这种方式会让 `app` 不再作为顶层包参与解析，包内相对导入可能报错：`attempted relative import with no known parent package`。
+### 7. 常见导入错误
 
-### 5. 常见问题
-
-| 问题 | 常见原因 | 处理方式 |
-| --- | --- | --- |
-| `ModuleNotFoundError` | 启动目录不对、包名写错或目录未加入模块搜索路径 | 回到项目根目录，用 `python -m` 启动 |
-| 相对导入报错 | 直接运行了包内文件 | 改为模块方式运行 |
-| 循环导入 | A 导入 B，同时 B 又导入 A | 提取共同依赖到第三个模块，或让依赖保持单向 |
-
-模块设计应遵循：一个模块负责一类能力；上层调用下层；对外只暴露稳定接口，避免跨层直接访问内部实现。
-
-### 6. `pyproject.toml` 的职责
-
-`__init__.py` 解决的是**代码如何组织和导出**；`pyproject.toml` 解决的是**项目如何安装依赖、构建和打包**。二者职责不同，不能互相替代。
-
-```toml
-[project]
-name = "agent-demo"
-requires-python = ">=3.11"
-dependencies = []
-```
-
-使用 `uv`、`pip` 或构建工具时，依赖和项目元数据都放在 `pyproject.toml` 中；具体包发现和构建配置按所选构建后端补充。
-
-### 7. 最小项目闭环
-
-下面是一条从入口到服务层的最小导入链路：
-
-```text
-app/
-├── __init__.py
-├── main.py
-├── api/
-│   ├── __init__.py
-│   └── routes/
-│       ├── __init__.py
-│       └── chat.py
-└── services/
-        ├── __init__.py
-        └── chat_service.py
-```
-
-```python
-# app/services/chat_service.py
-def build_reply(message: str) -> str:
-        return f"收到：{message}"
-```
-
-```python
-# app/api/routes/chat.py
-from app.services.chat_service import build_reply
-
-
-def handle_chat(message: str) -> str:
-        return build_reply(message)
-```
-
-```python
-# app/main.py
-from app.api.routes.chat import handle_chat
-
-
-def main() -> None:
-        print(handle_chat("你好"))
-
-
-if __name__ == "__main__":
-        main()
-```
-
-在项目根目录执行 `python -m app.main` 后，调用链为：
-
-```text
-main.py → api/routes/chat.py → services/chat_service.py
-```
-
-这套结构迁移到 FastAPI 或 Agent 项目时，只需将 `handle_chat()` 替换为路由处理函数，服务层的职责和导入方向保持不变。
+| 现象 | 先检查什么 |
+| --- | --- |
+| `ModuleNotFoundError` | 是否从正确的目录启动，包的上一级目录是否在 `sys.path` 或 `PYTHONPATH` 中 |
+| 相对导入报错 | 是否直接运行了包内文件；试试从项目根目录运行 `python -m 包.模块` |
+| 导入了意料之外的代码 | 是否有同名文件或包挡住了预期的模块 |
 
 ## 函数与装饰器
 
@@ -817,7 +771,6 @@ def a_function_requiring_decoration():
  
 a_function_requiring_decoration()
 #outputs: "I am the function which needs some decoration to remove my foul smell"
- 
 a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
 #now a_function_requiring_decoration is wrapped by wrapTheFunction()
  
@@ -1510,39 +1463,281 @@ yield event
 SSE 推送给客户端
 ```
 
-## 项目搭建和配置
+## 使用 uv 搭建和运行 Python 项目
 
-### 项目初始化
+以下示例适用于直接运行脚本的小型应用。先进入准备作为项目根目录的空文件夹，并确保已安装 uv。
 
-uv init
+### 1. 初始化项目并选择 Python 版本
 
-通常会生成：
+在项目文件夹中执行：
 
-```
-pyproject.toml
-README.md
-.python-version
+```bash
+uv init --no-package --python 3.11
 ```
 
-### 同步环境
+这会创建一个适合直接运行脚本的简单项目：`main.py` 是示例程序，`pyproject.toml` 保存项目配置，`.python-version` 记录 uv 默认使用的 Python 版本，`README.md` 用来写项目说明。
 
-uv sync
+命令中的两个选项可以这样理解：
 
-### 添加依赖
+- `--no-package`：先不配置项目打包和安装，适合从 `main.py` 开始学习。
+- `--python 3.11`：按 Python 3.11 初始化，并在 `pyproject.toml` 中设置最低版本要求（通常为 `>=3.11`，即 3.11 或更高版本）。uv 默认会生成 `.python-version`，因此通常不必马上再运行 `uv python pin 3.11`。以后要更改默认版本时，再运行 `uv python pin <版本号>`，例如 `uv python pin 3.12`。
 
-```
-uv python install 3.11
-\# 将项目默认 Python 固定为 3.11
-uv python pin 3.11
-```
+电脑上没有 Python 3.11 也不用担心：uv 默认会在需要时自动下载。若想提前安装，可以运行 `uv python install 3.11`。
 
+刚入门时先用上面的命令即可。以后要创建带有打包配置的标准应用，可使用 `uv init`；要制作供其他项目安装和复用的 Python 库，再使用 `uv init --lib`。
+
+### 2. 添加依赖
+
+```bash
 uv add langchain-chroma
+```
 
-### 运行代码
+`uv add` 会将依赖写入 `pyproject.toml`，更新锁文件 `uv.lock`，并同步项目虚拟环境。后续添加其他依赖时，继续使用 `uv add <包名>`。
 
-uv run python main.py
+### 3. 同步环境
 
+```bash
+uv sync
+```
 
+`uv sync` 根据项目配置和锁文件创建或更新虚拟环境。添加依赖时 uv 通常会自动完成同步；克隆项目后运行此命令，可安装项目所需依赖并准备开发环境。
+
+### 4. 运行代码
+
+```bash
+uv run main.py
+```
+
+`uv run` 会在项目环境中运行代码，并在运行前检查并同步环境；通常无需手动激活虚拟环境。
+
+协作开发时，将 `pyproject.toml` 和 `uv.lock` 提交到版本控制中，以便团队使用一致的依赖版本；不要提交虚拟环境目录 `.venv`。
+
+### 5. 父项目包含子项目
+
+一个目录里可以包含多个 Python 项目。通常，每个项目根目录有自己的 `pyproject.toml`；但文件夹嵌套不等于它们自动共用依赖环境、锁文件或 Python 导入路径。
+
+当前仓库可简化为：
+
+```text
+lm-ai-future/                         父项目根目录
+├── .env
+├── pyproject.toml                     父项目使用 uv
+├── core/
+│   ├── __init__.py
+│   └── config.py
+└── study/day5-langchain-chat-model/
+    └── 02-langserve/                  子项目目录
+        ├── pyproject.toml
+        └── app/
+            ├── __init__.py
+            └── server.py
+```
+
+#### 父项目启动
+
+父项目是学习脚本集合，没有统一的服务入口。先进入父项目目录并同步依赖，再运行需要的脚本。例如运行 `study/test.py`：
+
+Git Bash：
+
+```bash
+cd /d/LM/lm-ai-future
+uv sync
+uv run python study/test.py
+```
+
+PowerShell：
+
+```powershell
+Set-Location 'D:\LM\lm-ai-future'
+uv sync
+uv run python study/test.py
+```
+
+#### 子项目启动
+
+从子项目目录启动时：
+
+1. **工作目录**：进入子项目目录，以便找到 `app.server`。
+2. **Python 导入和配置**：将父项目根目录加入 `PYTHONPATH`，使 `import core.config` 能找到父项目的 `core`。`PYTHONPATH` 只负责导入路径；父项目的 `core/config.py` 调用 `load_dotenv()`，导入时会加载父目录中的 `.env`。
+3. **uv 运行环境**：设置 `UV_PROJECT`，使用父项目的 uv 环境和锁文件，无需每次指定 `--project`。父项目已将 `langchain-cli` 添加为开发依赖，默认 `uv sync` 会安装它；`langchain serve` 通过 Uvicorn 启动服务。
+4. **环境变量范围**：`PYTHONPATH` 和 `UV_PROJECT` 只对当前终端会话及其子进程生效。`UV_PROJECT` 会影响当前终端后续的 uv 命令；切换到其他项目时，可在 Git Bash 中运行 `unset UV_PROJECT`，或在 PowerShell 中运行 `Remove-Item Env:UV_PROJECT`。
+5. **版本差异**：使用父项目环境不会按子项目配置安装或检查依赖，需确认子项目代码兼容父项目的依赖版本。当前父项目要求 `langchain>=1.3.18`、`langchain-openai>=1.6.0`，子项目则限制为 `langchain 0.3.x`、`langchain-openai 0.2.x`。
+6. **Workspace 与独立运行**：uv workspace 成员共享锁文件并一起解析依赖，现有版本约束冲突，不能直接放在同一个 workspace 中。子项目仍是 Poetry 格式；若希望它独立使用 `uv sync`，应先迁移项目配置，再运行 `uv lock` 和 `uv sync`。
+
+Git Bash：
+
+```bash
+cd /d/LM/lm-ai-future/study/day5-langchain-chat-model/02-langserve
+export PYTHONPATH='D:/LM/lm-ai-future'
+export UV_PROJECT='D:/LM/lm-ai-future'
+uv run langchain serve --port=8000
+```
+
+PowerShell：
+
+```powershell
+Set-Location 'D:\LM\lm-ai-future\study\day5-langchain-chat-model\02-langserve'
+$env:PYTHONPATH = 'D:\LM\lm-ai-future'
+$env:UV_PROJECT = 'D:\LM\lm-ai-future'
+uv run langchain serve --port=8000
+```
+
+### 6. 环境变量
+
+#### 1. 环境变量是什么
+
+环境变量是程序运行时可以读取的配置，由名称和值组成。例如：
+
+```text
+LEARNING_APP_ENV=development
+```
+
+这里 `LEARNING_APP_ENV` 是名称，`development` 是值。程序可以根据名称取到这个值，而不必把所有配置写死在代码中。比如，同一份代码可以在开发和生产环境使用不同的服务地址或密钥。
+
+环境变量属于进程。程序启动时通常会继承父进程的环境变量，因此可以先在终端设置，再从同一个终端启动 Python 程序。Python 读取到的环境变量值是字符串。
+
+#### 2. 读取环境变量
+
+Python 中的 `os.getenv()` 和 `os.environ` 都可以读取当前进程的环境变量，读取相同名称时，获取的是同一个值。
+
+| 对比 | `os.getenv()` | `os.environ` |
+| --- | --- | --- |
+| 作用 | 读取环境变量 | 读取和设置环境变量 |
+| 变量不存在时 | 返回 `None`，也可以指定默认值 | 使用 `os.environ["名称"]` 会抛出 `KeyError`；使用 `.get()` 可以指定默认值 |
+
+例如，先设置变量，再分别读取：
+
+```python
+import os
+
+os.environ["LEARNING_APP_ENV"] = "development"
+print(os.getenv("LEARNING_APP_ENV"))
+print(os.environ["LEARNING_APP_ENV"])
+```
+
+两次都会输出 `development`。如果只读取并提供默认值，`os.getenv("名称", "默认值")` 和 `os.environ.get("名称", "默认值")` 的效果相同。
+
+#### 3. 环境变量设置方式
+
+##### 3.1 在终端临时设置
+
+适合临时运行或调试。以下命令在项目目录中执行，使用 `os.getenv()` 读取刚设置的变量。
+
+Git Bash：
+
+```bash
+export LEARNING_APP_ENV='development'
+uv run python -c "import os; print(os.getenv('LEARNING_APP_ENV', 'not-set'))"
+```
+
+PowerShell：
+
+```powershell
+$env:LEARNING_APP_ENV = 'development'
+uv run python -c "import os; print(os.getenv('LEARNING_APP_ENV', 'not-set'))"
+```
+
+运行后输出：
+
+```text
+development
+```
+
+`python -c` 用于直接运行后面的 Python 代码。`os.getenv("名称", 默认值)` 根据名称读取环境变量：不存在时返回默认值；不提供默认值时返回 `None`。如果变量存在但值为空字符串，不会使用默认值。
+
+这种设置只影响当前终端和之后从它启动的进程，不会永久修改系统配置，也不会改变已经运行的其他程序。用完后可在 Git Bash 中执行 `unset LEARNING_APP_ENV`，或在 PowerShell 中执行 `Remove-Item Env:LEARNING_APP_ENV`。
+
+##### 3.2 在 Python 代码中设置
+
+`os.environ` 是当前 Python 进程的环境变量映射，可以像字典一样设置和读取：
+
+```python
+import os
+
+os.environ["LEARNING_APP_ENV"] = "test"
+print(os.environ["LEARNING_APP_ENV"])
+```
+
+输出：
+
+```text
+test
+```
+
+通过 `os.environ["名称"]` 读取不存在的变量会抛出 `KeyError`；不确定变量是否存在时，可以使用 `os.environ.get("名称")` 或前面的 `os.getenv()`。
+
+代码中设置的值只影响当前 Python 进程及之后继承它的子进程，不会反向修改启动程序的终端，也不会写入 `.env` 文件。
+
+##### 3.3 通过 `.env` 文件设置
+
+适合保存项目本地需要的多项配置。`.env` 是普通文本文件；仅创建文件并不会让 Python 自动读取，需要由程序或启动工具加载。
+
+在项目根目录的 `.env` 中添加：
+
+```dotenv
+LEARNING_APP_ENV=development
+```
+
+如果项目尚未安装 `python-dotenv`，在项目目录执行：
+
+```bash
+uv add python-dotenv
+```
+
+假设 `main.py` 和 `.env` 在同一目录，使用 `load_dotenv()` 加载后，再用 `os.getenv()` 读取：
+
+```python
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+print(os.getenv("LEARNING_APP_ENV", "not-set"))
+```
+
+在项目目录运行 `uv run main.py`。如果终端没有设置同名变量，输出为 `development`。
+
+- `load_dotenv()` 会自动查找并加载 `.env` 中的变量。
+- 已存在同名环境变量时，默认不覆盖。
+- 包含真实密钥的 `.env` 不要提交到 Git。
+
+#### 4. 测试与生产环境配置
+
+测试环境和生产环境通常运行相同的代码，但分别使用自己的配置，例如测试数据库和生产数据库、各自的 API 密钥。
+
+**本地指定配置文件**
+
+例如，在本地准备 `.env.test`，下面的值只是占位示例：
+
+```dotenv
+APP_ENV=test
+DEEPSEEK_BASE_URL=填写模型服务地址
+DEEPSEEK_API_KEY=填写测试使用的密钥
+DB_PASSWORD=填写测试数据库密码
+```
+
+**可以指定文件**，再读取其中的变量：
+
+```python
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv(".env.test")
+api_key = os.getenv("DEEPSEEK_API_KEY")
+db_password = os.getenv("DB_PASSWORD")
+```
+
+读取后，分别将密钥和密码传给模型、数据库客户端。
+
+- `APP_ENV=test` 只是标识，不会自动选择文件或切换数据库；`.env.test` 等非默认文件需显式指定，相对路径以工作目录为准。
+- 当前项目导入 `core/config.py` 时可能加载默认 `.env` 补充缺失变量；`load_dotenv()` 默认不覆盖已有同名变量，注意避免配置混用。
+
+**生产环境与安全**
+
+- 生产密钥通常由部署平台管理，**再注入服务进程**，程序通过 `os.getenv()` 读取；流水线变量需通过部署配置提供给服务。也可以使用受控文件或密钥服务，但需要按对应方式读取。
+- 测试和生产使用各自的账号、数据库和密钥；不要将真实密钥提交到 Git 或写入日志。
+- 当前父项目未忽略 `.env.test`；已跟踪的文件不会因新增忽略规则自动移除，泄露的密钥应撤销并更换。
 
 # 入门
 
@@ -2185,7 +2380,7 @@ RAG (Retrieval-Augmented Generation)
 | **langchain-openai 等** | 最常用集成的轻量小包   | 常用转接头单独打包     | langchain-core   |
 | **langchain**           | 现成的链/代理/检索骨架 | 拼好的半成品流水线     | core + community |
 | **langgraph**           | 画流程图式状态机       | 带分支循环的全流程调度 | langchain-core   |
-| **langserve**           | 一键部署成 REST API    | 端上外卖平台           | langchain        |
+| **langserve**           | 将 Runnable 暴露为 REST API（已弃用，供旧项目参考） | 端上外卖平台 | langchain |
 | **LangSmith**           | 调试/评估/监控平台     | 行车记录仪 + 仪表盘    | 独立平台         |
 
 ## Prompt Templates
@@ -2747,7 +2942,7 @@ Pydantic 可以类比 TypeScript，但两者的作用时机不同：
 | 可以自动转换和校验输入 | 通常不会自动校验运行时 JSON |
 | 可以生成字典和 JSON Schema | 主要用于类型推导和编辑器提示 |
 
-简单来说，TypeScript 主要保证代码编写时的类型安全；Pydantic 主要保证程序运行时接收到的数据符合预期。
+简单来说，TypeScript 主要保证代码编写时的类型安全；**Pydantic 主要保证程序运行时接收到的数据符合预期。**
 
 ##### 在 LangChain 中的使用
 
@@ -3678,6 +3873,94 @@ print(response["messages"][-1].content)
 - [Agent 工厂源码](https://github.com/langchain-ai/langchain/blob/master/libs/langchain_v1/langchain/agents/factory.py)
 - [全局配置源码](https://github.com/langchain-ai/langchain/blob/master/libs/core/langchain_core/globals.py)
 
+
+
+# LangServe
+
+> **历史方案说明：** LangServe 已于 2024 年 11 月 18 日弃用，项目仓库于 2026 年 5 月 5 日归档。官方建议新项目使用 LangGraph Platform，详情见[迁移说明](https://github.com/langchain-ai/langserve/blob/main/MIGRATION.md)。本节保留 LangServe 的基本用法，供学习相关概念及维护既有服务时参考。
+
+## 概述
+
+LangServe 曾用于将 LangChain 的 Runnable 或 Chain 暴露为 REST API。它集成 FastAPI，可自动提供调用端点、输入输出 schema 和 API 文档；服务端使用 Pydantic 进行数据校验。Pydantic 的基础用法见上方 LangChain 章节中的 [Pydantic 小节](#pydantic)。
+
+## 安装
+
+在前文通过 `uv init` 初始化的项目目录中，添加服务器依赖：
+
+```bash
+uv add "langserve[server]>=0.3.0" langchain-openai uvicorn
+```
+
+若 Python 客户端位于单独的 uv 项目中，在客户端项目目录添加客户端依赖：
+
+```bash
+uv add "langserve[client]>=0.3.0"
+```
+
+`uv add` 会将依赖写入 `pyproject.toml`、更新 `uv.lock` 并同步项目环境。使用 Pydantic 2 时，LangServe 应使用 0.3.0 或更高版本；0.2.0 及更早版本存在 OpenAPI 文档生成兼容问题。
+
+## 服务端示例
+
+下面将聊天链发布在 `/joke` 路径。运行前需要配置 `OPENAI_API_KEY`：
+
+```python
+from fastapi import FastAPI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langserve import add_routes
+
+app = FastAPI(title="LangServe 示例")
+prompt = ChatPromptTemplate.from_template("讲一个关于 {topic} 的笑话。")
+chain = prompt | ChatOpenAI(model="gpt-4")
+
+add_routes(app, chain, path="/joke")
+```
+
+例如，将代码保存为 `server.py` 后，在项目根目录运行：
+
+```bash
+uv run uvicorn server:app --reload --port 8000
+```
+
+## 客户端示例
+
+Python 客户端的 `RemoteRunnable` 可以像本地 Runnable 一样调用服务器。将下面代码保存为 `client.py`，并在配置了客户端依赖的 uv 项目根目录中运行：
+
+```python
+from langserve import RemoteRunnable
+
+remote_chain = RemoteRunnable("http://localhost:8000/joke/")
+result = remote_chain.invoke({"topic": "猫"})
+print(result)
+```
+
+```bash
+uv run python client.py
+```
+
+也可以直接使用 HTTP API；JavaScript 项目可使用 [LangChain.js 的 LangServe 客户端](https://js.langchain.com/docs/ecosystem/langserve)。
+
+## 常用端点与文档
+
+`add_routes(app, chain, path="/joke")` 会为该 Runnable 添加常用端点：
+
+| 端点 | 用途 |
+| --- | --- |
+| `POST /joke/invoke` | 调用单个输入 |
+| `POST /joke/batch` | 批量调用 |
+| `POST /joke/stream` | 流式接收输出 |
+| `POST /joke/stream_log` | 流式接收运行过程和中间步骤 |
+| `POST /joke/astream_events` | 流式接收运行事件 |
+| `GET /joke/input_schema`、`/joke/output_schema` | 查看输入和输出 JSON Schema |
+
+FastAPI 的交互式文档默认位于 [http://localhost:8000/docs](http://localhost:8000/docs)。
+
+## 版本与限制
+
+- LangServe 0.2.0 及更早版本与 Pydantic 2 的组合可能无法生成 OpenAPI 文档；使用 Pydantic 2 时至少需要 LangServe 0.3.0。
+- LangServe 不支持由服务器发起的客户端回调。
+- LangServe 0.0.13 至 0.0.15 曾存在 Playground 任意文件访问问题，官方称 0.0.16 已修复；维护旧服务时应确认版本不在受影响范围。
+- LangServe 已停止维护；新项目尤其是 LangGraph 应用，应优先采用官方推荐的 LangGraph Platform。更多背景见 [LangServe 官方仓库](https://github.com/langchain-ai/langserve) 和 [迁移说明](https://github.com/langchain-ai/langserve/blob/main/MIGRATION.md)。
 
 
 # 跑通最简单的 Agent
