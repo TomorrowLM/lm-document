@@ -3877,90 +3877,393 @@ print(response["messages"][-1].content)
 
 # LangServe
 
+## 概述与弃用说明
+
 > **历史方案说明：** LangServe 已于 2024 年 11 月 18 日弃用，项目仓库于 2026 年 5 月 5 日归档。官方建议新项目使用 LangGraph Platform，详情见[迁移说明](https://github.com/langchain-ai/langserve/blob/main/MIGRATION.md)。本节保留 LangServe 的基本用法，供学习相关概念及维护既有服务时参考。
 
-## 概述
+LangServe 将 LangChain 的 Runnable 或 Chain 暴露为 HTTP API。服务端负责发布和执行链；客户端通过 `RemoteRunnable` 或普通 HTTP 请求调用它。下文结合本地学习项目的[服务端](../../lm-ai-future/study/day5-langchain-chat-model/02-langserve/app/server.py)、[LangChain 客户端](../../lm-ai-future/study/day5-langchain-chat-model/02-langserve/app/client.py)和 [HTTP 客户端](../../lm-ai-future/study/day5-langchain-chat-model/02-langserve/app/client_req.py)说明。
 
-LangServe 曾用于将 LangChain 的 Runnable 或 Chain 暴露为 REST API。它集成 FastAPI，可自动提供调用端点、输入输出 schema 和 API 文档；服务端使用 Pydantic 进行数据校验。Pydantic 的基础用法见上方 LangChain 章节中的 [Pydantic 小节](#pydantic)。
+## 一、服务端
 
-## 安装
+### 服务端的作用和处理流程
 
-在前文通过 `uv init` 初始化的项目目录中，添加服务器依赖：
+服务端可以理解为“提供能力的一方”：它把模型或处理流程发布成接口，等待客户端来调用。
 
-```bash
-uv add "langserve[server]>=0.3.0" langchain-openai uvicorn
+示例中的几个组件分别负责：
+
+- `FastAPI`：创建 Web 应用，负责接收 HTTP 请求和返回响应。
+- `ChatOpenAI`：连接配置的模型服务，发送消息并获取回复。
+- `ChatPromptTemplate`：按模板整理提示词，可以在调用前填入主题等变量。
+- `add_routes()`：将模型或处理链挂载到指定路径，让客户端可以通过 HTTP 调用。
+
+一次调用大致经过以下步骤：
+
+1. 客户端向服务端的某个接口发送输入。
+2. 服务端根据该接口的输入结构验证数据。
+3. 如果接口包含提示词模板，先用输入变量填充模板。
+4. 服务端调用模型，按接口配置处理模型返回的结果。
+5. 服务端将结果转换为 HTTP 响应，返回给客户端。
+
+```text
+客户端请求 → FastAPI 路由 → Runnable / Chain → 模型或其他组件 → HTTP 响应
 ```
 
-若 Python 客户端位于单独的 uv 项目中，在客户端项目目录添加客户端依赖：
+这里的 Runnable 可以先理解为“能够被调用的组件或处理链”。接口的输入、输出结构由挂载的 Runnable 决定；LangServe 使用 Pydantic 进行数据校验，基础用法见上方 [Pydantic 小节](#pydantic)。
 
-```bash
-uv add "langserve[client]>=0.3.0"
-```
+### 依赖安装与模型配置
 
-`uv add` 会将依赖写入 `pyproject.toml`、更新 `uv.lock` 并同步项目环境。使用 Pydantic 2 时，LangServe 应使用 0.3.0 或更高版本；0.2.0 及更早版本存在 OpenAPI 文档生成兼容问题。
+运行服务前，需要准备依赖、服务地址和密钥：
 
-## 服务端示例
+1. **安装依赖。**如果是独立的 uv 项目，可以在项目目录执行：
 
-下面将聊天链发布在 `/joke` 路径。运行前需要配置 `OPENAI_API_KEY`：
+    ```bash
+    uv add "langserve[server]>=0.3.0" langchain-openai uvicorn
+    ```
+
+    `uv add` 会更新项目依赖和锁文件并同步环境。当前学习仓库已有对应依赖，在 `lm-ai-future` 根目录运行 `uv sync` 即可按父项目配置准备环境。
+
+2. **配置模型服务。**示例从环境变量读取地址和密钥。可以在仓库根目录的 `.env` 中填写，也可以在启动前设置同名环境变量：
+
+    ```dotenv
+    DEEPSEEK_BASE_URL=https://api.deepseek.com
+    DEEPSEEK_API_KEY=填写自己的密钥
+    ```
+
+    - `DEEPSEEK_BASE_URL`：模型服务的地址。
+    - `DEEPSEEK_API_KEY`：访问模型服务使用的密钥。
+    - 示例通过 `import core.config` 加载公共配置，其中的 `load_dotenv()` 会读取 `.env`。不要提交真实密钥，也不要把密钥打印到日志中。
+
+3. **检查模型名称。**当前服务端源码将名称写死为 `deepseek-chat`，仅修改环境变量不会改变它。
+    - 如果直连 DeepSeek 官方 API，先将代码中的模型名称改为账号支持的模型，例如官方当前文档列出的 `deepseek-flash`。
+    - 官方公告称 `deepseek-chat` 已于 **2026 年 7 月 24 日 15:59 UTC** 后停用。第三方兼容服务是否支持该名称，应以其文档为准。
+
+### add_routes：发布 Runnable
+
+下面是当前服务端的核心部分，完整示例还包含 CORS 配置和 Uvicorn 启动代码：
 
 ```python
+import os
+
 from fastapi import FastAPI
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langserve import add_routes
 
-app = FastAPI(title="LangServe 示例")
-prompt = ChatPromptTemplate.from_template("讲一个关于 {topic} 的笑话。")
-chain = prompt | ChatOpenAI(model="gpt-4")
+import core.config
 
-add_routes(app, chain, path="/joke")
+app = FastAPI(title="LangChain 服务器")
+llm = ChatOpenAI(
+    model="deepseek-chat",
+    base_url=os.getenv("DEEPSEEK_BASE_URL"),
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+)
+
+add_routes(app, llm, path="/openai")
+add_routes(app, llm | StrOutputParser(), path="/openai_str_parser")
+
+prompt = ChatPromptTemplate.from_template("告诉我一个关于 {topic} 的笑话")
+add_routes(app, prompt | llm, path="/openai_ext")
 ```
 
-例如，将代码保存为 `server.py` 后，在项目根目录运行：
+可以按以下顺序理解这段代码：
+
+1. `app` 是 FastAPI 应用，负责接收客户端请求。
+2. `llm` 是配置好的聊天模型对象，负责调用模型服务。
+3. `add_routes(app, runnable, path=...)` 把模型或处理链挂到指定路径。
+    - `app`：接口属于哪个 Web 应用。
+    - `runnable`：请求到达后执行哪个模型或处理链。
+    - `path`：客户端通过哪个路径访问它。
+4. `prompt | llm` 表示先填充提示词，再将结果传给模型；`llm | StrOutputParser()` 表示先调用模型，再提取文本。
+
+三个路由使用同一个 `llm`，但传给它的内容和处理返回值的方式可以不同。
+
+### 三个路由的输入和输出
+
+1. **`/openai`：直接调用模型。**
+    - 输入：字符串或提示词消息，例如客户端事先准备好的“写一个关于猫的故事”。
+    - 执行：将输入交给 `llm`。
+    - Python 客户端得到：`AIMessage` 消息对象。
+2. **`/openai_str_parser`：调用模型后提取文本。**
+    - 输入：字符串或提示词消息。
+    - 执行：`llm | StrOutputParser()`，先调用模型，再提取文本。
+    - Python 客户端得到：普通字符串。
+3. **`/openai_ext`：先在服务端填充提示词。**
+    - 输入：包含主题的字典，例如 `{"topic": "猫"}`。
+    - 执行：`prompt | llm`，先把主题填入模板，再调用模型。
+    - Python 客户端得到：`AIMessage` 消息对象。
+
+数据经过的步骤如下：
+
+```text
+客户端提示词 → /openai → 模型 → AIMessage
+客户端提示词 → /openai_str_parser → 模型 → StrOutputParser → 字符串
+{topic}     → /openai_ext → 服务端提示词 → 模型 → AIMessage
+```
+
+- `/openai` 的提示词可以由客户端组织；`/openai_ext` 则由服务端把 `topic` 填入“告诉我一个关于 {topic} 的笑话”。
+- 路径名中的 `openai` 只是示例命名，实际模型服务由 `ChatOpenAI` 的配置决定。
+- 聊天模型通常返回 `AIMessage`，可用 `.content` 读取消息正文；经过 `StrOutputParser` 后得到普通字符串，不再有 `.content`。
+- 直接使用 HTTP 时，消息对象在网络中表现为 JSON 对象，而不是 Python 对象。
+
+### 常用端点与接口文档
+
+路径前缀相当于一组接口的共同开头。以 `/openai_ext` 为例，默认注册的常用端点包括：
+
+- `POST /openai_ext/invoke`：执行一次调用，等待完整结果。
+- `POST /openai_ext/batch`：一次提交多个输入，批量处理。
+- `POST /openai_ext/stream`：逐步接收最终输出。
+- `POST /openai_ext/stream_log`：接收运行过程和中间步骤。
+- `POST /openai_ext/stream_events`：接收运行事件。
+- `GET /openai_ext/input_schema`：查看接口要求的输入结构。
+- `GET /openai_ext/output_schema`：查看接口的输出结构。
+
+实际端点以安装版本及 `add_routes()` 的配置为准。当前项目使用的 LangServe 0.3.3 路径为 `/stream_events`；旧资料中出现的 `/astream_events` 不应直接当作当前项目的接口路径。
+
+例如，普通 HTTP 单次调用时，业务输入是 `{"topic": "猫"}`，但发送的请求体还需要在外面包一层 `input`：
+
+```json
+{"input": {"topic": "猫"}}
+```
+
+读取响应时注意：
+
+- `output`：实际输出；`metadata`：本次运行的元信息。
+- `/openai_ext` 的 `output` 是包含 `content` 等字段的消息对象；`/openai_str_parser` 的 `output` 是字符串。
+- 直接发起批量 HTTP 请求时使用 `inputs` 数组，不是单次调用的 `input`。
+
+### 服务启动与安全注意事项
+
+按以下顺序启动：
+
+1. 确认依赖、模型地址、密钥和模型名称已经准备好。
+2. 进入 `lm-ai-future` 根目录，运行已有服务端：
+
+    ```bash
+    uv sync
+    uv run python study/day5-langchain-chat-model/02-langserve/app/server.py
+    ```
+
+3. 服务默认监听 `localhost:8000`。启动后可访问 [http://localhost:8000/docs](http://localhost:8000/docs)，查看接口及实际输入结构。
+4. 保持服务运行，再打开另一个终端运行客户端。首次同步依赖和调用模型可能需要网络；真实模型调用可能产生费用。
+
+- 当前示例没有展示身份认证，CORS 配置也较宽松，只适合本机学习，不应直接暴露到公网。
+- LangServe 0.2.0 及更早版本与 Pydantic 2 组合时可能无法生成 OpenAPI 文档；使用 Pydantic 2 时至少需要 LangServe 0.3.0。
+- LangServe 0.0.13 至 0.0.15 的 Playground 曾存在任意文件访问问题，官方称 0.0.16 已修复；维护旧服务时应检查版本。
+- 官方仓库将服务端事件的客户端回调列为限制，具体支持情况应结合安装版本和配置验证。
+- 每次独立请求不会自动保留上一次对话；需要多轮对话时，应显式提供历史或实现会话管理。
+
+## 二、客户端
+
+### 客户端的作用和调用流程
+
+客户端可以理解为“使用服务的一方”。一次调用通常要做三件事：
+
+1. 准备输入，例如用户给出的主题“猫”。
+2. 选择要调用的服务端接口，发送请求。
+3. 接收结果，并从中取出需要展示的内容。
+
+示例提供两种调用方式：
+
+- `RemoteRunnable`：LangServe 提供的 Python 客户端，适合和 LangChain 组件组合。
+- `requests`：直接发送 HTTP 请求，适合学习请求和响应的具体格式。
+
+```text
+RemoteRunnable → LangServe HTTP 接口 → 还原为 LangChain 对象
+requests       → LangServe HTTP 接口 → 手动解析 JSON / SSE
+```
+
+二者底层都是 HTTP 调用，区别主要是哪些工作由工具封装、哪些需要自己处理。JavaScript 项目还可使用 [LangChain.js 的 LangServe 客户端](https://js.langchain.com/docs/ecosystem/langserve)。
+
+如果 Python 客户端位于单独的 uv 项目，可以按使用方式安装依赖：
 
 ```bash
-uv run uvicorn server:app --reload --port 8000
+uv add "langserve[client]>=0.3.0" langchain-core requests
 ```
 
-## 客户端示例
+以下示例均假设服务端已在本机的 `8000` 端口启动，并使用服务商当前支持的模型配置。
 
-Python 客户端的 `RemoteRunnable` 可以像本地 Runnable 一样调用服务器。将下面代码保存为 `client.py`，并在配置了客户端依赖的 uv 项目根目录中运行：
+### Prompt 创建位置
+
+Prompt（提示词）是发送给模型的任务说明，例如“写一个关于猫的故事”。模板中的 `{topic}` 是占位符，调用时可以用“猫”或其他主题替换。
+
+提示词可以由客户端或服务端准备：
+
+1. **客户端创建提示词：**
+    - 客户端定义模板，把 `{"topic": "猫"}` 填入模板。
+    - 客户端将得到的提示词发送给 `/openai`，服务端再调用模型。
+    - 适合不同客户端需要灵活调整提示词的场景。
+2. **服务端创建提示词：**
+    - 客户端向 `/openai_ext` 发送 `{"topic": "猫"}`。
+    - 服务端把主题填入自己的模板，再调用模型。
+    - 适合多个客户端共用固定提示词、由服务端统一管理的场景。
+
+对照本例，两种数据流分别是：
+
+```text
+客户端创建：主题 → 客户端填充 Prompt → /openai → 模型
+服务端创建：主题 → /openai_ext → 服务端填充 Prompt → 模型
+```
+
+两端也可以分别处理一部分内容，但必须先约定接口的输入结构。例如，本例的 `/openai_ext` 需要包含 `topic` 的字典，不能把客户端生成的 `ChatPromptValue` 直接作为它的输入。
+
+### RemoteRunnable 链式调用
+
+`RemoteRunnable` 把远程服务包装成 Runnable，因此可以使用 `invoke()` 等熟悉的方法。先看服务端负责创建提示词的情况：
 
 ```python
 from langserve import RemoteRunnable
 
-remote_chain = RemoteRunnable("http://localhost:8000/joke/")
-result = remote_chain.invoke({"topic": "猫"})
-print(result)
+remote = RemoteRunnable("http://localhost:8000/openai_ext/", timeout=60)
+result = remote.invoke({"topic": "猫"})
+print(result.content)
 ```
 
-```bash
-uv run python client.py
+这段代码依次完成：
+
+1. 创建 `remote`，指定服务端的 `/openai_ext/` 路径。
+2. 使用 `invoke()` 发送主题；这里直接传业务输入，不需要手动加 HTTP 请求体中的 `input` 外层。
+3. 接收模型返回的 `AIMessage`，通过 `.content` 读取消息正文。
+
+客户端也可以先在本地组织提示词，再把提示词交给远程模型。下面对应示例中的 `/openai` 调用：
+
+```python
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableMap
+from langserve import RemoteRunnable
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是一个喜欢写故事的助手"),
+    ("user", "写一个故事，主题是：{topic}"),
+])
+remote = RemoteRunnable("http://localhost:8000/openai/", timeout=60)
+chain = prompt | RunnableMap({"openai": remote})
+
+result = chain.invoke({"topic": "猫"})
+print(result["openai"].content)
 ```
 
-也可以直接使用 HTTP API；JavaScript 项目可使用 [LangChain.js 的 LangServe 客户端](https://js.langchain.com/docs/ecosystem/langserve)。
+这段代码的调用过程是：
 
-## 常用端点与文档
+1. `prompt` 定义系统消息和用户消息，并将 `topic` 留作占位符。
+2. `remote` 指向服务端的 `/openai/`，它只负责远程调用。
+3. `prompt | RunnableMap({"openai": remote})` 将提示词模板和远程调用组合成一条链。
+4. `chain.invoke({"topic": "猫"})` 先填充提示词，再请求服务端的 `/openai/invoke`。
+5. `RunnableMap` 按分支名收集结果，得到类似 `{"openai": AIMessage(...)}` 的字典；`openai` 是客户端定义的键。
+6. `result["openai"].content` 读取消息正文。
 
-`add_routes(app, chain, path="/joke")` 会为该 Runnable 添加常用端点：
+如果将远程路径改为 `/openai_str_parser/`，则 `result["openai"]` 是字符串，应直接使用，不能再读取 `.content`。
 
-| 端点 | 用途 |
-| --- | --- |
-| `POST /joke/invoke` | 调用单个输入 |
-| `POST /joke/batch` | 批量调用 |
-| `POST /joke/stream` | 流式接收输出 |
-| `POST /joke/stream_log` | 流式接收运行过程和中间步骤 |
-| `POST /joke/astream_events` | 流式接收运行事件 |
-| `GET /joke/input_schema`、`/joke/output_schema` | 查看输入和输出 JSON Schema |
+### requests HTTP 调用
 
-FastAPI 的交互式文档默认位于 [http://localhost:8000/docs](http://localhost:8000/docs)。
+`requests` 不会替你创建 LangChain 链，需要自己写完整接口地址和请求体。下面调用同一个 `/openai_ext`，可以和前面的 `RemoteRunnable` 示例对照：
 
-## 版本与限制
+```python
+import requests
 
-- LangServe 0.2.0 及更早版本与 Pydantic 2 的组合可能无法生成 OpenAPI 文档；使用 Pydantic 2 时至少需要 LangServe 0.3.0。
-- LangServe 不支持由服务器发起的客户端回调。
-- LangServe 0.0.13 至 0.0.15 曾存在 Playground 任意文件访问问题，官方称 0.0.16 已修复；维护旧服务时应确认版本不在受影响范围。
-- LangServe 已停止维护；新项目尤其是 LangGraph 应用，应优先采用官方推荐的 LangGraph Platform。更多背景见 [LangServe 官方仓库](https://github.com/langchain-ai/langserve) 和 [迁移说明](https://github.com/langchain-ai/langserve/blob/main/MIGRATION.md)。
+response = requests.post(
+    "http://localhost:8000/openai_ext/invoke",
+    json={"input": {"topic": "猫"}},
+    timeout=60,
+)
+response.raise_for_status()
+result = response.json()
+print(result["output"]["content"])
+```
+
+这段代码依次完成：
+
+1. 向 `/openai_ext/invoke` 发送 POST 请求，并用 `json` 参数提供请求体。
+2. 请求体中的 `input` 是 LangServe 的外层字段，里面的 `topic` 才是业务输入。
+3. `raise_for_status()` 在 HTTP 状态表示失败时抛出异常。
+4. `response.json()` 将响应体转换为 Python 数据，再用 `result["output"]["content"]` 读取消息正文。实际模型回复随请求而变化。
+
+### 两种调用方式对比
+
+- **使用 `RemoteRunnable`：**
+    - 地址写到路径前缀，例如 `/openai_ext/`；调用方法决定请求哪个端点。
+    - 直接传业务输入，例如 `{"topic": "猫"}`。
+    - 工具会将可识别的消息还原为 LangChain 对象，也可以通过 `|` 与其他 Runnable 组合。
+    - 适合已经使用 LangChain 的 Python 客户端。
+- **使用 `requests`：**
+    - 自己写完整端点，例如 `/openai_ext/invoke`。
+    - 自己构造 `{"input": ...}` 等请求体。
+    - 自己解析 JSON；流式场景还要处理 SSE 事件。
+    - 适合学习 HTTP 请求，或参考这种方式使用其他语言调用服务。
+
+如果一个示例调用 `/openai` 写故事、另一个调用 `/openai_ext` 讲笑话，内容不同主要是**路由和提示词不同**，不能归因于客户端工具不同。
+
+### 同步、批量与流式调用
+
+根据希望如何接收结果，可以选择：
+
+1. `invoke()`：调用一次，等待完整结果。
+2. `batch()`：提交多个输入，得到对应的多个结果。
+3. `stream()`：调用一次，逐步接收输出片段。
+
+下面的 `RemoteRunnable` 批量调用会产生多次模型调用：
+
+```python
+from langserve import RemoteRunnable
+
+remote = RemoteRunnable("http://localhost:8000/openai_ext/", timeout=60)
+results = remote.batch([{"topic": "猫"}, {"topic": "狗"}])
+for result in results:
+    print(result.content)
+```
+
+流式调用同样直接传一个业务输入；`chunk` 是输出片段，可能为空，不应假设每个片段都有文本：
+
+```python
+from langserve import RemoteRunnable
+
+remote = RemoteRunnable("http://localhost:8000/openai_ext/", timeout=60)
+for chunk in remote.stream({"topic": "猫"}):
+    print(chunk.content, end="", flush=True)
+```
+
+如果直接使用 `requests` 调用 `/stream`，需要设置 `stream=True` 并解析 SSE 事件。以下示例针对本项目的文本消息，只打印 `data` 事件中的文本：
+
+```python
+import json
+
+import requests
+
+with requests.post(
+    "http://localhost:8000/openai_ext/stream",
+    json={"input": {"topic": "猫"}},
+    stream=True,
+    timeout=60,
+) as response:
+    response.raise_for_status()
+    event = ""
+    for line in response.iter_lines(decode_unicode=True):
+        if line.startswith("event:"):
+            event = line[len("event:"):].strip()
+        elif line.startswith("data:") and event == "data":
+            chunk = json.loads(line[len("data:"):])
+            print(chunk.get("content", ""), end="", flush=True)
+        elif not line:
+            event = ""
+```
+
+理解这个流式示例时，可以先记住：
+
+- SSE 使用 `event` 区分数据、元信息、结束等事件，`data` 保存事件内容。
+- `stream=True` 使 `requests` 不必先下载完整响应，但不保证服务端一定及时产生数据。
+- 上面的代码不是通用 SSE 客户端；实际项目还应处理错误事件、连接中断和非文本内容。
+
+### 常见问题与排查
+
+- **连接失败：**检查服务是否启动、端口是否为 `8000`、服务和客户端是否在同一台机器。
+- **模型调用失败：**检查模型名称、服务地址、密钥、账号权限和服务商状态。
+- **HTTP 422：**检查请求体的 `input` 是否符合目标路由的输入结构。
+- **字符串没有 `.content`：**检查是否调用了返回字符串的 `/openai_str_parser`。
+- **列表被当成单个主题：**单次调用传字典；多个输入使用 `batch()`。
+
+特别注意：在示例的单变量 `ChatPromptTemplate` 上游使用 `chain.invoke([{"topic": "猫"}])` 时，整个列表会作为 `topic` 的值，而不是批量调用。原客户端代码使用了这一形式，学习时应改为 `chain.invoke({"topic": "猫"})`；批量调用则使用 `chain.batch([{"topic": "猫"}])`。
+
+**参考资料：**[LangServe 官方仓库](https://github.com/langchain-ai/langserve)、[迁移说明](https://github.com/langchain-ai/langserve/blob/main/MIGRATION.md)、[DeepSeek 旧模型停用公告](https://api-docs.deepseek.com/news/news260424)、[DeepSeek API 接入说明](https://api-docs.deepseek.com/quick_start/pricing)、[Requests 高级用法](https://requests.readthedocs.io/en/latest/user/advanced/)。
 
 
 # 跑通最简单的 Agent
