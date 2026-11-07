@@ -4266,6 +4266,249 @@ with requests.post(
 **参考资料：**[LangServe 官方仓库](https://github.com/langchain-ai/langserve)、[迁移说明](https://github.com/langchain-ai/langserve/blob/main/MIGRATION.md)、[DeepSeek 旧模型停用公告](https://api-docs.deepseek.com/news/news260424)、[DeepSeek API 接入说明](https://api-docs.deepseek.com/quick_start/pricing)、[Requests 高级用法](https://requests.readthedocs.io/en/latest/user/advanced/)。
 
 
+# LangChain 实战
+
+## 多轮对话：对话历史与会话隔离
+
+### 实战目标
+
+聊天模型不会因为上一次回答过问题，就自动在下一次调用时知道那次对话。要让它理解“它什么时候会学到？”中的“它”，应用需要把前面讨论余弦的消息再次提供给模型。
+
+本节结合[原学习文档](docs/learn/day5-%20LangChain%20Chat%20Model.md)和本地示例，依次学习：
+
+1. 手动将历史消息放入提示词。
+2. 使用 `RunnableWithMessageHistory` 在内存中自动管理历史。
+3. 使用用户 ID 和会话 ID 区分不同对话。
+4. 将历史改为保存在 Redis 中。
+
+这里的“记忆”是应用保存并重新提供消息，不是修改模型参数。自动管理历史时，一次调用大致经过：
+
+1. 根据会话标识找到对应的历史记录。
+2. 将历史消息放入提示词的 `history` 位置。
+3. 加入当前用户输入，调用模型。
+4. 调用成功结束后，将本次输入和模型回复加入历史，供下次使用。
+
+> 本节使用已有示例中的 `RunnableWithMessageHistory` 学习旧版链式用法。LangChain 官方已将其列为弃用，并推荐新应用使用 LangGraph 持久化机制；具体警告取决于安装版本。使用前还应查看文末的安全和版本注意事项。
+
+### 手动传入历史
+
+对应代码：[01-chat_history_chain.py](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/01-chat_history_chain.py)。
+
+先准备一条公共链。请先按照本节末尾的“运行与注意事项”配置模型；后面的内存、多字段和 Redis 示例分别沿用这段代码中的 `runnable`。
+
+```python
+import os
+
+import core.config
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_openai import ChatOpenAI
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "你擅长{ability}，请简洁回答。"),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{input}"),
+])
+
+model = ChatOpenAI(
+    model=os.environ["DEEPSEEK_MODEL"],
+    base_url=os.environ["DEEPSEEK_BASE_URL"],
+    api_key=os.environ["DEEPSEEK_API_KEY"],
+)
+runnable = prompt | model
+```
+
+在公共链之后加入下面的代码，即可手动传入一段历史：
+
+```python
+response = runnable.invoke({
+    "ability": "数学",
+    "history": [
+        ("human", "余弦是什么意思？"),
+        ("ai", "余弦是一种三角函数。"),
+    ],
+    "input": "它什么时候会学到？",
+})
+print(response.content)
+```
+
+- `ChatPromptTemplate` 负责组织消息；`MessagesPlaceholder("history")` 为历史消息预留位置。
+- `prompt | model` 表示先生成提示消息，再调用模型。
+- `ability` 填充系统提示词，`history` 是已有消息，`input` 是本次问题。
+- 这里的历史由调用方提供，普通 `runnable` 不会自动保存本次对话。
+- 原代码中的 `"系统：..."` 是普通字符串，默认会作为用户消息；文字写了“系统”并不会自动改变消息角色。需要系统指令时，应明确使用 `("system", "...")`。
+
+### 内存保存历史
+
+对应代码：[02-chat_history_memory.py](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/02-chat_history_memory.py)。下面的片段可以单独接在公共链之后运行：
+
+```python
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+
+store = {}
+
+def get_session_history(session_id):
+    if session_id not in store:
+        store[session_id] = ChatMessageHistory()
+    return store[session_id]
+
+with_history = RunnableWithMessageHistory(
+    runnable,
+    get_session_history,
+    input_messages_key="input",
+    history_messages_key="history",
+)
+
+config = {"configurable": {"session_id": "abc123"}}
+first = with_history.invoke(
+    {"ability": "数学", "input": "余弦是什么意思？"},
+    config=config,
+)
+second = with_history.invoke(
+    {"ability": "数学", "input": "它什么时候会学到？"},
+    config=config,
+)
+other = with_history.invoke(
+    {"ability": "数学", "input": "我刚才问了什么？"},
+    config={"configurable": {"session_id": "def234"}},
+)
+
+print(first.content)
+print(second.content)
+print(other.content)
+for message in store["abc123"].messages:
+    print(message.type, message.content)
+```
+
+关键组件的职责：
+
+- `store`：以会话 ID 为键，在当前进程中保存各自的历史对象。
+- `get_session_history()`：有历史时返回已有对象，没有时创建一个。
+- `input_messages_key="input"`：指定本次用户消息来自哪个输入字段。
+- `history_messages_key="history"`：指定历史注入提示词的哪个字段，需与 `MessagesPlaceholder` 的名称一致。
+- `configurable.session_id`：决定读取和保存哪一份历史；它默认不作为消息内容发送给模型。
+
+前两次使用 `abc123`，第二次会带上第一次的消息；第三次使用新的 `def234`，不会读取 `abc123` 的历史。模型的具体回复并不固定。内存字典只属于当前进程，程序退出后不能依靠它恢复历史。
+
+### 多字段区分会话
+
+对应代码：[02-chat_history_config.py](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/02-chat_history_config.py)。一个用户可能同时有多段对话，这时可以用 `(user_id, conversation_id)` 共同作为键。
+
+下面的片段可以单独接在公共链之后运行：
+
+```python
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.runnables import ConfigurableFieldSpec
+from langchain_core.runnables.history import RunnableWithMessageHistory
+
+user_store = {}
+
+def get_user_history(user_id, conversation_id):
+    key = (user_id, conversation_id)
+    if key not in user_store:
+        user_store[key] = ChatMessageHistory()
+    return user_store[key]
+
+with_history = RunnableWithMessageHistory(
+    runnable,
+    get_user_history,
+    input_messages_key="input",
+    history_messages_key="history",
+    history_factory_config=[
+        ConfigurableFieldSpec(id="user_id", annotation=str, is_shared=True),
+        ConfigurableFieldSpec(id="conversation_id", annotation=str, is_shared=True),
+    ],
+)
+
+first_chat = {"configurable": {"user_id": "123", "conversation_id": "1"}}
+second_chat = {"configurable": {"user_id": "123", "conversation_id": "2"}}
+
+with_history.invoke({"ability": "数学", "input": "余弦是什么意思？"}, config=first_chat)
+reply = with_history.invoke({"ability": "数学", "input": "我刚才问了什么？"}, config=first_chat)
+other = with_history.invoke({"ability": "数学", "input": "我刚才问了什么？"}, config=second_chat)
+
+print(reply.content)
+print(other.content)
+print(list(user_store.keys()))
+```
+
+1. `history_factory_config` 声明获取历史时需要的字段，字段 `id` 与 `get_user_history()` 的参数名对应。
+2. `("123", "1")` 对应第一段对话，重复使用这一组合会读取同一份历史。
+3. `("123", "2")` 是同一用户的另一段对话，使用不同的历史。
+4. 原示例的第三次调用改变的是 `conversation_id`，不是 `user_id`。
+
+### Redis 保存历史
+
+对应代码：[chat_history_redis.py](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/chat_history_redis.py)。Redis 存在应用进程之外；当应用重启后，只要 Redis 中的记录仍然存在，就可以重新读取。
+
+先确保 Redis 服务可用并安装 Python 的 `redis` 包，再将下面的片段单独接在公共链之后运行：
+
+```python
+from langchain_community.chat_message_histories import RedisChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+
+def get_message_history(session_id):
+    return RedisChatMessageHistory(
+        session_id=session_id,
+        url="redis://localhost:6379/0",
+    )
+
+with_history = RunnableWithMessageHistory(
+    runnable,
+    get_message_history,
+    input_messages_key="input",
+    history_messages_key="history",
+)
+
+config = {"configurable": {"session_id": "abc123"}}
+response = with_history.invoke(
+    {"ability": "数学", "input": "余弦是什么意思？"},
+    config=config,
+)
+print(response.content)
+
+for message in get_message_history("abc123").messages:
+    print(message.type, message.content)
+```
+
+- `redis://localhost:6379/0` 连接本机 Redis，`/0` 是数据库编号。
+- 同一个 `session_id` 会读取已有记录；如果该 ID 曾经使用过，结果可能包含更早的消息。
+- 原 Redis 示例中的 `store = {}` 没有参与历史存储，实际使用的是 Redis。
+- 当前 community 实现默认把 `abc123` 保存到 `message_store:abc123`。如果 Redis 运行在下面示例创建的 Docker 容器中，可以只读查询：
+
+```bash
+docker exec langchain-redis redis-cli -n 0 LRANGE message_store:abc123 0 -1
+```
+
+直接查看 Redis 列表时，新消息在前；通过 `history.messages` 读取时，消息按时间顺序返回。
+
+### 运行与注意事项
+
+**运行准备：**
+
+1. 在 `lm-ai-future` 项目根目录执行 `uv sync`，准备项目依赖。
+2. 在项目根目录的 `.env` 或启动程序的终端中设置 `DEEPSEEK_BASE_URL`、`DEEPSEEK_API_KEY` 和 `DEEPSEEK_MODEL`。其中 `DEEPSEEK_MODEL` 是本节示例新增的变量，应填写所用服务商支持的模型名称；`core.config` 会加载默认 `.env`。不要提交真实密钥。
+3. 将公共链代码与所需的一个实践片段放在同一个 Python 程序中运行。调用真实模型需要网络，可能产生费用。
+4. Redis 示例还需要 `redis` 包和 Redis 服务。项目未直接声明 `redis`；如决定将它加入项目，可以运行 `uv add redis`，该命令会更新项目依赖和锁文件。
+5. 如果没有 Redis 服务，可以在本机运行以下学习用容器；该命令只将端口绑定到本机，且没有配置持久化卷：
+
+    ```bash
+    docker run -d --name langchain-redis -p 127.0.0.1:6379:6379 redis/redis-stack:latest
+    ```
+
+**版本与安全：**
+
+- 原代码中的手动历史和多字段示例将模型写死为 `deepseek-chat`；内存和 Redis 示例使用 `gpt-4`，且没有导入 `core.config`。不同脚本的密钥加载和模型配置不能混为一谈。
+- 本地 `langchain-community` 0.4.2 导入时可能提示停止维护；这是依赖维护提示，不代表示例已经执行失败。新项目应参考官方迁移说明选择独立集成包。
+- DeepSeek 官方已于 **2026 年 7 月 24 日 15:59 UTC** 停用 `deepseek-chat`；第三方兼容服务是否仍支持该名称，以其文档为准。本节用 `DEEPSEEK_MODEL` 避免将模型名称写死。
+- **2026 年 11 月 7 日检查时，本地 `langchain-core` 为 1.6.1，处于官方安全公告的受影响范围。** 使用旧版 `RunnableWithMessageHistory` 前，应评估兼容性并升级到公告列出的修复版本（1.6 系列为 1.6.3 或更高），不要将不可信消息或历史数据直接交给受影响版本；本文不会自动修改项目依赖。
+- `session_id` 只用于定位历史，不是身份验证；实际应用需要校验用户对会话的访问权限。
+- Redis 数据能否在服务重启或容器删除后保留，取决于持久化和存储配置，不能仅因使用 Redis 就认为数据永久保存。
+- 历史越长，发送给模型的上下文和费用通常越大；实际应用需要考虑裁剪或摘要。模型回复也可能不准确，不能仅以回复判断历史是否保存，应同时检查历史消息。
+
+**参考资料：**[RunnableWithMessageHistory 参考](https://reference.langchain.com/python/langchain-core/runnables/history/RunnableWithMessageHistory)、[LangGraph 短期记忆](https://docs.langchain.com/oss/python/langchain/short-term-memory)、[LangChain 安全公告](https://github.com/langchain-ai/langchain/security/advisories/GHSA-38r9-2rjx-5w3g)、[Redis 持久化](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)。
+
+
 # 跑通最简单的 Agent
 
 ## 背景
