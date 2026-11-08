@@ -3498,6 +3498,236 @@ print(safe_parser.invoke("invalid"))
 
 参考：LangChain 官方 Runnable API、RunnableBranch API 与 RunnablePassthrough 源码；示例用于说明数据流，不依赖模型服务。
 
+## 对话历史 API
+
+### 1. 概念
+
+聊天模型不会自动保存前一次请求中的对话。要实现多轮对话，应用需要保存历史消息，并在后续调用时再次传给模型。
+
+本节介绍两种职责不同的对象：
+
+- `ChatMessageHistory`：保存一份聊天消息，负责存储和读取。
+- `RunnableWithMessageHistory`：包装已有的 Runnable，负责在调用时读取历史，并在调用完成后更新历史。
+
+两者之间还需要一个由开发者编写的 `get_session_history()` 函数：它根据会话标识找到对应的历史对象。历史消息如何插入提示词，参见前面的 `MessagesPlaceholder` 介绍。
+
+一次多轮对话的大致过程：
+
+1. 调用方传入当前问题和会话 ID。
+2. 包装器调用 `get_session_history()`，取得该会话的历史。
+3. 包装器将历史传给原始链，原始链再调用模型。
+4. 原始链成功结束后，包装器把当前用户消息和模型回复加入历史。
+
+> `RunnableWithMessageHistory` 已被官方标记为弃用，本节用于理解和维护旧版链式示例。新应用可参考 LangGraph 的持久化机制；相关安全注意事项见后面的多轮对话实战。
+
+### 2. 使用场景
+
+- **多轮问答**：让模型在回答当前问题时能够参考同一会话中的前文。
+- **会话隔离**：为不同会话获取不同的历史对象，避免混用对话。
+- **本地学习**：使用内存保存历史，不需要数据库；但程序退出后通常不能恢复。
+- **单次独立问答**：如果不需要上下文，可以直接调用原始链，不一定需要历史管理。
+
+### 3. API 说明
+
+#### `ChatMessageHistory`
+
+`ChatMessageHistory` 是用于在**内存**中保存聊天消息的类。当前示例从 `langchain_community.chat_message_histories` 导入它；在项目使用的版本中，它是 `InMemoryChatMessageHistory` 的别名。调用 `ChatMessageHistory()` 会创建历史对象，消息保存在对象的 `messages` 列表中。
+
+| 操作 | 作用 |
+| --- | --- |
+| `ChatMessageHistory()` | 创建一份空的历史记录 |
+| `history.add_messages(messages)` | 按顺序添加消息对象 |
+| `history.messages` | 读取消息列表 |
+| `history.clear()` | 清空这份历史记录 |
+
+每个对象只负责保存自己的一份消息，不会自动决定它属于哪个用户或会话。示例通过字典建立 `session_id` 与历史对象的对应关系；历史只保存在当前进程内。
+
+**历史对象在会话字典中是什么样的？**
+
+下面以多字段会话为例，创建一个空历史对象并放入字典：
+
+```python
+from langchain_community.chat_message_histories import ChatMessageHistory
+
+store = {}
+store[("123", "1")] = ChatMessageHistory()
+print(store)
+```
+
+在当前项目的版本中，输出为：
+
+```text
+{('123', '1'): InMemoryChatMessageHistory(messages=[])}
+```
+
+- `('123', '1')` 是字典的键，分别表示用户 ID 和会话 ID。
+- `InMemoryChatMessageHistory(...)` 是创建出的历史对象。虽然代码使用 `ChatMessageHistory()`，打印时会显示原始类名，因为两者是同一个类。
+- `messages=[]` 表示对象刚创建，还没有保存任何消息；`messages` 是对象内部的列表，而不是整个历史对象。
+
+在[多字段会话的原始代码](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/02-chat_history_config.py)中，`print(store)` 紧跟对象创建，因此此时看到的是空列表。这个打印只在创建新会话时执行；再次使用已有会话不会进入创建分支。
+
+后续通过 `RunnableWithMessageHistory` 调用链并成功结束后，可以再次打印 `store` 查看更新。下面的内容仅作示意，模型回复和消息元数据以实际运行为准，`...` 表示省略的字段：
+
+```text
+{
+    ('123', '1'): InMemoryChatMessageHistory(messages=[
+        HumanMessage(content='余弦是什么意思？', ...),
+        AIMessage(content='余弦是一种三角函数。', ...),
+    ])
+}
+```
+
+字典保存的是历史对象的引用；消息追加到这个对象后，通过同一个字典键读取时就能看到更新，不需要另建对象。创建 `ChatMessageHistory()` 本身不会生成对话内容。
+
+#### `RunnableWithMessageHistory`
+
+`RunnableWithMessageHistory` 是为已有 Runnable 增加对话历史管理能力的包装器。它不负责生成回答，也不是存储本身；它负责在调用前取出历史，在调用结束后将本轮消息写回历史对象。
+
+要使用它，需要准备：
+
+- **原始 Runnable**：处理当前输入并返回结果，例如提示模板和聊天模型组成的 `prompt | model`。
+- **历史对象**：保存、读取和更新消息，例如内存中的 `InMemoryChatMessageHistory`。
+- **历史获取函数**：由开发者编写，根据会话标识返回对应的历史对象。
+- **历史占位符**：如果提示模板将历史和当前问题放在不同字段，可使用 `MessagesPlaceholder` 指定历史消息的插入位置。
+
+**常用参数：**
+
+- `runnable`：需要包装的原始 Runnable。
+- `get_session_history`：获取历史对象的函数，通常接收会话 ID。
+- `input_messages_key`：当输入为字典时，指定本轮用户消息所在的字段。
+- `history_messages_key`：当历史和本轮消息使用不同字段时，指定历史字段；它应与提示模板中的占位符名称一致。
+- `output_messages_key`：当原始 Runnable 返回字典时，可用于指定包含输出消息的字段。
+- `history_factory_config`：可选，用于自定义历史获取函数需要的配置字段，例如使用用户 ID 与会话 ID 共同定位历史。
+
+默认情况下，调用包装器时通过 `config={"configurable": {"session_id": "会话标识"}}` 选择会话。会话标识用于查找历史，不会因为写在配置中就自动成为一条聊天消息。
+
+**一次调用的过程：**
+
+1. 包装器读取会话配置，调用历史获取函数，取得该会话的历史对象。
+2. 包装器读取历史消息，并按配置将其传给原始 Runnable。
+3. 原始 Runnable 处理本轮输入，例如由提示模板组织消息，再交给模型生成回复。
+4. 原始 Runnable 正常结束且历史写入成功时，包装器将本轮输入和输出加入历史对象。
+5. 调用方取得原始 Runnable 的输出；历史消息则保存在历史对象中，供后续调用使用。
+
+如果本轮输入是普通字符串，包装器会将其转换为 `HumanMessage`；如果输出是普通字符串，会将其转换为 `AIMessage`。若输入或输出本身已经是消息对象，则按消息对象处理。
+
+**为什么没有手动调用 `add_messages()` 也能保存？**
+
+- 使用包装器时，业务代码通常不需要再手动调用 `add_messages()`：包装器会在原始 Runnable 结束时处理本轮消息。
+- 以 `langchain-core` 1.6.1 的同步实现为例，包装器为原始 Runnable 注册 `on_end` 回调；结束后，内部的 `_exit_history()` 会调用历史对象的 `add_messages()`。这些内部方法属于实现细节，不同版本可能变化。
+- 对于内存历史对象，消息最终被追加到其 `messages` 列表。会话字典保存的是历史对象的引用，因此通过同一个键读取时可以看到更新，无需另建对象或手动同步字典。
+
+```text
+invoke() → 获取历史对象 → 读取历史并执行原始 Runnable
+         → 结束回调 → add_messages(本轮输入和输出) → 更新历史对象
+```
+
+**通用示例：**
+
+下面使用固定回复模拟模型，不需要 API Key，也不会请求外部服务。它演示历史如何注入和保存，而不是演示模型理解能力。
+
+```python
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.messages import AIMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables.history import RunnableWithMessageHistory
+
+histories = {}
+received_messages = []
+
+def get_history(session_id):
+    if session_id not in histories:
+        histories[session_id] = InMemoryChatMessageHistory()
+    return histories[session_id]
+
+def fake_model(prompt_value):
+    received_messages.append(prompt_value.to_messages())
+    return AIMessage(content="收到。")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是一个助手。"),
+    MessagesPlaceholder("history"),
+    ("human", "{question}"),
+])
+chain = prompt | RunnableLambda(fake_model)
+
+with_history = RunnableWithMessageHistory(
+    chain,
+    get_history,
+    input_messages_key="question",
+    history_messages_key="history",
+)
+
+config = {"configurable": {"session_id": "session-1"}}
+with_history.invoke({"question": "我叫小明"}, config=config)
+with_history.invoke({"question": "我叫什么？"}, config=config)
+
+print("第二次传给模型的消息：")
+for message in received_messages[1]:
+    print(message.type, message.content)
+
+print("保存的历史消息：")
+for message in histories["session-1"].messages:
+    print(message.type, message.content)
+```
+
+运行后的标准输出如下；部分版本还可能显示弃用提示：
+
+```text
+第二次传给模型的消息：
+system 你是一个助手。
+human 我叫小明
+ai 收到。
+human 我叫什么？
+保存的历史消息：
+human 我叫小明
+ai 收到。
+human 我叫什么？
+ai 收到。
+```
+
+- 第二次调用使用相同会话 ID，因此模拟模型收到第一次对话和本轮问题。
+- 历史对象中保存了两轮用户消息及回复；系统消息由提示模板提供，不在此例的历史列表中。
+- 模拟模型始终返回“收到。”，因此不能用它判断模型是否真正理解了上下文。
+
+**注意事项：**
+
+- 历史获取函数需要根据会话标识正确返回对应记录；会话 ID 不是身份认证，应用仍需校验访问权限。
+- 内存历史随进程结束而丢失；需要跨重启保留时，应使用合适的持久化存储。
+- 原始 Runnable 失败或历史写入异常时，本轮记录可能无法保存；不要仅凭模型回复断定历史已经写入。
+- 历史消息会增加模型输入长度，应根据需要进行裁剪或摘要。
+- `RunnableWithMessageHistory` 已被官方标记为弃用；它适合学习或维护旧版链式用法，新应用可参考 LangGraph 的持久化机制。
+
+### 4. 示例
+
+下面只操作一份内存历史，不需要模型服务或 API Key：
+
+```python
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.messages import AIMessage, HumanMessage
+
+history = ChatMessageHistory()
+history.add_messages([
+    HumanMessage(content="我叫小明"),
+    AIMessage(content="你好，小明！"),
+])
+
+for message in history.messages:
+    print(message.type, message.content)
+```
+
+输出为：
+
+```text
+human 我叫小明
+ai 你好，小明！
+```
+
+这个例子只展示如何保存和读取消息，并没有调用模型，也没有自动区分多个会话。完整的包装和会话隔离过程参见[内存保存历史实战](#内存保存历史)。
+
+参考：[InMemoryChatMessageHistory](https://reference.langchain.com/python/langchain-core/chat_history/InMemoryChatMessageHistory)、[RunnableWithMessageHistory](https://reference.langchain.com/python/langchain-core/runnables/history/RunnableWithMessageHistory)。
+
 ## 工具
 
 工具为 LangChain 应用提供搜索、计算或访问外部系统等能力。将工具实例传入 `create_agent()` 的 `tools` 参数后，Agent 可以根据用户问题决定是否调用工具。
@@ -4339,7 +4569,7 @@ print(response.content)
 
 ### 内存保存历史
 
-对应代码：[02-chat_history_memory.py](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/02-chat_history_memory.py)。下面的片段可以单独接在公共链之后运行：
+对应代码：[02-chat_history_memory.py](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/02-chat_history_memory.py)。`ChatMessageHistory` 和 `RunnableWithMessageHistory` 的职责及参数见前面的[对话历史 API](#对话历史-api)。下面的片段可以单独接在公共链之后运行：
 
 ```python
 from langchain_community.chat_message_histories import ChatMessageHistory
@@ -4380,15 +4610,14 @@ for message in store["abc123"].messages:
     print(message.type, message.content)
 ```
 
-关键组件的职责：
+运行过程可以这样理解：
 
-- `store`：以会话 ID 为键，在当前进程中保存各自的历史对象。
-- `get_session_history()`：有历史时返回已有对象，没有时创建一个。
-- `input_messages_key="input"`：指定本次用户消息来自哪个输入字段。
-- `history_messages_key="history"`：指定历史注入提示词的哪个字段，需与 `MessagesPlaceholder` 的名称一致。
-- `configurable.session_id`：决定读取和保存哪一份历史；它默认不作为消息内容发送给模型。
+1. 第一次使用 `abc123` 时，`get_session_history()` 在 `store` 中创建对应的历史对象。
+2. 第二次继续使用 `abc123`，会带上第一次保存的用户消息和模型回复。
+3. 第三次使用新的 `def234`，会创建另一份历史，不会读取 `abc123` 的内容。
+4. 最后的循环打印 `abc123` 中保存的消息，方便检查历史是否被更新。
 
-前两次使用 `abc123`，第二次会带上第一次的消息；第三次使用新的 `def234`，不会读取 `abc123` 的历史。模型的具体回复并不固定。内存字典只属于当前进程，程序退出后不能依靠它恢复历史。
+模型的具体回复并不固定；内存字典只属于当前进程，程序退出后不能依靠它恢复历史。
 
 ### 多字段区分会话
 
