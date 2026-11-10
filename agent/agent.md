@@ -4737,6 +4737,95 @@ docker exec langchain-redis redis-cli -n 0 LRANGE message_store:abc123 0 -1
 
 **参考资料：**[RunnableWithMessageHistory 参考](https://reference.langchain.com/python/langchain-core/runnables/history/RunnableWithMessageHistory)、[LangGraph 短期记忆](https://docs.langchain.com/oss/python/langchain/short-term-memory)、[LangChain 安全公告](https://github.com/langchain-ai/langchain/security/advisories/GHSA-38r9-2rjx-5w3g)、[Redis 持久化](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)。
 
+## Token 估算、用量统计与上下文预算
+
+### 实战目标
+
+多轮对话会把系统提示词、历史消息和当前问题一起发送给模型，Agent 还可能多次调用模型。因此需要区分三件事：
+
+| 方式 | 得到什么 | 适合做什么 |
+| --- | --- | --- |
+| 本地 Tokenizer 估算 | 给定文本的大致 Token 数 | 调用前估算、制定上下文预算 |
+| 模型响应中的用量 | 服务端报告的本次输入、输出 Token 数 | 统计真实请求用量 |
+| 费用计算 | 根据服务商定价和 Token 分类换算的金额 | 成本核算；必须核对服务商价格 |
+
+本地估算不一定等于模型服务端的计数；费用也不能只凭 Token 总数推断，因为输入、输出、缓存和推理 Token 可能采用不同价格。需要精确记录时，以服务商返回的用量和当前价格说明为准。
+
+### 使用 `tiktoken` 估算文本
+
+`tiktoken` 是 OpenAI 模型使用的 Tokenizer。对它已识别的模型，可以通过 `encoding_for_model()` 取得对应编码，并统计一段文本：
+
+```python
+import tiktoken
+
+encoding = tiktoken.encoding_for_model("gpt-4o")
+text = "LangChain 会将提示词和消息交给聊天模型处理。"
+token_ids = encoding.encode(text)
+
+print(token_ids)
+print(len(token_ids))
+```
+
+`encode()` 接收文本字符串并返回 Token ID 列表；列表长度就是该编码下这段文本的 Token 数。不同模型可能使用不同编码，不能用字符数或固定的“每个汉字约等于几个 Token”代替实际统计。
+
+对于 `tiktoken` 不认识的第三方模型，应优先使用服务商提供的 Tokenizer 或计数接口。仓库中的 DeepSeek 示例手动选择 `cl100k_base`，只能作为本地估算练习，不能据此断言与服务端计数完全一致；DeepSeek 官方也提供自己的 Tokenizer，并明确说明估算可能与实际处理用量略有差异，应以 API 返回的用量为准。
+
+### 查看模型返回的实际用量
+
+若模型服务在响应中提供用量，LangChain 聊天模型通常会将其规范化到 `AIMessage.usage_metadata`。假设 `llm` 是已经配置好的聊天模型：
+
+```python
+response = llm.invoke("用一句话解释 Token。")
+usage = response.usage_metadata
+
+if usage:
+    print("输入 Token：", usage["input_tokens"])
+    print("输出 Token：", usage["output_tokens"])
+    print("总 Token：", usage["total_tokens"])
+else:
+    print("当前集成未返回规范化用量：", response.response_metadata)
+```
+
+也可以检查集成保留的响应元数据，例如 `response.response_metadata.get("token_usage")`。字段结构取决于模型集成和服务商；使用 OpenAI 兼容接口时，也应确认实际响应包含用量字段且当前集成能够读取。官方 `ChatOpenAI` 文档将其支持范围限定为 OpenAI API 规范，并建议对 DeepSeek 等服务使用对应的 LangChain 集成。项目中的兼容接口示例用于学习时，应验证实际返回的用量字段。
+
+流式调用的用量通常要等到最后的数据块才可取得。`ChatOpenAI` 可通过 `stream_usage=True` 请求流式用量；自定义 `base_url` 时该选项默认不启用，且服务商必须支持该能力。
+
+### 汇总多次模型调用
+
+Agent 可能在一次任务中多次请求模型。`get_usage_metadata_callback()` 会汇总其作用范围内、且提供 `usage_metadata` 的聊天模型调用：
+
+```python
+from langchain_core.callbacks import get_usage_metadata_callback
+
+with get_usage_metadata_callback() as usage_callback:
+    llm.invoke("先回答一个简单问题。")
+    llm.invoke("再回答第二个问题。")
+
+print(usage_callback.usage_metadata)
+```
+
+将 Agent 的一次执行放在该回调作用范围内，也可以汇总执行过程中被追踪到的模型调用。它不自动统计工具内部自行发起的外部 API 请求；若模型或服务商没有返回用量数据，回调也无法凭空补出准确值。
+
+仓库中的 `get_openai_callback()` 示例使用 OpenAI 专用回调。其 Token 统计依赖模型集成返回的数据，费用估算还依赖回调支持的模型价格表；在 DeepSeek 等第三方服务上，不应把 `total_cost` 当作账单。优先记录模型返回的用量，并按对应服务商的当前定价单独核算。
+
+### 控制上下文预算
+
+上下文窗口限制针对一次请求的输入和输出总量。可按以下关系预留输出空间：
+
+```text
+允许的输入预算 = 模型上下文上限 - 预留的输出 Token - 安全余量
+```
+
+估算输入时，要考虑实际发送的全部内容：系统提示词、完整历史、当前问题、工具定义和消息格式开销。不能只统计最新一条用户输入；消息内容的本地估算也可能漏掉角色标记、工具 Schema 等服务端计入的内容。
+
+超过预算时，可先移除最早的完整对话轮次，或用摘要替代较早历史，然后重新估算；同时保留系统指令和当前问题，并为输出及计数误差留出余量。达到预算后要检查将要发送的完整消息，而不是只检查单条文本。
+
+检查仓库示例时注意：`02-limit_token.py` 实际检查的是最新用户输入，不能代表完整会话的用量；它还在检查前就把输入加入历史，超限后该消息仍留在列表中，后续可能被发送。`03-limit_token_all.py` 虽拼接了消息内容，但没有计入角色、消息边界和工具定义，结果仍是近似值。`tiktoken.encode()` 也不能直接接收消息字典列表，应先明确需要估算的文本，并承认这种估算无法完整复现聊天请求的服务端计数。
+
+练习代码：[Token 计数](../../lm-ai-future/study/day2-demo/04-tiktoken/01-count_token.py)、[单条输入限额示例](../../lm-ai-future/study/day2-demo/04-tiktoken/02-limit_token.py)、[会话内容限额示例](../../lm-ai-future/study/day2-demo/04-tiktoken/03-limit_token_all.py)、[响应元数据统计](../../lm-ai-future/study/day5-langchain-chat-model/04-usage/track_token_usage.py)、[回调统计](../../lm-ai-future/study/day5-langchain-chat-model/04-usage/callback_token_usage.py)、[多次调用统计](../../lm-ai-future/study/day5-langchain-chat-model/04-usage/callback_token_usage_mult.py)、[Agent 回调示例](../../lm-ai-future/study/day5-langchain-chat-model/04-usage/callback_token_usage_agent.py)。这些脚本用于对照学习；运行前要确认模型名称、服务地址和依赖版本适配当前环境。
+
+**参考资料：**[tiktoken 官方仓库](https://github.com/openai/tiktoken)、[LangChain Token 用量回调](https://reference.langchain.com/python/langchain-core/callbacks/usage/get_usage_metadata_callback)、[ChatOpenAI Token 用量参考](https://reference.langchain.com/python/langchain-openai/chat_models/base/ChatOpenAI)、[OpenAI 回调价格统计参考](https://reference.langchain.com/python/langchain-community/callbacks/openai_info)、[DeepSeek Token 统计说明](https://api-docs.deepseek.com/quick_start/token_usage/)、[DeepSeek Chat Completions API 用量字段](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
 
 # 跑通最简单的 Agent
 
