@@ -20,7 +20,12 @@
       - 筛选镜像与查看空间
       - 删除镜像
       - 使用 commit 观察分层
-      - 使用 Dockerfile 构建镜像
+   - 使用 Dockerfile 构建镜像
+      - 概念
+      - Dockerfile 常用指令
+      - 常用命令
+      - 实战：构建 Nginx 静态页面镜像
+      - 注意事项
    - 其他镜像制作与迁移方式
    - 镜像实现原理
 4. [容器管理](#4-容器管理)
@@ -33,38 +38,43 @@
       - 停止与恢复
       - 安全删除与清理
 5. [Docker Compose](#5-docker-compose)
-   - 概念与安装检查
+   - 概念
+   - 常用命令
+   - 常用配置项
+   - 安装与检查
    - 单服务快速体验
-   - 常用命令与配置项
    - 多容器实践与排查
 6. [数据持久化](#6-数据持久化)
    - 概念
-   - 8.1 数据卷
-   - 8.2 挂载主机目录
-   - 8.3 tmpfs 挂载
+   - 6.1 数据卷
+   - 6.2 挂载主机目录
+   - 6.3 tmpfs 挂载
    - 本章小结
 7. [网络与外部访问](#7-网络与外部访问)
    - 端口映射与访问地址
    - 主机防火墙和云服务器安全组
    - 数据库远程访问与安全注意事项
-8. [构建自己的镜像](#8-构建自己的镜像)
-   - `Dockerfile` 的作用与基本指令
-   - 构建并运行一个简单镜像
-9. [常见应用实践](#9-常见应用实践)
-   - MySQL：数据持久化、账号与连接
-   - Redis：Docker Compose 安装与使用
-   - Nginx：配置文件与网页目录挂载
-   - Node.js：运行应用与映射端口
-10. [备份与迁移](#10-备份与迁移)
+8. [常见应用实践](#8-常见应用实践)
+   - 项目目标与整体架构
+   - 项目目录与配置文件
+   - Dockerfile 和 Docker Compose 的关系
+   - Dockerfile：构建后端项目镜像
+   - Nginx：项目访问入口
+   - 接入 Redis
+   - 接入 MySQL
+   - 使用 Compose 运行完整项目
+   - 项目联调与验证
+   - 日常管理与问题排查
+9. [备份与迁移](#9-备份与迁移)
    - 镜像的保存与加载
    - 容器导出、导入及其限制
    - 数据卷与绑定目录的备份恢复
    - 为已有容器迁移数据
    - MySQL 备份的一致性注意事项
-11. [镜像仓库](#11-镜像仓库)
+10. [镜像仓库](#10-镜像仓库)
     - Docker Hub 基本使用
     - 腾讯云 TCR：登录、标记、推送和拉取
-12. [进阶入口与常见问题](#12-进阶入口与常见问题)
+11. [进阶入口与常见问题](#11-进阶入口与常见问题)
     - 镜像拉取失败、端口占用、容器退出等排查
     - 官方文档与学习资料
 
@@ -399,22 +409,60 @@ docker run --rm local/image-commit-demo:1.0 ls /tmp/image-demo.txt
 2. `docker diff` 的 `A`、`C`、`D` 分别表示新增、修改、删除；最后一条命令检查新镜像中是否有该文件。
 3. 提交时默认会短暂暂停运行中的容器。练习结束后，确认容器不再需要再停止并删除。
 
-#### 使用 Dockerfile 构建镜像
+### 使用 Dockerfile 构建镜像
 
-Dockerfile 描述镜像的构建步骤；相比手工 `commit`，更便于审查、维护和重复构建。常用指令包括：
+#### 概念
 
-- `FROM` 选择基础镜像；`COPY` 将构建上下文中的文件复制到镜像；`RUN` 在构建时执行命令；`CMD` 设置容器默认启动命令。
-- `docker build -t 名称:标签 构建上下文` 构建镜像；`-t` 设置镜像名称和标签，最后一项指定构建上下文目录。
-- `COPY` 的源路径相对于构建上下文，不是任意宿主机路径。使用 `.dockerignore` 排除无关文件，不要把密码或密钥放入构建上下文。
+`Dockerfile` 是一个文本文件，用来描述如何把项目代码和运行时依赖构建成 Docker 镜像。`docker build` 按照文件中的指令创建可复用的镜像；容器运行方式见第 4 章“容器管理”。
 
-实战：
+基本流程：
 
-1. 在独立工作目录中创建新的 `image-build-demo` 目录，并在其中创建 `index.html`：
+```text
+Dockerfile + 构建上下文
+          ↓ docker build
+       Docker 镜像
+          ↓ docker run
+       运行中的容器
+```
+
+与手工执行 `docker commit` 相比，Dockerfile 更容易审查、维护和重复构建。Dockerfile 与 Docker Compose 的职责划分和配合方式见第 8.3 节。
+
+#### Dockerfile 常用指令
+
+| 指令 | 作用 |
+| :--- | :--- |
+| `FROM` | 选择基础镜像，通常是操作系统、运行时或官方应用镜像。 |
+| `WORKDIR` | 设置后续指令和容器启动时使用的工作目录。 |
+| `COPY` | 将构建上下文中的文件复制到镜像中。 |
+| `RUN` | 在构建镜像时执行命令，例如安装依赖。 |
+| `ENV` | 设置镜像或容器运行时使用的环境变量。 |
+| `EXPOSE` | 声明容器内应用使用的端口，不等于发布宿主机端口。 |
+| `CMD` | 设置容器启动时的默认命令，可被运行参数覆盖。 |
+| `ENTRYPOINT` | 设置容器的主要启动程序，通常用于固定容器用途。 |
+
+注意：`COPY` 的源路径相对于构建上下文，不是任意宿主机路径。构建上下文过大时，应使用 `.dockerignore` 排除无关文件；不要把密码或密钥放入构建上下文。
+
+#### 常用命令
+
+| 用途 | 命令 | 作用 |
+| :--- | :--- | :--- |
+| 构建镜像 | `docker build -t 名称:标签 构建上下文` | 根据 Dockerfile 创建镜像。 |
+| 不使用缓存构建 | `docker build --no-cache -t 名称:标签 .` | 重新执行每一步构建，适合排查缓存问题。 |
+| 查看镜像 | `docker image ls` | 查看本地镜像和标签。 |
+| 查看构建历史 | `docker history 镜像名:标签` | 查看镜像由哪些层构成。 |
+| 查看镜像配置 | `docker image inspect 镜像名:标签` | 查看入口命令、环境变量等元数据。 |
+| 启动容器 | `docker run --name 容器名 镜像名:标签` | 根据镜像创建并启动容器。 |
+| 查看日志 | `docker logs 容器名` | 查看容器标准输出和错误输出。 |
+
+#### 实战：构建 Nginx 静态页面镜像
+
+本练习使用 Nginx 镜像托管一个静态页面，帮助理解“构建镜像”和“运行容器”的关系。
+
+1. 在独立工作目录中创建新的 `docker-build-demo` 目录，并在其中创建 `index.html`：
 
    ```html
    <!doctype html>
-   <title>Docker 镜像练习</title>
-   <h1>Hello, image!</h1>
+   <html lang="zh-CN"><meta charset="utf-8"><title>Docker</title><body>Hello Docker</body></html>
    ```
 
 2. 在同一目录创建 `Dockerfile`：
@@ -424,22 +472,29 @@ Dockerfile 描述镜像的构建步骤；相比手工 `commit`，更便于审查
    COPY index.html /usr/share/nginx/html/index.html
    ```
 
-3. 先用 `docker image ls local/image-build-demo:1.0` 确认标签未被占用；然后回到工作目录构建并验证镜像：
+3. 确认镜像标签、容器名 `dockerfile-demo-web` 和本机 `18070` 端口未被占用；有冲突时更换并同步修改后续命令。然后在练习工作目录构建镜像并启动容器：
 
    ```bash
-   docker build -t local/image-build-demo:1.0 ./image-build-demo
-   docker image ls local/image-build-demo
-   docker run --rm local/image-build-demo:1.0 cat /usr/share/nginx/html/index.html
+   docker build -t local/dockerfile-demo:1.0 ./docker-build-demo
+   docker image ls local/dockerfile-demo
+   docker run -d --name dockerfile-demo-web -p 127.0.0.1:18070:80 local/dockerfile-demo:1.0
    ```
 
-   最后一条命令会输出刚才写入的网页内容，临时容器退出后自动删除。
+4. 浏览器访问 `http://127.0.0.1:18070/`，查看镜像中的网页。练习结束后停止并删除容器；镜像会保留：
+
+   ```bash
+   docker stop dockerfile-demo-web
+   docker rm dockerfile-demo-web
+   ```
+
+#### 注意事项
 
 - `FROM scratch` 表示从空白文件系统开始，适用于程序所需的运行时和依赖已经准备齐全的场景。
 - `stable-alpine` 仍是可变标签，生产环境应按需固定摘要。
-- `RUN` 有 shell 和 exec 两种写法；文件变更通常产生新层，只修改配置的指令不一定新增文件系统层。不要以为在后续层删除文件就能清除之前层中的内容。
-- `docker init` 可在合适的项目目录交互生成起始配置，但要先检查是否会影响已有文件，并审查生成结果。构建上下文也可以来自 Git、归档文件或标准输入；只使用可信来源。
-
-第 8 节提供了构建后运行网页的完整示例。
+- `RUN` 会产生构建层；不要以为在后续层删除文件就能清除之前层中的敏感内容。
+- `.dockerignore` 应排除 `.env`、`.git`、日志和本地依赖目录；敏感信息不要写入 Dockerfile。
+- `docker init` 可以在合适的项目目录交互生成起始配置，但要先检查是否会影响已有文件，并审查生成结果。
+- 构建上下文也可以来自 Git、归档文件或标准输入；只使用可信来源。
 
 ### 其他镜像制作与迁移方式
 
@@ -447,7 +502,7 @@ Dockerfile 描述镜像的构建步骤；相比手工 `commit`，更便于审查
 2. **保存和加载镜像**：`docker save` 将镜像及其可用层和标签保存为归档，`docker load` 从归档恢复；适合离线迁移和备份，也可以使用镜像仓库分发。
 3. **区分容器导出**：`docker export` / `docker import` 处理容器文件系统快照，不能替代完整镜像保存，也不包含挂载数据。
 
-归档文件可能覆盖同名目标，保存前先检查路径；镜像归档不包含卷数据，迁移时还需单独备份数据和运行配置。具体命令见第 10 节。
+归档文件可能覆盖同名目标，保存前先检查路径；镜像归档不包含卷数据，迁移时还需单独备份数据和运行配置。具体命令见第 9 节。
 
 ### 镜像实现原理
 
@@ -722,7 +777,8 @@ Docker Compose 用 YAML 文件定义并管理一组容器，适合在本地或�
 - **项目（project）**：一组相关服务及其网络、数据卷等资源；命令通常以项目为单位执行。
 - **服务（service）**：应用中的一个组件，例如 Web 服务或数据库服务。
 - **Compose 文件**：通常命名为 `compose.yaml`，描述镜像、端口、环境变量和挂载等配置。
-- **与 Dockerfile 的区别**：Dockerfile 描述如何构建镜像；Compose 文件描述如何配置和运行服务，也可以引用 Dockerfile 来构建镜像。
+
+Dockerfile 与 Compose 的职责划分和配合方式见第 8.3 节。
 
 基本流程：编写配置 → 检查配置 → 启动服务 → 查看状态和日志 → 停止或移除服务。
 
@@ -745,6 +801,29 @@ Docker Compose 用 YAML 文件定义并管理一组容器，适合在本地或�
 
 不要随意给 `down` 添加 `-v`：它可能删除项目的数据卷，造成数据丢失。
 
+### 常用配置项
+
+在 `services` 下为每个服务按需配置：
+
+- `image` / `build`：分别使用已有镜像，或根据 Dockerfile 构建镜像；构建镜像见第 3 章“使用 Dockerfile 构建镜像”。
+- `ports`：发布宿主机端口。省略主机地址可能向外暴露；本地练习优先绑定 `127.0.0.1`。
+- `environment` / `env_file`：为容器设置环境变量或从文件读取。Compose 的 `.env` 主要用于配置中的变量替换，不会自动把所有变量传入容器；不要提交密码等敏感信息。
+- `volumes`：挂载数据卷或主机目录；数据持久化和备份见第 6 章、第 9 章。
+- `depends_on`：声明服务依赖和启动顺序；简写形式不保证依赖服务已就绪。需要等待就绪时，可配合 `healthcheck` 和 `condition: service_healthy`，应用仍应处理连接失败。
+- `restart`：设置容器退出后的重启策略，例如 `unless-stopped`。
+
+以下 YAML 可保存为 `compose.yaml`。YAML 使用空格缩进，不需要顶层 `version` 字段：
+
+```yaml
+services:
+  web:
+    image: nginx:stable-alpine # 示例标签会更新，正式环境请固定经验证的版本或摘要
+    ports:
+      - "127.0.0.1:18082:80" # 绑定本机回环地址，避免对外网开放
+```
+
+同一默认网络中的服务通常可以通过**服务名和容器端口**通信，不必为此发布宿主机端口；容器里的 `localhost` 指该容器自身。
+
 ### 安装与检查
 
 1. 完成第 2 章的 Docker 安装，并确认 Docker 服务已启动。
@@ -764,20 +843,7 @@ Docker Compose 用 YAML 文件定义并管理一组容器，适合在本地或�
    cd docker-compose-demo
    ```
 
-2. 用编辑器创建 `compose.yaml`：
-
-   ```yaml
-   services:
-     web:
-       image: nginx:stable-alpine
-       ports:
-         - "127.0.0.1:18082:80"
-   ```
-
-   - `services` 下声明服务；`web` 是服务名。
-   - `image` 指定镜像，本地没有时通常会尝试拉取。
-   - `ports` 将本机 `18082` 映射到容器 `80`，并限制在本机回环地址。
-   - YAML 使用空格缩进；新文件不需要顶层 `version` 字段。
+2. 在该目录用编辑器创建 `compose.yaml`，内容使用“常用配置项”中的 Nginx YAML 示例。
 
 3. 在项目目录检查配置：
 
@@ -798,24 +864,11 @@ Docker Compose 用 YAML 文件定义并管理一组容器，适合在本地或�
 
 5. 练习结束后，确认当前目录和项目无误，再执行 `docker compose down`；它会移除该项目的容器和网络。
 
-第 9 章的 Redis 与 Redis Insight 配置展示了多个服务如何互相通信。
-
-### 常用配置项
-
-在 `services` 下为每个服务按需配置：
-
-- `image` / `build`：分别使用已有镜像，或根据 Dockerfile 构建镜像；构建镜像见第 8 章。
-- `ports`：发布宿主机端口。省略主机地址可能对外暴露；本地练习优先绑定 `127.0.0.1`。
-- `environment` / `env_file`：为容器设置环境变量或从文件读取。Compose 的 `.env` 主要用于配置中的变量替换，不会自动把所有变量传入容器；不要提交密码等敏感信息。
-- `volumes`：挂载数据卷或主机目录；数据持久化和备份见第 6 章、第 10 章。
-- `depends_on`：声明服务依赖和启动顺序；简写形式不保证依赖服务已就绪。需要等待就绪时，可配合 `healthcheck` 和 `condition: service_healthy`，应用仍应处理连接失败。
-- `restart`：设置容器退出后的重启策略，例如 `unless-stopped`。
-
-同一默认网络中的服务通常可以通过**服务名和容器端口**通信，不必为此发布宿主机端口；容器里的 `localhost` 指该容器自身。
+第 8 章的 Redis 与 Redis Insight 配置展示了多个服务如何互相通信。
 
 ### 多容器实践与排查
 
-- **实践**：第 9 章的 Redis 示例使用 `redis` 和 `redisinsight` 两个服务；Redis Insight 通过 `redis:6379` 连接 Redis。
+- **实践**：第 8 章的 Redis 示例使用 `redis` 和 `redisinsight` 两个服务；Redis Insight 通过 `redis:6379` 连接 Redis。
 - **找不到配置文件**：确认当前目录及文件名，或使用 `docker compose -f 文件路径 ...` 指定文件。
 - **端口冲突**：更换左侧宿主机端口，并同步更新访问地址；容器端口按服务实际监听端口填写。
 - **服务退出或连接失败**：先用 `docker compose ps -a` 和 `docker compose logs` 检查状态、日志、服务名及端口，再确认依赖是否就绪。
@@ -835,28 +888,45 @@ Docker Compose 用 YAML 文件定义并管理一组容器，适合在本地或�
 | 绑定挂载（Bind Mount） | Docker 守护进程所在主机的指定路径 | 主机直接管理文件；依赖主机路径 | 在主机与容器间共享文件 | 开发代码、配置文件、日志 |
 | `tmpfs` | 内存文件系统 | 临时存储；容器停止后数据消失 | 快速保存非持久化数据 | 缓存、会话数据、中间文件 |
 
-### 8.1 数据卷
+### 6.1 数据卷
 
-#### 8.1.1 为什么需要数据卷
+#### 6.1.1 概念
 
-- 容器可写层中的数据与容器绑定；删除容器时，这些数据也会被删除。
-- 数据卷（Volume）的生命周期独立于容器，适合保存需要长期使用的数据。
+数据卷（Volume）是 Docker 管理的存储区，生命周期独立于容器。删除容器后，卷通常仍保留，可挂载给新容器继续使用。
 
-#### 8.1.2 数据卷的特性
+挂载会把数据卷接到容器内的目录。Docker 不识别卷里的文件属于什么应用，只负责提供存储；应用决定写什么数据、写到哪个目录：
 
-- 由 Docker 管理；容器删除后通常仍保留，直到主动删除卷。
+- **卷名**：例如 `demo-data`，用于让 Docker 找到这个卷。
+- **容器内路径**：例如 `/data`，应用在这个目录读写数据。
+- **Docker 主机上的存储位置**：Linux Docker Engine 通常显示为 `/var/lib/docker/volumes/demo-data/_data`，可用 `docker volume inspect demo-data` 查看。
+
+例如，Redis 开启持久化后，会按自身配置把数据文件写入数据目录。只有把这个目录挂载到数据卷，Docker 才会通过该卷保存这些文件；如果 Redis 写到未挂载的目录，数据卷不会自动包含它们。
+
+```bash
+# 创建名为 demo-data 的数据卷
+docker volume create demo-data
+
+# 查看数据卷在 Docker 主机上的存储位置
+docker volume inspect demo-data --format '{{.Mountpoint}}'
+```
+
+- Docker Desktop 通常把卷保存在其 Linux 虚拟机或 WSL 环境中，因此 `Mountpoint` 不一定是 Windows 文件管理器中可直接打开的路径。不要手动修改 Docker 管理的卷目录。
+- **Compose 创建的数据卷通常带有项目名前缀**。更改项目名后，Compose 可能会使用另一个卷；需要沿用原数据时，应保持项目名和卷名一致。
+
+#### 6.1.2 数据卷的特性
+
 - 多个容器可以挂载同一个卷，修改通常能被其他容器看到；并发读写由应用负责协调。
 - 卷中的数据不会写回镜像，也不会因为删除容器而自动删除。
 - 数据经卷挂载路径直接读写，实际性能受卷驱动和宿主机文件系统影响；性能敏感场景应按工作负载实测。
 
-#### 8.1.3 数据卷与容器存储层
+#### 6.1.3 数据卷与容器存储层
 
 | 存储位置 | 生命周期 | 适合保存 |
 | :--- | :--- | :--- |
 | 容器可写层 | 随容器；删除容器时一并删除 | 临时文件、可重新生成的数据 |
 | 数据卷 | 独立于容器，直到卷被删除 | 数据库和其他重要应用数据 |
 
-#### 8.1.4 常用命令
+#### 6.1.4 常用命令
 
 表格中的“卷名”“镜像名”等为占位内容，执行前替换为实际值。
 
@@ -880,7 +950,7 @@ docker volume inspect demo-data
 ```
 
 - `create` 创建数据卷；同名卷已存在时会复用，不会清空。
-- `inspect` 中的 `Driver` 表示卷驱动，`Mountpoint` 是驱动提供的存储位置。Docker Desktop 的卷通常位于其 Linux VM/WSL 环境中；不要直接修改 Docker 管理的目录。
+- `inspect` 中的 `Driver` 表示卷驱动，`Mountpoint` 是驱动提供的存储位置；容器内挂载到哪里可通过 `docker inspect 容器名` 查看，见上面的路径示例。
 
 ##### 挂载与读取
 
@@ -911,13 +981,13 @@ docker volume prune
 - 删除前先核对卷名并备份重要数据；“未使用”不代表数据没有价值，不要随意加 `-f`。
 - `docker rm -v` 主要清理关联的匿名卷；不要把它当作删除命名卷的替代命令。
 
-#### 8.1.5 备份与恢复
+#### 6.1.5 备份与恢复
 
 - 备份前停止所有写入该卷的应用；用临时容器只读挂载卷，并将归档写到宿主机目录。
 - 恢复时使用新的空卷解压，检查文件和权限后再让应用使用。
-- 重要数据应验证恢复结果；数据库优先使用数据库自身的一致性备份工具。完整命令见[第 10 章](#10-备份与迁移)。
+- 重要数据应验证恢复结果；数据库优先使用数据库自身的一致性备份工具。完整命令见[第 9 章](#9-备份与迁移)。
 
-#### 8.1.6 数据卷与绑定挂载
+#### 6.1.6 数据卷与绑定挂载
 
 | 对比项 | 数据卷（Volume） | 绑定挂载（Bind Mount） |
 | :--- | :--- | :--- |
@@ -927,25 +997,25 @@ docker volume prune
 | 可移植性 | 通常较好 | 依赖主机目录结构 |
 | 备份与迁移 | 需要通过 Docker 或临时容器处理 | 可用宿主机工具访问和复制 |
 
-#### 8.1.7 常见问题
+#### 6.1.7 常见问题
 
 - 查看容器挂载：`docker inspect 容器名 --format '{{json .Mounts}}'`。
 - 查看卷的驱动和位置：`docker volume inspect 卷名`；不要直接编辑 `Mountpoint` 下的文件。
 - 跨主机迁移时，备份卷数据、传输归档，再恢复到目标主机的新卷；不要只迁移镜像。
 
-### 8.2 挂载主机目录
+### 6.2 绑定挂载（主机目录）
 
-#### 8.2.1 什么是绑定挂载
+#### 6.2.1 什么是绑定挂载
 
 绑定挂载（Bind Mount）把 **Docker 守护进程所在主机**上的文件或目录映射到容器。远程 Docker 的主机路径是远程服务器上的路径，不一定是运行 Docker 命令的电脑路径。挂载会遮住容器目标路径原有的内容，挂载前先确认目标路径。
 
-#### 8.2.2 绑定挂载与数据卷
+#### 6.2.2 绑定挂载与数据卷
 
 - 开发时同步代码、共享配置或直接读取日志，通常选绑定挂载。
 - 数据库和生产环境的持久化数据，通常优先选数据卷。
 - 绑定挂载依赖主机路径；数据卷由 Docker 管理，跨环境使用通常更方便。
 
-#### 8.2.3 基本语法
+#### 6.2.3 基本语法
 
 `--mount` 写法更明确，主机源路径必须存在；`-v` 是简写，路径不存在时通常会在 Docker 主机上自动创建一个目录。
 
@@ -966,14 +1036,14 @@ docker run --rm --mount "type=bind,source=$bindPath,target=/data,readonly" alpin
 
 `-v /主机绝对路径:/容器路径[:ro]` 是简写形式。使用前确认源路径和文件类型，避免路径写错后挂载到意外目录。
 
-#### 8.2.4 使用场景
+#### 6.2.4 使用场景
 
 - **开发代码**：把主机代码目录挂入容器，保存文件后容器可读取更新。
 - **配置文件**：只读挂载可以避免容器修改主机配置。
 - **日志文件**：将容器生成的日志写入主机目录，便于查看和收集。
 - **SSH 密钥等敏感文件**：只读只能阻止修改，不能阻止容器读取或泄露；不要轻易挂载。
 
-#### 8.2.5 只读挂载
+#### 6.2.5 只读挂载
 
 ```bash
 docker run --rm --mount "type=bind,source=/宿主机目录,target=/data,readonly" alpine:3.22 ls /data
@@ -981,11 +1051,11 @@ docker run --rm --mount "type=bind,source=/宿主机目录,target=/data,readonly
 
 只读挂载限制容器写入，但容器仍可读取文件；只挂载应用必需的最小范围。
 
-#### 8.2.6 挂载单个文件
+#### 6.2.6 挂载单个文件
 
 主机源文件必须存在。若编辑器通过“创建新文件并替换旧文件”的方式保存，容器可能仍看到旧文件；可检查挂载并重新创建容器，或改为挂载整个目录。
 
-#### 8.2.7 查看挂载信息
+#### 6.2.7 查看挂载信息
 
 ```bash
 docker inspect 容器名 --format '{{json .Mounts}}'
@@ -993,25 +1063,25 @@ docker inspect 容器名 --format '{{json .Mounts}}'
 
 重点看 `Type`、`Source`、`Destination` 和 `RW`：分别表示类型、主机源路径、容器目标路径及是否可写。
 
-#### 8.2.8 常见问题
+#### 6.2.8 常见问题
 
 - **路径不存在**：`--mount` 会报错；先在 Docker 守护进程所在主机确认目录或文件存在。
 - **权限不足**：检查容器运行用户、UID/GID 和主机权限；只授予必需权限，不要盲目递归放宽权限或改用 root。
 - **Docker Desktop 文件访问慢**：绑定挂载需要经过主机与 Linux 环境的文件共享；大量文件读写时，可比较数据卷或调整文件共享方案。
 
-#### 8.2.9 最佳实践
+#### 6.2.9 最佳实践
 
 - 开发代码和配置按需使用绑定挂载；配置优先只读。
 - 生产持久化数据优先使用数据卷；只挂载应用实际需要的目录。
 - 不要挂载主机根目录、Docker socket 或无关敏感目录。
 
-### 8.3 tmpfs 挂载
+### 6.3 tmpfs 挂载
 
-#### 8.3.1 适用场景
+#### 6.3.1 适用场景
 
 `tmpfs` 把临时文件放在内存文件系统中，适合缓存、会话数据和短暂的中间文件；不适合需要持久化的数据。它要求 Linux 守护进程。
 
-#### 8.3.2 基本用法
+#### 6.3.2 基本用法
 
 ```bash
 docker run --rm --mount type=tmpfs,dst=/cache,tmpfs-size=16777216 alpine:3.22 sh -c 'echo hello > /cache/example.txt && cat /cache/example.txt'
@@ -1019,13 +1089,13 @@ docker run --rm --mount type=tmpfs,dst=/cache,tmpfs-size=16777216 alpine:3.22 sh
 
 `tmpfs-size=16777216` 表示最多 16 MiB；简单场景也可写作 `--tmpfs /cache:size=16m`。
 
-#### 8.3.3 注意事项
+#### 6.3.3 注意事项
 
 - 容器停止后，`tmpfs` 中的数据会消失；它不用于跨容器共享或跨重启缓存。
 - 数据占用内存，设置大小不会增加容器的内存上限；按需限制大小。
 - 系统可能使用交换空间，因此不能把 `tmpfs` 当作“绝不会写入磁盘”的安全保证。
 
-#### 8.3.4 与数据卷、绑定挂载对比
+#### 6.3.4 与数据卷、绑定挂载对比
 
 | 类型 | 数据位置 | 容器停止后保留 | 常见用途 |
 | :--- | :--- | :--- | :--- |
@@ -1071,7 +1141,7 @@ docker volume prune
 
 - 仅在确有需要时允许外部连接：优先 VPN 或隧道，限制来源 IP、端口和应用账号权限，并验证未授权来源无法访问。
 
-例如，第 9 节的 MySQL 部署在远程服务器时，可从本机通过 SSH 隧道访问，而不必直接公开数据库端口：
+例如，第 8 章的 MySQL 部署在远程服务器时，可从本机通过 SSH 隧道访问，而不必直接公开数据库端口：
 
 1. 在本机 Linux/bash 或已安装 OpenSSH 的 Windows PowerShell 中执行，先将 `user@SERVER` 替换为服务器的登录账号和地址：
 
@@ -1079,49 +1149,11 @@ docker volume prune
    ssh -L 13307:127.0.0.1:3307 user@SERVER
    ```
 
-2. 保持 SSH 连接，在本机 MySQL 客户端连接 `127.0.0.1:13307`，使用第 9 节创建的业务账号。
+2. 保持 SSH 连接，在本机 MySQL 客户端连接 `127.0.0.1:13307`，使用第 8 章创建的业务账号。
 
 如果必须直接开放远程端口，需要重新创建使用适当主机地址映射的容器，并检查 MySQL 监听地址、账号来源和权限、主机防火墙及云安全组；应启用 TLS，限制来源 IP，不开放 root 账号。
 
-## 8 构建自己的镜像
-
-### Dockerfile 的作用与基本指令
-
-`Dockerfile` 用来描述镜像的构建步骤，常用指令包括：
-
-- `FROM`：选择基础镜像。
-- `COPY`：将构建上下文中的文件复制到镜像。
-- `RUN`：在构建镜像时执行命令。
-- `CMD`：设置容器启动时的默认命令。
-
-### 构建并运行一个简单镜像
-
-在练习工作目录下创建全新的 `docker-build-demo` 目录，并用编辑器创建以下两个文件。
-
-`docker-build-demo/index.html`：
-
-```html
-<!doctype html>
-<html lang="zh-CN"><meta charset="utf-8"><title>Docker</title><body>Hello Docker</body></html>
-```
-
-`docker-build-demo/Dockerfile`：
-
-```dockerfile
-FROM nginx:stable-alpine
-COPY index.html /usr/share/nginx/html/index.html
-```
-
-Linux/bash 和 Windows PowerShell，在练习工作目录执行：
-
-```bash
-docker build -t local/dockerfile-demo:1.0 ./docker-build-demo
-docker run -d --name dockerfile-demo-web -p 127.0.0.1:18070:80 local/dockerfile-demo:1.0
-```
-
-浏览器访问 `http://127.0.0.1:18070/`。构建上下文是指定目录；不要将密码等敏感文件放入上下文或镜像。`stable-alpine` 是可能更新的标签，不是不可变版本。
-
-## 9 常见应用实践
+## 8 常见应用实践
 
 本章不再按 Nginx、Redis、MySQL、Node.js 分别孤立演示，而是围绕一个本地后端项目逐步搭建完整运行环境：
 
@@ -1137,7 +1169,7 @@ Nginx 容器（项目入口）
 
 本章命令默认在 Ubuntu-D 中执行；Windows 只用于打开浏览器或验证映射端口。示例假设后端容器监听 `0.0.0.0:8000`，实际端口和启动命令应按项目调整。
 
-### 9.1 项目目标与整体架构
+### 8.1 项目目标与整体架构
 
 - **Nginx**：接收 Windows 浏览器请求，并反向代理到后端项目。
 - **后端项目**：提供业务 API，使用 Compose 服务名访问 Redis 和 MySQL。
@@ -1154,13 +1186,14 @@ Nginx 容器（项目入口）
 
 容器内不要把其他服务写成 `localhost`；`localhost` 只表示当前容器自身。
 
-### 9.2 项目目录与配置文件
+### 8.2 项目目录与配置文件
 
 建议把 Compose 文件放在项目根目录，而不是单独放在 `~/docker/redis`：
 
 ```text
 my-project/
 ├── Dockerfile
+├── .dockerignore
 ├── compose.yaml
 ├── .env
 └── nginx/
@@ -1179,6 +1212,7 @@ mkdir -p nginx
 - `compose.yaml`：声明所有服务。
 - `.env`：保存密码等配置，不应提交到 Git。
 - `Dockerfile`：描述后端项目如何构建成镜像。
+- `.dockerignore`：排除不需要发送给 Docker 的文件，减少构建上下文和镜像风险。
 
 创建 `.env`：
 
@@ -1207,7 +1241,116 @@ MYSQL_PASSWORD=Replace_With_Strong_App_Password
 ls -la
 ```
 
-### 9.3 Nginx：项目访问入口
+### 8.3 Dockerfile 和 Docker Compose 的关系
+
+Dockerfile 和 Docker Compose 不是二选一：Dockerfile 描述如何构建应用镜像，Compose 文件描述如何配置和运行应用服务。前者侧重“造镜像”，后者侧重“组织服务运行”。
+
+- **Dockerfile（面向镜像构建）**：纯文本构建配方，通过 `FROM` 选择基础镜像，再按需复制代码、安装依赖和设置启动命令；使用 `docker build` 构建镜像。
+- **Compose 文件（面向应用服务组合）**：使用 YAML 描述一个或多个服务，推荐文件名为 `compose.yaml`，也支持 `compose.yml`；旧项目还可能使用 `docker-compose.yaml` 或 `docker-compose.yml`。可配置镜像、端口、环境变量、数据卷、网络和服务依赖，例如把 Web 应用、数据库和缓存配置为不同服务。使用 `docker compose up` 启动，使用 `docker compose down` 移除容器和网络；数据卷默认保留。
+- **两者如何配合**：`build` 指定构建上下文，默认使用其中的 `Dockerfile`；`image` 指定镜像名称。自有应用可用 `build` 构建，依赖服务可直接用 `image` 指定现成镜像；同时配置两者时，`image` 也可作为构建结果的名称。Compose 不会取代 Dockerfile。
+- `depends_on` 可以声明服务依赖和启动顺序，但不保证依赖服务已经就绪；相关说明见第 5 章“常用配置项”。
+
+下面用一个独立示例说明：应用镜像由 Dockerfile 构建，缓存服务直接使用现成镜像。
+
+Dockerfile：
+
+```dockerfile
+# 选择 Python 运行环境作为基础镜像
+FROM python:3.12-slim
+# 设置后续指令使用的工作目录
+WORKDIR /app
+# 复制依赖清单
+COPY requirements.txt ./
+# 构建镜像时安装项目依赖
+RUN pip install --no-cache-dir -r requirements.txt
+# 复制应用入口文件
+COPY app.py ./
+# 声明应用使用的容器端口，不会自动发布到宿主机
+EXPOSE 8000
+# 设置容器启动时运行的默认命令
+CMD ["python", "app.py"]
+```
+
+Compose 文件：
+
+```yaml
+services:
+   app:
+      build: . # 以 Compose 文件所在目录为构建上下文，默认读取其中的 Dockerfile
+      ports:
+         - "127.0.0.1:8000:8000" # 仅在本机发布端口；应用需监听容器内的 0.0.0.0:8000
+   cache:
+      image: redis:7-alpine # 直接使用已有镜像，无需为该服务编写 Dockerfile
+```
+
+运行流程：
+
+1. 在 `compose.yaml` 所在目录准备 Dockerfile、应用文件和依赖清单。
+2. 执行 `docker compose up -d --build`：先构建配置了 `build` 的服务镜像，再创建并后台启动服务；`image` 指定的镜像会按需拉取。
+3. 执行 `docker compose ps` 查看服务状态；结束练习时可执行 `docker compose down`。如需删除数据卷，必须另行确认，避免误删持久化数据。
+
+参考资料：
+
+- 官方文档：[Dockerfile 概述](https://docs.docker.com/build/concepts/dockerfile/)、[Docker Compose 应用模型](https://docs.docker.com/compose/intro/compose-application-model/)、[Compose Build 规范](https://docs.docker.com/reference/compose-file/build/)和[`docker compose up` 命令说明](https://docs.docker.com/reference/cli/docker/compose/up/)。
+- 补充阅读：[Microsoft Learn：创建自定义容器映像](https://learn.microsoft.com/zh-tw/training/modules/intro-to-containers/4-create-custom-docker-image?ns-enrollment-type=learningpath&ns-enrollment-id=learn.architect-modern-apps#1)、[微软 Windows 容器 Dockerfile 指南](https://learn.microsoft.com/zh-hk/virtualization/windowscontainers/manage-docker/manage-windows-dockerfile#1)、[观测云：Docker Compose 与 Dockerfile 的区别](https://www.guance.com/learn/articles/question-388-docker-compose-dockerfile?gc_source=learn_log-management-hk)、[Docker Compose 中文说明](https://docs.docker.com.tw/get-started/docker-concepts/the-basics/what-is-docker-compose/#explanation)、[腾讯云开发者文章一](https://cloud.tencent.cn/developer/article/2443144)和[文章二](https://cloud.tencent.com.cn/developer/article/2545643?policyId=1003#1)。
+
+### 8.4 Dockerfile：构建后端项目镜像
+
+Dockerfile 的概念、常用指令和构建命令见第 3 章“使用 Dockerfile 构建镜像”。本节只说明后端项目接入当前运行环境时的要求：
+
+1. 项目根目录存在 `Dockerfile`。
+2. 应用监听 `0.0.0.0:8000`，不能只监听容器内的 `127.0.0.1`。
+3. `CMD` 或 `ENTRYPOINT` 能够启动应用。
+
+Node.js 项目示例：
+
+```dockerfile
+FROM node:22-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+EXPOSE 8000
+CMD ["npm", "run", "start"]
+```
+
+Python FastAPI 项目示例：
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+`.dockerignore` 示例：
+
+```text
+.git
+.env
+*.log
+node_modules
+__pycache__
+```
+
+`.dockerignore` 可以避免把 Git 历史、环境变量、日志和本地依赖发送到 Docker 构建上下文。密码等敏感信息不应写入 Dockerfile，也不应复制进镜像。
+
+Dockerfile 与 Compose 的配合示例见本章“Dockerfile 和 Docker Compose 的关系”。
+
+Node.js、Python 等技术栈的依赖安装和启动命令不同，应按项目实际情况选择对应示例。
+
+### 8.5 Nginx：项目访问入口
 
 Nginx 在 Docker 中通过官方镜像运行，不需要在 Ubuntu 中单独执行 `apt install nginx`。创建配置：
 
@@ -1237,31 +1380,7 @@ server {
 - `proxy_pass http://app:8000`：将请求转发给名为 `app` 的后端服务。
 - `proxy_set_header`：把请求主机和客户端地址传递给后端。
 
-### 9.4 后端项目容器化
-
-后端项目需要满足两个条件：
-
-1. 项目根目录有可用的 `Dockerfile`。
-2. 应用监听 `0.0.0.0:8000`，不能只监听容器内的 `127.0.0.1`。
-
-构建后端镜像：
-
-```bash
-docker build -t local/my-project:dev .
-```
-
-- `-t local/my-project:dev`：给镜像设置名称和标签。
-- `.`：把当前项目目录作为构建上下文。
-
-如果项目的 Dockerfile 不是默认文件名，可以指定：
-
-```bash
-docker build -f Dockerfile.dev -t local/my-project:dev .
-```
-
-本章只说明 Docker 的接入边界；Python、Node.js 等项目的 Dockerfile 和启动命令应按项目实际技术栈编写。
-
-### 9.5 接入 Redis
+### 8.6 接入 Redis
 
 Redis 服务配置会放入同一个 `compose.yaml`：
 
@@ -1317,7 +1436,7 @@ docker compose exec -e REDISCLI_AUTH="$REDIS_PASSWORD" redis redis-cli ping
 
 看到 `PONG` 表示 Redis 正常。Windows 浏览器访问 `http://localhost:5540`，Redis Insight 中连接 `redis:6379`。
 
-### 9.6 接入 MySQL（后续扩展）
+### 8.7 接入 MySQL（后续扩展）
 
 需要关系型数据库时，在 `compose.yaml` 中加入：
 
@@ -1361,9 +1480,9 @@ User: app
 Password: .env 中的 MYSQL_PASSWORD
 ```
 
-不要向公网暴露 MySQL 端口，也不要让后端使用 root 账号作为日常业务账号。数据库备份见第 10 节。
+不要向公网暴露 MySQL 端口，也不要让后端使用 root 账号作为日常业务账号。数据库备份见第 9 节。
 
-### 9.7 使用 Compose 运行完整项目
+### 8.8 使用 Compose 运行完整项目
 
 在项目根目录创建 `compose.yaml`。基础版包含后端、Nginx、Redis 和 Redis Insight；需要 MySQL 时，按 9.6 加入 `mysql` 服务和 `mysql-data` 数据卷：
 
@@ -1448,7 +1567,7 @@ docker compose ps
 
 如果以后加入 MySQL，使用同一条 `docker compose up -d --build` 命令即可启动全部服务。`depends_on` 只控制启动顺序，不代表数据库已经完全就绪；后端应具备重试连接能力。
 
-### 9.8 项目联调与验证
+### 8.9 项目联调与验证
 
 按以下顺序验证：
 
@@ -1489,7 +1608,7 @@ docker compose ps
 
    Windows 浏览器打开 `http://localhost:5540`；在页面中使用 `redis:6379` 连接 Redis。
 
-### 9.9 日常管理与问题排查
+### 8.10 日常管理与问题排查
 
 ```bash
 docker compose stop             # 停止服务
@@ -1508,7 +1627,8 @@ docker compose up -d --build    # 重新构建并启动
 - **镜像拉取超时**：检查 Docker daemon 的代理配置和 Docker Hub 网络。
 - **端口被占用**：修改左侧宿主机端口，例如把 `8080:80` 改成 `18080:80`。
 - **数据丢失**：不要随意执行 `docker compose down -v`；`-v` 会删除命名数据卷。
-## 10 备份与迁移
+
+## 9 备份与迁移
 
 ### 镜像的保存与加载
 
@@ -1532,7 +1652,7 @@ docker load -i dockerfile-demo.tar
 
 `export` 导出的归档可能包含容器可写层中的敏感文件，应限制访问。挂载遮盖的底层目录可能被导出，但挂载进来的数据需要单独备份。运行中的应用可能仍在写文件；需要一致性时应先停止写入，数据库应使用适合自身的一致性备份方式。
 
-例如，导出第 9 节的 Nginx 容器并导入为新镜像。执行前先确认容器存在、`nginx-filesystem.tar` 不存在，且目标镜像标签未被其他镜像使用，避免覆盖文件或移动已有标签：
+例如，导出第 8 章的 Nginx 容器并导入为新镜像。执行前先确认容器存在、`nginx-filesystem.tar` 不存在，且目标镜像标签未被其他镜像使用，避免覆盖文件或移动已有标签：
 
 ```bash
 docker export -o nginx-filesystem.tar docker-nginx-demo
@@ -1594,7 +1714,7 @@ docker run --rm --mount type=volume,source=docker-demo-files-restored,target=/da
 - 数据库优先使用数据库自身的一致性备份工具；文件级备份必须先安全停止数据库或采用受支持的一致性快照方案，并验证恢复。
 - 数据库备份可能包含敏感信息，需限制访问并妥善保存；文件级恢复还需考虑数据库版本及文件所有权。
 
-**绑定目录备份与恢复：**停止写入后，可以使用宿主机工具复制文件。以下示例使用第 9 节的网页目录；先确认 `backup` 目录存在，且 `backup/nginx-site` 和 `nginx-site-restored` 不存在。
+**绑定目录备份与恢复：**停止写入后，可以使用宿主机工具复制文件。以下示例使用第 8 章的网页目录；先确认 `backup` 目录存在，且 `backup/nginx-site` 和 `nginx-site-restored` 不存在。
 
 Linux/bash：
 
@@ -1719,7 +1839,7 @@ docker run -d --name app-migrated --mount type=volume,src=app-migrated-data,dst=
 
 ### MySQL 备份的一致性注意事项
 
-下面备份第 9 节的 `appdb`。先确认容器内 `/tmp/appdb-backup.sql` 和宿主机 `./appdb-backup.sql` 不存在，避免覆盖已有文件：
+下面备份第 8 章的 `appdb`。先确认容器内 `/tmp/appdb-backup.sql` 和宿主机 `./appdb-backup.sql` 不存在，避免覆盖已有文件：
 
 1. 在 Linux/bash 或 Windows PowerShell 中进入容器：
 
@@ -1758,7 +1878,7 @@ exit
 
 备份包含建库语句，恢复可能修改目标实例中的同名数据库；不要直接对生产实例执行，应先在隔离环境验证。
 
-## 11 镜像仓库
+## 10 镜像仓库
 
 ### Docker Hub 基本使用
 
@@ -1788,9 +1908,9 @@ docker push your-docker-id/dockerfile-demo:1.0
    ```
 
 - 登录时按提示输入凭据，不要把密码写进文档或命令历史；不同实例的域名和权限以控制台为准。
-- 推送的是镜像，不包含容器运行时的挂载数据；数据应按第 10 节单独备份。
+- 推送的是镜像，不包含容器运行时的挂载数据；数据应按第 9 节单独备份。
 
-## 12 进阶入口与常见问题
+## 11 进阶入口与常见问题
 
 ### 镜像拉取失败、端口占用、容器退出等排查
 

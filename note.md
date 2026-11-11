@@ -682,3 +682,165 @@ C:\Windows\System32\drivers\etc\hosts
 
 
 
+## Codex CLI 订阅登录与 WSL 排查学习小结
+
+### 概念
+
+Codex CLI 可以使用两种主要身份验证方式：
+
+- 使用 ChatGPT 登录：使用 ChatGPT 方案中包含的 Codex 额度。
+- 使用 OpenAI API Key：按 API 用量和 API 账户计费，不使用 ChatGPT 方案额度。
+
+本次问题的目标是将 Codex CLI 从 API Key 方式切换为 ChatGPT 订阅方式。排查环境为 Windows + WSL2，发行版为 `Ubuntu-D`。
+
+### 登录状态判断
+
+`/status` 中出现以下内容时，说明当前 Codex 使用的是 API Key 配置，而不是 ChatGPT 订阅登录：
+
+```text
+API Key configured (run codex login to use ChatGPT)
+```
+
+可以使用以下命令查看当前认证方式：
+
+```bash
+codex login status
+```
+
+切换认证方式时，可以先清除已保存的登录信息：
+
+```bash
+codex logout
+```
+
+然后启动 ChatGPT 登录流程：
+
+```bash
+codex login
+```
+
+如果浏览器回调流程异常，可以使用设备码登录：
+
+```bash
+codex login --device-auth
+```
+
+### 本次错误与判断
+
+#### 1. `403 Country, region, or territory not supported`
+
+示例：
+
+```text
+Token exchange failed: token endpoint returned status 403 Forbidden
+Country, region, or territory not supported
+```
+
+这表示请求已经到达认证服务，但服务端根据当前网络地区拒绝了令牌交换。它不是 API Key 格式错误，也不是 Codex 订阅选择错误。若当前网络确实位于不受支持地区，不能通过 Codex 配置解决；不应通过代理绕过地区限制。
+
+如果用户实际位于受支持地区，但仍出现此错误，可以清理浏览器 Cookie，使用无痕窗口或其他浏览器重新登录；持续失败时应将请求 ID 提交给 OpenAI Support。
+
+#### 2. `error sending request for url (https://auth.openai.com/oauth/token)`
+
+这表示 Codex 在令牌交换阶段没有得到可用的 HTTP 响应，优先检查：
+
+- `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 等代理环境变量；
+- `SSL_CERT_FILE`、`CODEX_CA_CERTIFICATE` 等证书配置；
+- Clash/TUN/Fake-IP 或企业代理对 `auth.openai.com` 的处理；
+- WSL 与 Windows 使用的网络路径是否不同；
+- 旧的 Codex 登录缓存是否损坏。
+
+本次验证结果：WSL 中直接向令牌端点发起无效 POST 请求时，能够收到 `400 Missing required parameter: grant_type`。这证明 WSL 到认证端点的 DNS、TLS 和基本 HTTPS 链路是通的，问题更可能出现在 Codex 登录流程、代理配置或旧状态，而不是完全断网。
+
+### 推荐修复流程
+
+在运行 Codex 的同一个 WSL 环境中执行：
+
+```bash
+codex logout
+```
+
+先检查是否存在代理或证书变量：
+
+```bash
+env | grep -iE '^(http|https|all|no)_proxy=|^(CODEX|OPENAI)_'
+```
+
+仅用于排除错误代理配置时，可以临时移除这些变量并启动设备码登录：
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+   -u http_proxy -u https_proxy -u all_proxy \
+   -u SSL_CERT_FILE -u CODEX_CA_CERTIFICATE \
+   codex login --device-auth
+```
+
+如果当前网络必须使用企业代理，不要直接清除代理；应改为修正代理规则和企业 CA 证书配置。
+
+必要时从 PowerShell 重启整个 WSL 环境：
+
+```powershell
+wsl --shutdown
+```
+
+重新打开 WSL 后再次执行：
+
+```bash
+codex login --device-auth
+codex login status
+```
+
+成功后，`codex login status` 应显示 ChatGPT 登录状态，Codex 的 `/status` 也不应再提示仅配置了 API Key。
+
+### WSL 退出与服务生命周期
+
+在 Ubuntu 中执行：
+
+```bash
+exit
+```
+
+只会退出当前 Shell，不保证停止后台服务。Redis、Docker 容器、`nohup` 进程、`tmux` 会话或其他后台进程可能继续运行。
+
+检查正在运行的 WSL 发行版：
+
+```powershell
+wsl --list --running
+```
+
+停止指定发行版：
+
+```powershell
+wsl --terminate Ubuntu-D
+```
+
+停止全部 WSL 发行版和 WSL2 轻量虚拟机：
+
+```powershell
+wsl --shutdown
+```
+
+如果只想停止 Redis 服务，可以在 Ubuntu 中执行：
+
+```bash
+sudo systemctl stop redis
+```
+
+如果不希望 Redis 下次启动时自动运行：
+
+```bash
+sudo systemctl disable redis
+```
+
+### 本次结果与边界
+
+本次登录最终恢复正常。根据操作顺序，修复关键点是清理可能干扰 OAuth 的代理/证书环境、重启 WSL 网络状态，并使用设备码完成新的 ChatGPT 登录；由于没有逐项单独回滚验证，不能断言其中只有某一个步骤是唯一原因。
+
+### 参考资料
+
+- [Codex 身份验证](https://learn.chatgpt.com/docs/auth)
+- [Using Codex with your ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan)
+- [ChatGPT and API services in unsupported countries and territories](https://help.openai.com/en/articles/9131992-chatgpt-and-api-services-in-unsupported-countries-and-territories)
+- [WSL 基本命令](https://learn.microsoft.com/windows/wsl/reference)
+- [在 WSL 中使用 systemd 管理 Linux 服务](https://learn.microsoft.com/en-us/windows/wsl/systemd)
+
