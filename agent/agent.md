@@ -3184,6 +3184,8 @@ from langchain_core.messages import AIMessage
 from langchain_core.output_parsers import JsonOutputParser
 
 parser = JsonOutputParser()
+print(parser.get_format_instructions())
+# 输出示例：Return a JSON object.
 
 model_response = AIMessage(
     content='{"title": "LangChain 入门", "level": "beginner"}'
