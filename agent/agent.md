@@ -937,6 +937,22 @@ def introduce(name, age):
 
 这里的 `name`、`age` 是形参；调用 `introduce("小明", 18)` 时，`"小明"`、`18` 是实参。
 
+函数可以用 `return` 把结果交还给调用方；`print()` 只负责显示内容，不会把显示的内容作为函数结果返回。函数没有执行 `return` 时，默认返回 `None`。
+
+```python
+def add(left, right):
+    return left + right
+
+result = add(2, 3)
+print(result)
+```
+
+输出：
+
+```text
+5
+```
+
 #### 2. 使用场景
 
 - 参数少、顺序明确时，可以使用位置参数。
@@ -967,6 +983,30 @@ def configure(model, /, tools=None, *, debug=False):
 - `*` 后面的 `debug`：只能按名称传入。
 - 没有 `/`、`*` 等限制的普通形参，通常既支持位置传参，也支持关键字传参。
 
+##### 默认参数与可变参数
+
+默认参数让调用方可以省略某个实参；`*args` 收集额外的位置实参，`**kwargs` 收集额外的关键字实参：
+
+```python
+def describe(name, greeting="你好", *skills, **details):
+    return name, greeting, skills, details
+
+result = describe("小明", "欢迎", "Python", "Agent", city="杭州")
+print(result)
+```
+
+这里 `skills` 是元组，`details` 是字典。函数定义中，`*skills` 放在普通位置形参之后；已有的 `/` 和 `*` 规则仍可用于限制参数的传递方式。
+
+默认参数的值在函数定义时确定。不要把列表、字典等可变对象直接用作默认值，否则多次调用可能共享同一个对象。可以用 `None` 表示“未提供”，再在函数内部创建新对象：
+
+```python
+def add_tag(tag, tags=None):
+    if tags is None:
+        tags = []
+    tags.append(tag)
+    return tags
+```
+
 #### 4. 示例
 
 下面两次调用效果相同，关键字参数可以调换顺序：
@@ -986,80 +1026,66 @@ configure("chat-model", debug=True, tools=["search"])
 
 但 `configure(model="chat-model")` 不合法，因为 `model` 被 `/` 限制为仅限位置参数；`configure("chat-model", ["search"], True)` 也不合法，因为 `debug` 位于 `*` 后，必须写成 `debug=True`。
 
-Python 装饰器（Decorator）是一种特殊的函数，它可以在不修改原函数代码和调用方式的前提下，为函数增加额外的功能。
+### 函数作用域与闭包
 
-### 代码概念
+Python 按 **LEGB** 顺序查找名称：局部作用域（Local）、外层函数作用域（Enclosing）、全局作用域（Global）、内置作用域（Built-in）。在函数中赋值的名称默认属于局部作用域；需要在内层函数中重新赋值时，可用 `nonlocal` 修改外层函数变量，用 `global` 修改模块级变量。
 
-```
-def a_new_decorator(a_func):
- 
-    def wrapTheFunction():
-        print("I am doing some boring work before executing a_func()")
- 
-        a_func()
- 
-        print("I am doing some boring work after executing a_func()")
- 
-    return wrapTheFunction
- 
-def a_function_requiring_decoration():
-    print("I am the function which needs some decoration to remove my foul smell")
- 
-a_function_requiring_decoration()
-#outputs: "I am the function which needs some decoration to remove my foul smell"
-a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
-#now a_function_requiring_decoration is wrapped by wrapTheFunction()
- 
-a_function_requiring_decoration()
-#outputs:I am doing some boring work before executing a_func()
-#        I am the function which needs some decoration to remove my foul smell
-#        I am doing some boring work after executing a_func()
+**闭包**是内层函数及其记住的外层函数变量。即使外层函数已经返回，内层函数仍可以使用这些变量：
+
+```python
+def make_counter():
+    count = 0
+
+    def next_value():
+        nonlocal count
+        count += 1
+        return count
+
+    return next_value
+
+counter = make_counter()
+print(counter())
+print(counter())
 ```
 
-```
-@a_new_decorator
-def a_function_requiring_decoration():
-    """Hey you! Decorate me!"""
-    print("I am the function which needs some decoration to "
-          "remove my foul smell")
- 
-a_function_requiring_decoration()
-#outputs: I am doing some boring work before executing a_func()
-#         I am the function which needs some decoration to remove my foul smell
-#         I am doing some boring work after executing a_func()
- 
-#the @a_new_decorator is just a short way of saying:
-a_function_requiring_decoration = a_new_decorator(a_function_requiring_decoration)
-```
+输出为 `1`、`2`。`next_value()` 记住了 `make_counter()` 中的 `count`，并通过 `nonlocal` 更新它。闭包常用于保存装饰器配置或少量状态；需要复杂状态管理时，优先考虑类或明确的状态对象。
 
-如果我们运行如下代码会存在一个问题：
+### 装饰器
 
-```
-print(a_function_requiring_decoration.__name__)
-# Output: wrapTheFunction
-```
+装饰器接收一个函数，并返回一个包装后的函数，因此可以在不改动原函数主体的情况下，增加调用前后的逻辑。`@装饰器` 是语法简写：
 
-这并不是我们想要的！Ouput输出应该是"a_function_requiring_decoration"。这里的函数被warpTheFunction替代了。它重写了我们函数的名字和注释文档(docstring)。幸运的是Python提供给我们一个简单的函数来解决这个问题，那就是functools.wraps。我们修改上一个例子来使用functools.wraps：
-
-```
+```python
 from functools import wraps
- 
-def a_new_decorator(a_func):
-    @wraps(a_func)
-    def wrapTheFunction():
-        print("I am doing some boring work before executing a_func()")
-        a_func()
-        print("I am doing some boring work after executing a_func()")
-    return wrapTheFunction
- 
-@a_new_decorator
-def a_function_requiring_decoration():
-    """Hey yo! Decorate me!"""
-    print("I am the function which needs some decoration to "
-          "remove my foul smell")
- 
-print(a_function_requiring_decoration.__name__)
-# Output: a_function_requiring_decoration
+
+def announce(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print(f"开始执行：{func.__name__}")
+        result = func(*args, **kwargs)
+        print("执行完成")
+        return result
+
+    return wrapper
+
+@announce
+def add(left, right):
+    return left + right
+
+print(add(2, 3))
+```
+
+`@announce` 等价于 `add = announce(add)`：定义 `add` 时，装饰器就会接收原函数并返回 `wrapper`。调用 `add(2, 3)` 实际上是在调用包装函数。
+
+- `*args` 和 `**kwargs` 让包装函数可以接收并转发原函数的位置参数与关键字参数。
+- `return result` 保留原函数的返回值；省略它时，包装函数默认返回 `None`。
+- `@wraps(func)` 将原函数的名称、文档字符串等元数据复制到包装函数，避免调试或查看 `__name__` 时只看到 `wrapper`。
+
+输出：
+
+```text
+开始执行：add
+执行完成
+5
 ```
 
 ### 应用场景
@@ -2710,17 +2736,28 @@ message = HumanMessage(content=[
 
 #### PromptTemplate
 
-用于格式化单个字符串。模板变量必须与调用时传入的数据字段一致。
+`PromptTemplate` 用于把固定说明和变量组合成一段文本。它只负责准备提示词，不会调用模型。
+
+- `{topic}` 这类花括号内容是模板变量；调用时要提供对应的值。
+- `PromptTemplate.from_template()` 适合简单模板，会根据占位符识别变量。
+- 需要预先固定部分内容时，可使用：
+  - `input_variables`：调用时需要提供的变量名。
+  - `partial_variables`：创建模板时就提供的固定值，调用时无需重复传入。
 
 ```python
 from langchain_core.prompts import PromptTemplate
 
-prompt_template = PromptTemplate.from_template(
-    "Tell me a joke about {topic}"
+prompt = PromptTemplate(
+    template="请用{style}的方式介绍{topic}。",
+    input_variables=["topic"],
+    partial_variables={"style": "简洁、适合新手"},
 )
 
-prompt_value = prompt_template.invoke({"topic": "cats"})
+prompt_value = prompt.invoke({"topic": "向量数据库"})  # 只传入尚未固定的变量
+print(prompt_value.to_string())  # 查看填充变量后的完整提示词
 ```
+
+`invoke()` 返回 `PromptValue`。需要模型生成回答时，再把提示词交给模型；需要特定数据结构时，再接输出解析器。整体流程是：模板填充 → 模型生成 →（可选）结果解析。
 
 #### ChatPromptTemplate
 
@@ -3190,19 +3227,6 @@ user = User(name="小明", age="18")
 print(user.age)             # 18，自动转换为 int
 print(user.model_dump())    # {"name": "小明", "age": 18}
 ```
-
-##### 与 TypeScript 的对比
-
-Pydantic 可以类比 TypeScript，但两者的作用时机不同：
-
-| Pydantic | TypeScript |
-| --- | --- |
-| 运行时校验数据 | 主要在编译期进行类型检查 |
-| 使用 `BaseModel` 定义数据结构 | 使用 `interface` 或 `type` 定义类型 |
-| 可以自动转换和校验输入 | 通常不会自动校验运行时 JSON |
-| 可以生成字典和 JSON Schema | 主要用于类型推导和编辑器提示 |
-
-简单来说，TypeScript 主要保证代码编写时的类型安全；**Pydantic 主要保证程序运行时接收到的数据符合预期。**
 
 ##### 在 LangChain 中的使用
 
@@ -3990,7 +4014,73 @@ ai 你好，小明！
 
 ## 工具
 
-工具为 LangChain 应用提供搜索、计算或访问外部系统等能力。将工具实例传入 `create_agent()` 的 `tools` 参数后，Agent 可以根据用户问题决定是否调用工具。
+工具是应用提供给模型使用的能力，例如查询天气、搜索信息或计算数据。工具通常包含名称、用途说明、参数结构和执行逻辑。
+
+模型负责判断是否需要工具，并生成结构化的调用请求；真正执行函数、访问 API 或操作数据的是应用程序，不是模型本身。
+
+```mermaid
+flowchart TD
+    A[用户问题] --> B[绑定工具定义的聊天模型]
+    B --> C{模型是否请求工具?}
+    C -- 否 --> D[直接返回回答]
+    C -- 是 --> E[AIMessage.tool_calls]
+    E --> F[应用执行工具]
+    F --> G[ToolMessage 返回工具结果]
+    G --> B
+```
+
+### 用 `@tool` 定义工具
+
+`@tool` 可以把 Python 函数转换为 LangChain 工具：
+
+- 函数名默认作为工具名称；
+- 文档字符串用于说明工具用途，帮助模型选择工具；
+- 参数类型注解用于生成参数结构，函数返回值则作为工具执行结果。
+
+```python
+from langchain_core.tools import tool
+
+@tool  # 根据函数签名和文档字符串生成工具定义。
+def get_weather(city: str) -> str:
+    """返回指定城市的示例天气。"""
+    return f"{city}：晴，25°C"
+```
+
+这个函数返回固定的示例数据；实际工具可以在函数中调用天气服务。工具也可以通过 `get_weather.invoke({"city": "北京"})` 在 Python 代码中直接执行。
+
+### 用 `bind_tools()` 绑定工具
+
+`model.bind_tools([...])` 将工具的名称、说明和参数结构提供给聊天模型，返回可调用的模型对象。它**只让模型能够提出工具调用请求，不会自动执行工具函数**。
+
+```python
+from langchain_core.messages import HumanMessage, ToolMessage
+
+# 假设 model 已配置，且模型服务支持工具调用。
+model_with_tools = model.bind_tools([get_weather])
+question = HumanMessage(content="北京的天气怎么样？")
+response = model_with_tools.invoke([question])
+
+if response.tool_calls:
+    tool_messages = []
+    for call in response.tool_calls:
+        result = get_weather.invoke(call["args"])  # 应用在这里执行函数。
+        tool_messages.append(
+            ToolMessage(content=str(result), tool_call_id=call["id"])
+        )
+
+    # 把工具请求和执行结果一并交回模型，让模型组织最终回答。
+    final_response = model_with_tools.invoke([question, response, *tool_messages])
+    print(final_response.content)
+else:
+    print(response.content)
+```
+
+- `response.tool_calls` 是模型返回的工具请求，包含工具名、参数和调用 ID；它不是工具执行结果。
+- 应用根据请求执行对应工具，再用 `ToolMessage` 把结果交回模型；`tool_call_id` 用于对应原请求。
+- 模型服务必须支持工具调用；具体支持范围取决于所用模型和服务商。若接入 DeepSeek 官方 API，LangChain 提供对应的 `ChatDeepSeek` 集成；OpenAI 兼容接口不代表所有集成行为完全相同。上例只展示一轮手动调用，Agent 的多轮调度可参见后文 `create_agent`。
+- 对写入、删除等有副作用的工具，应用仍需自行进行权限校验或人工确认；模型提出调用不代表获得授权。
+
+参考：[LangChain `tool` API](https://reference.langchain.com/python/langchain-core/tools/convert/tool)、[`ChatOpenAI.bind_tools()` API](https://reference.langchain.com/python/langchain-openai/chat_models/base/BaseChatOpenAI/bind_tools)、[`ChatDeepSeek` 集成](https://reference.langchain.com/python/langchain-deepseek/chat_models/ChatDeepSeek)。
 
 ### `TavilySearchResults`
 
