@@ -705,9 +705,9 @@ d = {"a": 1, "b": 2}
 
 Pydantic 是用于定义、校验和序列化结构化数据的第三方库。虽然它不是 Python 标准库，但常用于处理 JSON 等数据，因此放在本节统一介绍。
 
-- `BaseModel`：通过类型注解定义数据模型；创建实例时会按字段类型校验并转换输入。
-- `Field`：为字段设置默认值、校验约束或说明信息。`description` 会写入 JSON Schema，可供结构化输出功能参考。
-- `model_dump()`：将模型实例转换为普通 Python 字典。
+- `BaseModel`：Pydantic 提供的**数据模型基类**。继承它并用类型注解声明字段；创建实例时会校验输入，并按配置转换类型。
+- `Field`：Pydantic 提供的**字段配置函数**，用于设置默认值、校验约束和说明信息。`description` 会写入 JSON Schema，可供结构化输出功能参考。
+- `model_dump()`：Pydantic 模型实例提供的**序列化方法**，将字段数据转换为普通 Python 字典。
 
 ```python
 from pydantic import BaseModel, Field
@@ -720,6 +720,7 @@ class ArticleSummary(BaseModel):
 
 article = ArticleSummary(title="Agent 入门", summary="介绍 Agent 的基本组成。")
 print(article.title)  # Agent 入门
+print(article)  # title='Agent 入门' summary='介绍 Agent 的基本组成。'
 print(article.model_dump())  # {'title': 'Agent 入门', 'summary': '介绍 Agent 的基本组成。'}
 ```
 
