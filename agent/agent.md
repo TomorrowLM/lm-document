@@ -701,6 +701,28 @@ d = {"a": 1, "b": 2}
 
  `json.dumps()` 将 Python 字典转为 JSON 字符串，`ensure_ascii=False` 用于保留中文，不将中文转换成 `\u4f60\u597d`。这个结果随后交给 SSE 响应组件发送给前端。
 
+### Pydantic
+
+Pydantic 是用于定义、校验和序列化结构化数据的第三方库。虽然它不是 Python 标准库，但常用于处理 JSON 等数据，因此放在本节统一介绍。
+
+- `BaseModel`：通过类型注解定义数据模型；创建实例时会按字段类型校验并转换输入。
+- `Field`：为字段设置默认值、校验约束或说明信息。`description` 会写入 JSON Schema，可供结构化输出功能参考。
+- `model_dump()`：将模型实例转换为普通 Python 字典。
+
+```python
+from pydantic import BaseModel, Field
+
+
+class ArticleSummary(BaseModel):
+    title: str = Field(description="文章标题")  # description 会成为 JSON Schema 的字段说明
+    summary: str = Field(description="文章摘要")
+
+
+article = ArticleSummary(title="Agent 入门", summary="介绍 Agent 的基本组成。")
+print(article.title)  # Agent 入门
+print(article.model_dump())  # {'title': 'Agent 入门', 'summary': '介绍 Agent 的基本组成。'}
+```
+
 ### base64
 
 Base64 用 ASCII 字符表示二进制数据（`bytes`），常用于在 JSON 或 Data URL 中传递图片等数据。它是编码方式，不是加密方式；编码后的数据通常会比原始数据大约三分之一。
@@ -3196,6 +3218,54 @@ print(result)
 # {'title': 'LangChain 入门', 'level': 'beginner'}
 ```
 
+###### 使用 Pydantic 模型定制 JSON 输出
+
+可以把 Pydantic 模型传给 `JsonOutputParser`，将字段结构和说明加入格式指令，再把指令放进提示模板。下面沿用前面定义的 `ArticleSummary`。示例用预构造的 `AIMessage` 演示解析，不会调用模型：
+
+```python
+from langchain_core.messages import AIMessage
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
+
+parser = JsonOutputParser(pydantic_object=ArticleSummary)
+prompt = PromptTemplate(
+    template="根据要求回答问题。\n{format_instructions}\n{query}",
+    input_variables=["query"],
+    partial_variables={"format_instructions": parser.get_format_instructions()},
+)
+
+prompt_value = prompt.invoke({"query": "用一段话介绍 Agent。"})
+print(prompt_value.to_string())  # 可检查提示词中的 JSON 格式要求
+
+model_response = AIMessage(
+    content='{"title": "Agent 入门", "summary": "Agent 可结合模型与工具完成任务。"}'
+)
+result = parser.invoke(model_response)
+print(result)
+# {'title': 'Agent 入门', 'summary': 'Agent 可结合模型与工具完成任务。'}
+```
+
+在本项目锁定的 `langchain-core` 1.6.1 中，`JsonOutputParser` 解析后得到的是 `dict`，不会返回 `ArticleSummary` 实例，也不会执行 Pydantic 模型校验；格式指令也不保证模型一定遵守 Schema。
+
+##### PydanticOutputParser
+
+如果希望解析结果是经过 Pydantic 校验的模型实例，可使用 `PydanticOutputParser`。这里继续使用前面定义的 `ArticleSummary`：
+
+```python
+from langchain_core.messages import AIMessage
+from langchain_core.output_parsers import PydanticOutputParser
+
+parser = PydanticOutputParser(pydantic_object=ArticleSummary)
+result = parser.invoke(
+    AIMessage(content='{"title": "Agent 入门", "summary": "介绍 Agent 的基本组成。"}')
+)
+
+print(result.title)
+print(result.model_dump())
+```
+
+与 `JsonOutputParser` 的区别是：前者返回 Pydantic 模型实例并校验字段；后者返回解析后的字典。
+
 在实际链路中，通常将提示模板、模型和输出解析器连接起来：
 
 ```python
@@ -3210,47 +3280,6 @@ print(answer)
 如果需要结构化 JSON 结果，可以将链末尾的 `StrOutputParser` 替换为 `JsonOutputParser`。
 
 如果模型原生支持函数调用或工具调用，结构化数据通常优先使用模型提供的结构化能力，而不是完全依赖文本解析。
-
-#### Pydantic
-
-Pydantic 是 Python 中用于数据校验、类型转换和结构化建模的库。它可以通过 Python 类型注解定义数据结构，并在运行时校验输入数据。
-
-##### 基本用法
-
-```python
-from pydantic import BaseModel
-
-class User(BaseModel):
-    name: str
-    age: int
-
-user = User(name="小明", age="18")
-
-print(user.age)             # 18，自动转换为 int
-print(user.model_dump())    # {"name": "小明", "age": 18}
-```
-
-##### 在 LangChain 中的使用
-
-在 LangChain 中，`PydanticOutputParser` 可以将模型输出的 JSON 解析为指定的 Pydantic 对象。相比直接得到 `dict`，Pydantic 对象具有明确的字段结构和类型约束。
-
-```python
-from langchain_core.messages import AIMessage
-from langchain_core.output_parsers import PydanticOutputParser
-from pydantic import BaseModel
-
-class Movie(BaseModel):
-    title: str
-    year: int
-
-parser = PydanticOutputParser(pydantic_object=Movie)
-result = parser.invoke(
-    AIMessage(content='{"title": "LangChain 入门", "year": 2026}')
-)
-
-print(result.title)  # LangChain 入门
-print(result.year)   # 2026
-```
 
 ### 6. 组件协作与数据流
 
