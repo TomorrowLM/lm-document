@@ -649,14 +649,6 @@ d = {"a": 1, "b": 2}
 # d 中存储的是 key 和 value 的指针
 ```
 
-#### 内存视角对比
-
-| 结构 | 存储方式 | 访问方式 | 是否有序 |
-|------|----------|----------|----------|
-| list | 连续指针数组 | 下标索引 | 是 |
-| dict | 哈希表 + entries | 键哈希 | 是（Python 3.7+） |
-
-列表和字典都保存对象引用，而不是对象本身。
 
 ## 标准库与数据交换
 
@@ -706,7 +698,6 @@ image_data = base64.b64encode(resp.content).decode()
 # 拼成 data URL 传给模型：
 data_url = f"data:image/jpeg;base64,{image_data}"
 ```
-
 ### httpx
 
 `httpx` 是 Python 的 HTTP 客户端，用于发送请求和获取响应。
