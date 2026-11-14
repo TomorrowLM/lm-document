@@ -33,22 +33,27 @@
 
 #### 1.1 ASCII
 
-- 全称：美国信息交换标准代码（American Standard Code for Information Interchange）
-- 包含 128 个字符，涵盖英文字母、数字、标点符号和控制字符
-- **每个字符对应唯一的 7 位二进制数**
-- 是最早的字符编码标准，也是许多其他编码的基础
+- 全称：美国信息交换标准代码，最早的字符编码标准
+- **只包含 128 个字符（0-127）**——英文字母、数字、标点符号和控制字符
+- **不支持中文**，也不支持任何非英语文字；这就是 Python 2 隐式按 ASCII 转换时一碰中文就崩的原因
+- 每个字符占 1 个字节，UTF-8 完全兼容 ASCII
 
 #### 1.2 Unicode
 
-- **使用一个二进制数值表示每个字符，确保全球范围内字符的唯一性**
-- 目的是为全球所有语言字符提供统一的编码系统
-- 不直接定义存储方式，只定义"字符→码点"的映射（如 `U+4E2D` = 中）
+- **全球所有字符的"统一编号系统"**，给每个字符一个唯一编号（称为**码点**，如 `U+4E2D` = 中）
+- 只管"谁是谁"，不管"怎么存"——它只规定每个字符对应哪个编号，不规定编号在硬盘上如何打包成字节
+- 磁盘上永远只有字节，Unicode 编号是抽象概念，不是物理存在——你摸到的永远是信纸（字节）
+
+> 类比一：Unicode 就像给全世界每个人一个唯一的身份证号，UTF-8 是把这些号码塞进信封、打包寄出的物流方案。
+>
+> 类比二：就像国际机场的货币兑换台——无论从哪个国家来，先进来换成同一种内部货币，走时再换成目的地需要的货币。
 
 #### 1.3 UTF-8
 
-- 可变长度 Unicode 编码方案，**使用 1 到 4 个字节表示一个字符**
-- 完全兼容 ASCII，广泛用于网页设计、邮件传输等场景
-- 无字节序问题，是目前的事实标准
+- 把 Unicode 编号"打包"成字节的**编码方案**，也是目前互联网的事实标准
+- 变长编码：英文 1 字节、中文 3 字节、emoji 4 字节
+- 完全兼容 ASCII——纯英文文本在 UTF-8 和 ASCII 下字节完全一样
+- 无字节序问题
 
 #### 1.4 其他常见编码速查
 
@@ -59,126 +64,122 @@
 | GBK / GB2312 | 1~2 字节 | 中文编码，Windows 中文版默认代码页 936                     |
 | Latin-1      | 1 字节   | 仅西欧字符；解码不抛异常（0x00-0xFF 全覆盖），常用于吞乱码 |
 
-### 二、文本流转与乱码（Python 2 / Python 3 对比）
+### 二、文本与编码基础
 
-#### 1. 文本、字节与字节串（bytes）
+#### 2.1 文本、字节与字节串（bytes）
+
+用“你好”理解三者的关系：若文件以 UTF-8 保存，它对应 6 个字节；按 UTF-8 解码后得到 2 个 Unicode 码点。
 
 | 概念 | 含义 | 示例 |
 | --- | --- | --- |
-| 文本 | 字符序列，只存在于概念和内存中 | `"你好"` |
-| 字节（byte） | 8 位二进制数据，是硬盘和网络上的真实存储形态 | `b'\xe4\xbd\xa0'` |
-| 字节串（bytes） | 一串有序的字节，机器存储/传输用 | `b'\xe4\xbd\xa0\xe5\xa5\xbd'` |
+| 文本 | Unicode 字符序列，表示文字内容 | `U+4F60`、`U+597D` |
+| 字节（byte） | 取值为 0–255 的二进制单位 | `0xe4` |
+| 字节串 | 多个字节组成的序列 | UTF-8 下的“你”：`b'\xe4\xbd\xa0'` |
 
-文本是"意义"，bytes 是"载体"，字节是 bytes 的基本单位。
+#### 2.2 编码与解码
 
-#### 2. 编码与解码
+编码规定文本与字节之间如何转换。同一字符使用不同编码，会得到不同的字节：
 
-**编码**是文本 ↔ 字节的翻译规则（UTF-8、GBK…），它规定"某个字符对应哪几个字节"。同一个字符，用不同编码，得到的字节不同：
-
-| 文本 | 编码 | 得到的 bytes |
+| 文本 | 编码 | 得到的字节 |
 | --- | --- | --- |
 | `"中"` | UTF-8 | `b'\xe4\xb8\xad'`（3 字节） |
 | `"中"` | GBK | `b'\xd6\xd0'`（2 字节） |
 | `"A"` | ASCII | `b'A'`（1 字节） |
 
-编码与解码是这条规则的两个方向：
-
-| 方向 | 操作 | 说明 |
-| --- | --- | --- |
-| encode（编码） | 文本 → bytes | 写入文件、发送网络前执行 |
-| decode（解码） | bytes → 文本 | 读取文件、接收网络数据后执行 |
+- `encode`：文本 → 字节，写入文件或发送网络前使用。
+- `decode`：字节 → 文本，读取文件或接收网络数据后使用。
 
 ```python
 text = "中"
-b = text.encode('utf-8')   # 文本 → bytes：b'\xe4\xb8\xad'
-t = b.decode('utf-8')      # bytes → 文本：'中'
+data = text.encode("utf-8")
+decoded = data.decode("utf-8")
 ```
 
-> ⚠️ **铁律：用什么编码 encode，就必须用什么编码 decode。** 哪一步转换用了不一致的编码，哪一步就乱码或报错。
+**记住：** 解码时要使用字节实际采用的编码；编码或解码规则不匹配可能导致乱码或异常。
+
+### 三、Python 2 与 Python 3 的文本特性总览
+
+#### 内存中的文本与字节
+
+| 特性 | Python 2 | Python 3 |
+| --- | --- | --- |
+| 文本类型 | `unicode` | `str`（Unicode 文本） |
+| 字节类型 | `str`（字节序列） | `bytes`（字节序列） |
+| 转换结果 | `str.decode(encoding)` → `unicode`；`unicode.encode(encoding)` → `str` | `bytes.decode(encoding)` → `str`；`str.encode(encoding)` → `bytes` |
+
+Python 2 的 `str` 和 Python 3 的 `bytes` 都是字节序列，本身不记录编码；文本类型分别是 Python 2 的 `unicode` 和 Python 3 的 `str`。两者转换时，需要按实际编码显式调用 `decode` 或 `encode`。
+
+#### 源码编码与隐式转换
+
+这两个概念发生在不同阶段：**源码编码管解释器如何读取 `.py` 文件；隐式转换管程序运行时如何处理字节与文本。**
+
+1. **读取源码时看源码编码**
+    - Python 2.5 及之后版本默认按 ASCII 读取源码；文件含中文等非 ASCII 字符时，应在前两行之一声明编码，例如 `# -*- coding: utf-8 -*-`。
+    - Python 3 默认按 UTF-8 读取源码。
+    - 编码声明只用于读取当前 `.py` 文件；它不会设置程序读写文件、终端或网络数据时使用的编码，也不会把 Python 2 的普通 `str` 字符串变成 `unicode`。
+
+2. **程序运行时看隐式转换**
+    - Python 2 的 `str` 是字节，`unicode` 是文本。两者混用时，Python 可能按默认 ASCII 把 `str` 解码成 `unicode`；如果字节实际是 UTF-8 中文等非 ASCII 内容，就可能触发 `UnicodeDecodeError`。应先按字节的实际编码解码。
+    - Python 3 的 `bytes` 和 `str` 是不同类型；需要把字节当文本处理时，应显式调用 `bytes.decode(实际编码)`，不会自动替你解码。
+
+#### 文件、键盘与终端 I/O
+
+| 场景 | Python 2 | Python 3 |
+| --- | --- | --- |
+| 读文本文件 | `open("f.txt", "rb").read().decode("utf-8")` | `open("f.txt", encoding="utf-8").read()` |
+| 写文本文件 | `open("f.txt", "wb").write(u"你好".encode("utf-8"))` | `open("f.txt", "w", encoding="utf-8").write("你好")` |
+| 键盘输入 | `raw_input()` 返回字节串，按输入编码解码后再处理 | `input()` 返回 `str`；输入流负责将输入转换为文本 |
+| 输出文本 | `print str` 输出字节；`print unicode` 需要转换为输出流可表示的编码 | `print()` 将文本写入输出流，由输出流处理编码 |
+
+Python 3 源码默认 UTF-8，不代表文件、终端和网络的所有数据都自动使用 UTF-8。Python 3.15 起 UTF-8 mode 默认启用；为兼容不同版本和环境，读写文本文件仍建议显式设置 `encoding="utf-8"`。
+
+**速记：** Python 2 的主要风险是把字节串当文本操作，以及混用时发生 ASCII 隐式转换；Python 3 分开了文本和字节类型，但 I/O 边界仍要使用正确编码。
+
+参考：[Python 2.7 Unicode 指南](https://docs.python.org/zh-cn/2.7/howto/unicode.html)、[PEP 263：源码编码声明](https://peps.python.org/pep-0263/)、[PEP 3120：Python 3 源码默认 UTF-8](https://peps.python.org/pep-3120/)、[Python `open()` 文档](https://docs.python.org/3/library/functions.html#open)、[PEP 686：默认 UTF-8 mode](https://peps.python.org/pep-0686/)、[PowerShell 字符编码说明](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_character_encoding)、[Microsoft `chcp` 命令说明](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/chcp)。
+
+### 四、文本流转与乱码
 
 #### 3. 数据流转：磁盘 → 内存 → 终端
 
-文本在机器与人之间流动，不要画成一张循环图，而是拆成**两条单向链路**来看。两条链路的共同规律是：**数据进入内存时先 decode 成文本，离开内存时再 encode 成字节**。
+文本在机器与人之间流动，可以拆成**两条单向链路**。Python 2/3 在各个边界如何处理数据，见前面的特性总览。
 
-**链路一：显示（读文件 → 给人看）**，顺序是 ① → ②：
+**链路一：显示（读文件 → 给人看）**
 
 ```mermaid
 flowchart LR
     F["硬盘文件<br/>（字节）"]
-    M["内存变量<br/>（文本）"]
+    M["内存<br/>程序 decode / encode"]
     S["屏幕<br/>（人看到的字符）"]
 
-    F -->|"① 读：按文件编码 decode"| M
-    M -->|"② 输出：按终端编码 encode<br/>终端再按代码页显示"| S
+    F -->|"① 读取字节并按文件编码解码"| M
+    M -->|"② 写入输出流；由输出流和宿主环境处理显示"| S
 ```
 
-- 步骤 ①：程序从硬盘读出 bytes，用**文件保存时的编码** decode 成文本，之后才能做 `len`、查找、替换。
-- 步骤 ②：程序 print 时把文本用**终端编码** encode 成字节；终端收到字节后按自己的代码页解码显示。人看到的对不对，取决于这两次编码是否匹配。
+1. 读取文本时，程序或文本 I/O 接口按文件编码把字节转换为文本。
+2. 输出时，输出流按其编码规则转换数据；屏幕显示还受终端或宿主环境影响。
 
-**链路二：录入（人输入 → 存文件）**，顺序是 ① → ②：
+**链路二：录入（人输入 → 存文件）**
 
 ```mermaid
 flowchart LR
-    K["键盘输入<br/>（终端字节）"]
-    M2["内存变量<br/>（文本）"]
+    K["键盘输入<br/>（终端或输入流）"]
+    M2["内存<br/>程序 decode / encode"]
     F2["硬盘文件<br/>（字节）"]
 
-    K -->|"① 读入：按终端编码 decode"| M2
-    M2 -->|"② 写入：按目标编码 encode"| F2
+    K -->|"① 按输入流实际编码转换为文本"| M2
+    M2 -->|"② 按目标编码转换为字节并写入"| F2
 ```
 
-- 步骤 ①：按键先变成终端字节（Python 3 的 `input()` 已自动 decode 成 `str`）。
-- 步骤 ②：程序处理完要落盘时，用**指定的编码**（如 `open(..., encoding="utf-8")`）encode 成 bytes 写入文件；这次用的编码，决定以后读它时必须用什么编码 decode。
+1. 输入经终端或标准输入流进入程序；需要文本时，按输入流实际使用的编码解码。
+2. 写入文本时，按目标编码转换为字节；之后读取时要使用匹配的编码。
 
-合起来看，内存永远是"文本区"，硬盘、终端、键盘永远只和字节打交道：
+**三个环节的职责：**
 
-```text
-硬盘/键盘（字节） --decode--> 内存（文本） --encode--> 屏幕/硬盘（字节）
-```
+- **磁盘**：只存字节，不记录编码（除非 BOM），读之前必须知道编码。
+- **程序**：在内存中负责编解码；Python 2/3 的文本与字节类型和转换行为不同，见前面的特性总览。
+- **终端**：接收输出字节并显示；显示行为取决于输出流、控制台或宿主环境的编码设置。
 
-每个环节的职责：
-
-1. **磁盘：只存字节**
-   - 文件物理上全是字节，没有"字符"概念；存成什么字节，取决于保存时用的编码。
-   - 磁盘通常不记录自己的编码（除非有 BOM 或文件声明），所以读文件必须先知道它是什么编码。
-2. **内存：编解码发生的地方**
-   - 读文件得到 bytes；要理解内容，必须 decode 成文本。
-   - 内存里可以同时存在 bytes 和文本两种对象。
-3. **终端：只收字节，按自己的代码页解读**
-   - cmd/终端也只接收字节，用当前代码页解码显示。
-   - 中文 Windows cmd 默认代码页 936（**GBK**）；送进去的字节必须符合终端编码，否则乱码。
-
-**为什么终端会"自己解码"，内存里还要 decode？**
-
-- 终端解码只负责**显示给人看**，是链路的终点，解码结果不会交还给程序。
-- 程序要处理内容（`len`、查找、替换、切片），必须在内存中把 bytes decode 成文本；否则按字节计算，中文会出错。
-- Python 3 文本模式看似没有手动 decode，其实是 IO 层在数据进入内存前自动完成了 bytes → str。
-
-**读取示例**：解码必须用文件实际的编码：
-
-```python
-# Python 2：open() 读到的是字节串，需手动 decode
-with open("note.txt", "rb") as f:
-    text = f.read().decode("utf-8")  # bytes → unicode
-
-# Python 3：文本模式自动 decode
-with open("note.txt", "r", encoding="utf-8") as f:
-    text = f.read()  # 得到 str
-```
-
-**写入示例**：写入前的 encode 决定以后读取时要用的解码方式：
-
-```python
-# Python 3：文本模式按 encoding 自动 encode
-with open("out.txt", "w", encoding="utf-8") as f:
-    f.write("你好")  # str → bytes
-
-# Python 2：先 encode 成字节再写入
-with open("out.txt", "wb") as f:
-    f.write(u"你好".encode("utf-8"))  # unicode → bytes
-```
-
-**键盘输入**：Python 3 的 `input()` 由标准输入流解码，直接得到 `str` 文本；Python 2 的 `raw_input()` 返回字节串，需按输入端编码 `decode`。
+> 终端负责显示，不会把屏幕上的结果自动交还给程序；程序若要按字符处理输入，应先确保数据已解码为文本。
 
 #### 4. 乱码的本质与解决
 
@@ -210,115 +211,76 @@ flowchart LR
 
 ##### 4.2 Python 2 为什么容易乱码
 
-Python 2 的乱码不是"编码种类少"，而是它的三个设计缺陷让"写编码"和"读编码"很容易对不上。每个缺陷都对应 4.1 里的一类不一致；Python 3 怎么逐个解决，见第 5 节。
+Python 2 并非不支持中文。结合前面的特性总览，常见问题主要是把字节串当文本操作，以及混用 `str` 和 `unicode` 时触发隐式 ASCII 解码。
 
-**缺陷一：文本和字节是两种字符串，还允许隐式转换**
-
-Python 2 用两种类型分别表示文本和字节：
-
-| 类型 | 本质 | 写法示例 |
-| --- | --- | --- |
-| `unicode` | 文本（码点序列） | `u"你好"` |
-| `str` | 字节，本身不带编码含义 | utf-8 源码文件里的 `"你好"`，就是 6 个字节 |
-
-- 易混点：`str` 名字像字符串，实际是字节（对应关系见第 5 节速查表）。
-- 两者混用时，Python 2 会自动按 ASCII 转换，一碰中文就报错或出错——隐式转换等于"偷偷用了一种你不知道的编码去读写"。
-
-**缺陷二：源码文件默认按 ASCII 解码**
-
-Python 2 读 `.py` 文件时按 ASCII 解码，源码里有中文必须先声明编码，否则报 `SyntaxError: Non-ASCII character`：
+**问题一：把 `str` 当文本处理。** `len()`、索引和切片针对的是字节，不一定是字符：
 
 ```python
-# -*- coding: utf-8 -*-   # 只管"源码文件本身怎么读"，不管终端
+# -*- coding: utf-8 -*-
+s = "中学"                    # Python 2 的 str：UTF-8 字节
+text = s.decode("utf-8")     # unicode 文本
+literal = u"中学"             # unicode 字面量
+print len(s)                  # 6：按字节计数
+print len(text)               # 2：按 Unicode 码点计数
+print len(literal)            # 2
 ```
 
-这行声明决定了源码里的中文字面量被存成什么字节，也就是后面 `print`、写文件时字节的来源——它管的是"磁盘 → 内存"这一段，不管"内存 → 终端"。
+**问题二：混用 `str` 和 `unicode`。** 拼接时，Python 2 会尝试用默认 ASCII 解码 `str`；如果其中有中文的 UTF-8 字节，就会触发 `UnicodeDecodeError`。
 
-**缺陷三：print 的行为随类型变化（cmd 乱码的直接原因）**
+```python
+# -*- coding: utf-8 -*-
+"你好" + u"世界"  # 默认 ASCII 无法解码中文字节，会触发 UnicodeDecodeError
+```
 
-- `print str`（字节）：原样吐出，不管终端能不能看懂；
-- `print unicode`（文本）：先按终端编码（`sys.stdout.encoding`）转码再输出。
+**正确做法：先按字节的实际编码解码，再拼接 Unicode 文本。**
 
-中文 Windows 的 cmd 默认代码页 936（GBK）。把两种行为放进"写编码 = 读编码"这条铁律，就是四种结果：
+```python
+# -*- coding: utf-8 -*-
+byte_text = "你好"  # Python 2 的 str，内容是 UTF-8 字节
+text = byte_text.decode("utf-8")  # Python 2 中将 str 字节串解码为 unicode
+result = text + u"世界"
 
-| 源码声明 | 打印写法 | 终端代码页 | 结果 | 原因 |
-| -------- | -------- | ---------- | ---- | ---- |
-| utf-8 | `print "中文"`（str） | GBK | 乱码 | 吐 UTF-8 字节，终端按 GBK 读 |
-| gbk | `print "中文"`（str） | GBK | 正常 | 两边都是 GBK |
-| utf-8 | `print u"中文"`（unicode） | GBK | 正常 | print 自动转成 GBK 字节 |
-| utf-8 | `print "中文"`（str） | `chcp 65001` | 正常 | 两边都是 UTF-8 |
+print type(result)  # <type 'unicode'>
+print len(result)   # 4
+```
 
-一句话：**`str` 是字节，print 不管终端死活；`unicode` 是文本，print 会帮你转成终端编码。** 对应的三种解决办法见 4.3。
+`decode()` 中的编码必须与字节的实际编码一致；若 `byte_text` 是 GBK 字节，应改用 `decode("gbk")`。
 
 ##### 4.3 排查与解决
 
 **1）排查口诀：逐段核对编码**
 
-顺着第 3 节的两条链路，在每一次"字节 ↔ 文本"转换处只问一个问题——写和读用的编码一致吗？
+顺着本节的两条链路，在每一次"字节 ↔ 文本"转换处只问一个问题——写和读用的编码一致吗？
 
 - 磁盘 → 内存（链路一 ①）：文件保存编码 = 读取声明的编码？不等 → 读出来就是乱码。
 - 内存 → 终端（链路一 ②）：程序输出编码 = 终端代码页？不等 → 文本没错，显示乱码。
 
-**2）预防原则：边界处编解码，内存里只用文本**
+**2）预防原则：边界处编解码，内存里用 Unicode 文本处理**
 
-> **文本进内存后立刻 decode 成 unicode，输出前最后一刻才 encode 成 bytes。**
-
-- 内存中统一用文本（unicode）处理字符，因为对 bytes 做字符串操作是按字节算的，中文会出错：
-
-  ```python
-  s = "中"        # UTF-8 字节串（Python 2 的 str）
-  len(s)          # 3  ← 按字节算，错
-  len(u"中")      # 1  ← 按字符算，对
-  ```
+> **读取字节后按来源编码解码；文本处理使用 `unicode`；写出前按目标编码编码。**
 
 **3）解决 cmd 乱码的三种办法**
 
-按 4.2 的四种组合表，任选其一让"写编码 = 读编码"即可：
+核心是让程序输出与终端能够正确解读这些字节：
 
-1. **源文件声明改成 `# -*- coding: gbk -*-`**：最省事，匹配 cmd 默认 GBK。
+1. **特定场景下使用 GBK 源文件**：源码文件需实际保存为 GBK，并声明 `# -*- coding: gbk -*-`；仅适用于终端按 GBK 解读输出的场景。
 2. **切换 cmd 到 UTF-8**：执行 `chcp 65001`，临时把当前终端会话切到 UTF-8。
-3. **输出用 unicode**：`print u"中文"`，让 Python 自动适配终端编码。
+3. **输出 Unicode 文本**：`print u"中文"` 会尝试按输出流编码转换；仍需确认终端能表示该编码。
 
 注意：
 
 - cmd 不是只支持 GBK，`chcp 65001` 可临时切到 UTF-8。
 - `print unicode` 正常显示的前提：终端编码能表示目标字符；否则报 `UnicodeEncodeError`。
 
-#### 5. Python 3 的改进与速查表
-
-Python 3 把规则彻底理清了：
-
-- 文本用 `str`（默认就是 Unicode），字节用 `bytes`，两种类型严格区分，不能隐式互转；
-- 源码默认 UTF-8，不用再写编码声明；
-- 读写文本文件由 `open(..., encoding=...)` 自动编解码，不再手动处理字节。
-
-```python
-s = "中"                    # str，文本
-b = s.encode('utf-8')       # bytes，字节序列：b'\xe4\xb8\xad'
-```
-
-Python 2 / 3 速查表：
-
-| 对比项 | Python 2 | Python 3 |
-| --- | --- | --- |
-| 文本类型 | `unicode` | `str`（Unicode 码点序列） |
-| 字节类型 | `str` | `bytes` |
-| 源码默认编码 | ASCII（需声明） | UTF-8 |
-| 读文本文件 | `rb` + 手动 `decode` | `open(..., encoding=...)` |
-| 键盘输入 | `raw_input()` 返回字节 | `input()` 返回 `str` |
-| print 文本 | 按 `sys.stdout.encoding` 转码 | 由标准输出流处理编码 |
-
-参考：[Python 2.7 Unicode 指南](https://docs.python.org/zh-cn/2.7/howto/unicode.html)、[Python 3 `open()` 文档](https://docs.python.org/3/library/functions.html#open)、[Microsoft `chcp` 命令说明](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/chcp)。
-
-#### 6. 二进制旁路：不经过"内存文本"
+#### 5. 二进制旁路：不经过"内存文本"
 
 `rb` / `wb` 只搬运字节，不做编解码，用于图片、音频等；对二进制数据做 decode 会报错或损坏数据。
 
 ---
 
-### 三、Agent 场景下的字符编码
+### 五、Agent 场景下的字符编码
 
-#### 3.1 Agent 链路中的编码陷阱
+#### 5.1 Agent 链路中的编码陷阱
 
 ```
 用户输入 → 前端 → API → LLM → 工具调用（Shell/Python/文件读写）→ 返回 → 前端渲染
@@ -328,17 +290,17 @@ Python 2 / 3 速查表：
 
 | 环节                 | 典型问题                                  | 根因                                              |
 | -------------------- | ----------------------------------------- | ------------------------------------------------- |
-| Windows 终端工具调用 | 中文文件读取后变 `è…`                     | PowerShell 默认 GBK（cp936），Agent 按 UTF-8 解析 |
+| Windows Shell 工具调用 | 中文输出显示异常或解码失败 | Shell/控制台输出字节与 Agent 假定的编码不一致；版本、代码页和重定向方式都会影响结果 |
 | Linux/macOS Shell    | `LANG=C` 时中文变 `???`                   | locale 未设为 UTF-8                               |
 | LLM 输出             | BPE tokenizer 边界切分导致 emoji/CJK 截断 | BPE 按字节切分，多字节字符可能被拆散              |
 | 工具链传递           | 文件名含中文，传给 Shell 时被转义         | 参数未做 encoding 保护                            |
 | 上下文污染           | 一次乱码进入 session 记忆，后续持续出错   | 乱码字节被当作合法文本存储                        |
 
-#### 3.2 Windows Agent 乱码修复
+#### 5.2 Windows Agent 乱码修复
 
-中文 Windows 下 Agent 最常见的编码故障：
+Windows 下的 Shell 工具输出没有一个适用于所有版本和调用方式的固定编码：PowerShell 版本、活动控制台代码页以及输出是否被重定向，都可能影响数据表示。
 
-**原因**：Windows PowerShell 默认代码页 936（GBK），Agent 工具通过 Shell 执行命令时按 UTF-8 解析输出 → 中文乱码。
+如果 Agent 按 UTF-8 解码，而工具实际输出的字节采用其他编码，就可能出现乱码或解码错误。
 
 | 修复方法        | 命令                                                         | 作用范围     |
 | --------------- | ------------------------------------------------------------ | ------------ |
@@ -347,7 +309,7 @@ Python 2 / 3 速查表：
 | Python 环境变量 | `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`                    | Python 进程  |
 | PowerShell 配置 | `$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` | 当前 PS 会话 |
 
-#### 3.3 Agent System Prompt 语言锁定
+#### 5.3 Agent System Prompt 语言锁定
 
 | 层级          | 方法                   | 效果                          |
 | ------------- | ---------------------- | ----------------------------- |
@@ -355,16 +317,15 @@ Python 2 / 3 速查表：
 | 工具返回      | 指定英文结果翻译成中文 | 防止工具输出带偏 LLM          |
 | 文件编码      | 所有读写默认 UTF-8     | 避免 Agent 读写文件时编码错误 |
 
-### 四、总结（新手速记清单）
+### 六、总结（新手速记清单）
 
 1. Unicode 表示字符；UTF-8、GBK 等编码把文本转换为字节。
 2. 文本 = 意义，bytes = 载体，编码 = 翻译规则。
-3. 磁盘只存字节，终端只收字节，编解码发生在内存。
+3. 磁盘保存字节；程序在 I/O 边界负责编解码；终端显示受输出流和宿主环境影响。
 4. encode：文本 → bytes；decode：bytes → 文本；用什么编码 encode，就用什么编码 decode。
 5. 乱码 = 某一环"写编码" ≠ "读编码"，顺着"磁盘 → 内存 → 终端"逐段核对。
-6. 内存里处理文本用 unicode；二进制数据（图片等）永远是 bytes，不做文本编解码。
-7. Python 2：`str` 是字节，`unicode` 是文本，print `unicode` 会自动转终端编码；源码含中文需声明编码。
-8. Python 3：`str` 是文本，`bytes` 是字节，源码默认 UTF-8，规则清晰，乱码问题从根源减少。
+6. 文本处理使用 Unicode 文本；二进制数据（图片等）按 `bytes` 处理，不做文本编解码。
+7. Python 2/3 的类型、源码编码和 I/O 差异，见“Python 2 与 Python 3 的文本特性总览”。
 
 ## 数据类型
 
@@ -433,27 +394,7 @@ s = u"你好"
 
 - Python 3 中所有字符串**默认就是 Unicode**，`u` 前缀可省略（兼容 Python 2 保留）
 
-##### 5. 字节串（`b` 前缀）
-
-前缀 `b` 表示 bytes，即二进制数据。
-
-```python
-data = b"hello"
-print(type(data))   # <class 'bytes'>
-print(data[0])       # 104（ASCII 码值，不是字符）
-```
-
-编解码：
-
-```python
-data = b"hello"
-decoded = data.decode("utf-8")   # bytes → str
-encoded = decoded.encode("utf-8") # str → bytes
-```
-
-常用于**网络传输**、**文件二进制操作**、**序列化**。
-
-##### 6. 格式化字符串（`f` 前缀，f-string）
+##### 5. 格式化字符串（`f` 前缀，f-string）
 
 前缀 `f` / `F`，花括号 `{}` 中直接嵌入变量或表达式。详见下文"格式化方式"。
 
@@ -609,6 +550,44 @@ s = f"""姓名：{name}
 
 `split` 等方法的名称可能相似，但参数和行为不一定相同。例如 Java 的 `String.split()` 参数是正则表达式；跨语言迁移时要留意分隔符和转义规则。
 
+### 字节串（bytes）
+
+`bytes` 是不可变的**字节序列**，每个元素是 0-255 的整数，本质是二进制数据。与 `str` 是平级的内置类型，不是父子关系。
+
+| 类型 | 本质 | 示例 |
+|------|------|------|
+| `str` | Unicode 文本序列 | `"你好"` |
+| `bytes` | 0-255 的字节序列 | `b"hello"` 或 `b'\xe4\xbd\xa0'` |
+
+```python
+data = b"hello"
+print(type(data))    # <class 'bytes'>
+print(data[0])        # 104（ASCII 码值，不是字符）
+
+# 字节串的每个元素是整数
+data = b"\xff\xd8\xff"
+print(data[0])        # 255
+```
+
+**编解码：**
+
+```python
+data = b"hello"
+decoded = data.decode("utf-8")   # bytes → str
+encoded = decoded.encode("utf-8") # str → bytes
+```
+
+**注意 f-string 中的 bytes：** `b64encode` 返回 `bytes`，直接拼进 f-string 会带上 `b'...'` 前缀和引号，导致字符串被污染。必须先 `.decode()` 转为 `str`：
+
+```python
+import base64
+raw = base64.b64encode(b"hello")  # b'aGVsbG8='
+# f"data:{raw}"  →  data:b'aGVsbG8='  ❌
+f"data:{raw.decode()}"  →  data:aGVsbG8=  ✅
+```
+
+常用于**网络传输**、**文件二进制操作**、**序列化**。编码原理详见「标准库与数据交换 → base64」。
+
 ### 列表
 
 #### 列表的存储结构
@@ -684,6 +663,83 @@ d = {"a": 1, "b": 2}
 ### json
 
  `json.dumps()` 将 Python 字典转为 JSON 字符串，`ensure_ascii=False` 用于保留中文，不将中文转换成 `\u4f60\u597d`。这个结果随后交给 SSE 响应组件发送给前端。
+
+### base64
+
+Base64 将二进制数据编码为纯 ASCII 文本，方便通过 JSON 等文本协议传输。
+
+**原理：** 每 3 个字节（24 bits）切成 4 个 6-bit 片段，每个片段查表映射一个字符（A-Z、a-z、0-9、+、/）。
+
+```text
+JPEG 文件头 FF D8 FF（前 3 字节）：
+11111111 11011000 11111111  → 切成 4 组 6-bit
+111111  111101  100011  111111
+  63      61      35      63    ← 十进制
+  /       9       j       /     ← 查表
+
+所以 JPEG 的 base64 总是以 /9j/ 开头。
+```
+
+**API：**
+
+```python
+import base64
+
+raw = base64.b64encode(b"hello")   # bytes: b'aGVsbG8='
+text = raw.decode()                 # str:   'aGVsbG8='
+
+original = base64.b64decode(text)   # bytes: b'hello'
+```
+
+- `b64encode()` 返回 `bytes`，必须 `.decode()` 转为 `str` 才能拼进 f-string 或 JSON
+- `b64decode()` 接收 `str` 或 `bytes`，还原为原始二进制
+
+**实战示例（图片传输）：**
+
+```python
+import base64
+import httpx
+
+resp = httpx.get(image_url, headers={"User-Agent": "Mozilla/5.0"})
+resp.raise_for_status()
+image_data = base64.b64encode(resp.content).decode()
+# 拼成 data URL 传给模型：
+data_url = f"data:image/jpeg;base64,{image_data}"
+```
+
+### httpx
+
+`httpx` 是 Python 的 HTTP 客户端，用于发送请求和获取响应。
+
+**常用属性和方法：**
+
+```python
+import httpx
+
+resp = httpx.get("https://example.com/image.jpg")
+```
+
+| 属性/方法 | 说明 |
+|-----------|------|
+| `resp.status_code` | HTTP 状态码（200、404 等） |
+| `resp.content` | 响应体的原始字节（`bytes`） |
+| `resp.text` | 响应体解码后的字符串（`str`） |
+| `resp.raise_for_status()` | 状态码非 2xx 时抛出 `HTTPStatusError` |
+| `resp.headers` | 响应头字典 |
+
+**`raise_for_status()`：** `httpx.get()` 即使返回 4xx/5xx 也不会自动抛异常。调用此方法会检查状态码，失败时抛异常——避免把 403 错误页面当作正常数据处理。
+
+```python
+resp = httpx.get(url)
+resp.raise_for_status()  # 确保下载成功，否则立刻报错
+data = resp.content      # 安全读取响应体
+```
+
+**加 User-Agent 头：** 部分服务器会拒绝无 User-Agent 的请求（返回 403），需要模拟浏览器：
+
+```python
+resp = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"})
+```
 
 ## 异常处理
 
