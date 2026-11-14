@@ -99,28 +99,46 @@ decoded = data.decode("utf-8")
 
 ### 三、Python 2 与 Python 3 的文本特性总览
 
-#### 内存中的文本与字节
+#### 源码默认编码
+
+- Python 2.5 及之后版本默认按 ASCII 读取源码；文件含中文等非 ASCII 字符时，应在前两行之一声明编码，例如 `# -*- coding: utf-8 -*-`。
+- Python 3 默认按 UTF-8 读取源码。
+- 编码声明告诉解释器如何读取当前 `.py` 源码，不会设置程序读写文件、终端或网络数据时使用的编码。
+
+#### 内存类型和转换
+
+**磁盘读取到内存（文本模式）：**
+
+- Python 2 内置 `open()`：读到字节串 `str`，不会自动解码；需要时按文件编码手动 `decode()` 为 `unicode`。
+- Python 3 `open()`：按指定或默认编码自动解码，读到 Unicode 文本 `str`。
+
+`rb` 是二进制模式，读取字节时不自动解码。
 
 | 特性 | Python 2 | Python 3 |
 | --- | --- | --- |
+| 普通字符串 `"hello"` | `str`（字节序列） | `str`（Unicode 文本） |
 | 文本类型 | `unicode` | `str`（Unicode 文本） |
 | 字节类型 | `str`（字节序列） | `bytes`（字节序列） |
 | 转换结果 | `str.decode(encoding)` → `unicode`；`unicode.encode(encoding)` → `str` | `bytes.decode(encoding)` → `str`；`str.encode(encoding)` → `bytes` |
 
-Python 2 的 `str` 和 Python 3 的 `bytes` 都是字节序列，本身不记录编码；文本类型分别是 Python 2 的 `unicode` 和 Python 3 的 `str`。两者转换时，需要按实际编码显式调用 `decode` 或 `encode`。
+Python 2 和 Python 3 的内存中都可以同时存在字节串和 Unicode 文本。下面以 UTF-8 编码的“你好”为例，用 `len()` 比较两者：
 
-#### 源码编码与隐式转换
+```python
+# -*- coding: utf-8 -*-
+value = "你好"  # Python 2：普通 str 是字节串
+text = value.decode("utf-8")  # 显式解码为 unicode
 
-这两个概念发生在不同阶段：**源码编码管解释器如何读取 `.py` 文件；隐式转换管程序运行时如何处理字节与文本。**
+print len(value)  # 6：UTF-8 字节数
+print len(text)   # 2：本例中的 Unicode 码点数
+```
 
-1. **读取源码时看源码编码**
-    - Python 2.5 及之后版本默认按 ASCII 读取源码；文件含中文等非 ASCII 字符时，应在前两行之一声明编码，例如 `# -*- coding: utf-8 -*-`。
-    - Python 3 默认按 UTF-8 读取源码。
-    - 编码声明只用于读取当前 `.py` 文件；它不会设置程序读写文件、终端或网络数据时使用的编码，也不会把 Python 2 的普通 `str` 字符串变成 `unicode`。
+```python
+value = "你好"  # Python 3：普通 str 是 Unicode 文本
+data = value.encode("utf-8")  # 显式编码为 bytes
 
-2. **程序运行时看隐式转换**
-    - Python 2 的 `str` 是字节，`unicode` 是文本。两者混用时，Python 可能按默认 ASCII 把 `str` 解码成 `unicode`；如果字节实际是 UTF-8 中文等非 ASCII 内容，就可能触发 `UnicodeDecodeError`。应先按字节的实际编码解码。
-    - Python 3 的 `bytes` 和 `str` 是不同类型；需要把字节当文本处理时，应显式调用 `bytes.decode(实际编码)`，不会自动替你解码。
+print(len(value))  # 2：Unicode 码点数
+print(len(data))   # 6：UTF-8 字节数
+```
 
 #### 文件、键盘与终端 I/O
 
@@ -135,7 +153,7 @@ Python 3 源码默认 UTF-8，不代表文件、终端和网络的所有数据�
 
 **速记：** Python 2 的主要风险是把字节串当文本操作，以及混用时发生 ASCII 隐式转换；Python 3 分开了文本和字节类型，但 I/O 边界仍要使用正确编码。
 
-参考：[Python 2.7 Unicode 指南](https://docs.python.org/zh-cn/2.7/howto/unicode.html)、[PEP 263：源码编码声明](https://peps.python.org/pep-0263/)、[PEP 3120：Python 3 源码默认 UTF-8](https://peps.python.org/pep-3120/)、[Python `open()` 文档](https://docs.python.org/3/library/functions.html#open)、[PEP 686：默认 UTF-8 mode](https://peps.python.org/pep-0686/)、[PowerShell 字符编码说明](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_character_encoding)、[Microsoft `chcp` 命令说明](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/chcp)。
+参考：[Python 2.7 Unicode 指南](https://docs.python.org/zh-cn/2.7/howto/unicode.html)、[Python 2.7 `io` 模块](https://docs.python.org/2.7/library/io.html)、[PEP 263：源码编码声明](https://peps.python.org/pep-0263/)、[PEP 3120：Python 3 源码默认 UTF-8](https://peps.python.org/pep-3120/)、[Python `open()` 文档](https://docs.python.org/3/library/functions.html#open)、[PEP 686：默认 UTF-8 mode](https://peps.python.org/pep-0686/)、[PowerShell 字符编码说明](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_character_encoding)、[Microsoft `chcp` 命令说明](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/chcp)。
 
 ### 四、文本流转与乱码
 
@@ -649,6 +667,14 @@ d = {"a": 1, "b": 2}
 # d 中存储的是 key 和 value 的指针
 ```
 
+#### 内存视角对比
+
+| 结构 | 存储方式 | 访问方式 | 是否有序 |
+|------|----------|----------|----------|
+| list | 连续指针数组 | 下标索引 | 是 |
+| dict | 哈希表 + entries | 键哈希 | 是（Python 3.7+） |
+
+列表和字典都保存对象引用，而不是对象本身。
 
 ## 标准库与数据交换
 
@@ -698,6 +724,7 @@ image_data = base64.b64encode(resp.content).decode()
 # 拼成 data URL 传给模型：
 data_url = f"data:image/jpeg;base64,{image_data}"
 ```
+
 ### httpx
 
 `httpx` 是 Python 的 HTTP 客户端，用于发送请求和获取响应。
