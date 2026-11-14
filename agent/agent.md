@@ -105,6 +105,25 @@ decoded = data.decode("utf-8")
 - Python 3 默认按 UTF-8 读取源码。
 - 编码声明告诉解释器如何读取当前 `.py` 源码，不会设置程序读写文件、终端或网络数据时使用的编码。
 
+#### 源码编码声明：`coding: utf-8` 的作用
+
+最实际的作用是：让包含中文的 Python 2 源文件能够运行。否则程序在解析源码时就报错，后面的 decode() 根本没有机会执行。
+
+例如，将下面的代码保存为 UTF-8、无 BOM 的文件，在 Python 2.7 中运行：
+
+print len("你好".decode("utf-8"))
+
+没有编码声明时，解释器按 ASCII 读取源码，遇到中文会报 SyntaxError。(docs.python.org)
+
+加上声明后才能运行：
+```python
+# -*- coding: utf-8 -*-
+print len("你好".decode("utf-8"))  # 2
+print len(u"你好")    
+```
+
+**所以：**编码声明负责让源码能被正确解析；.decode() 负责转换已有的字节串。如果源码全部是 ASCII，通常就不需要这行声明。
+
 #### 内存类型和转换
 
 **磁盘读取到内存（文本模式）：**
