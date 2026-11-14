@@ -2667,7 +2667,7 @@ LangChain 使用消息对象表示对话中的不同角色和内容。常见消�
 | `AIMessage`     | 模型生成的回复           |
 | `ToolMessage`   | 工具调用返回的结果         |
 
-`AIMessage` 不是 API 接口，而是一个用于封装模型回复的消息对象。模型调用通常返回 `AIMessage`，可以通过 `.content` 获取回复文本：
+`AIMessage` 不是 API 接口，而是一个用于封装模型回复的消息对象。模型调用通常返回 `AIMessage`，可以通过 `.content` 获取回复正文：
 
 ```python
 from langchain_core.messages import AIMessage
@@ -2704,7 +2704,7 @@ message = HumanMessage(content=[
 
 `image_url` 是 OpenAI 风格的图片内容块；LangChain 也提供标准化的 `image`、`audio`、`video`、`file` 等内容块。具体字段格式和支持的媒体类型取决于模型集成及模型本身，不能只凭消息构造成功就判断模型支持该输入。图片 Data URL 中的 MIME 类型应与实际图片格式一致。
 
-模型响应的 `content` 也可能是内容块列表，而不只是字符串；只有需要纯文本时，才应按实际响应结构提取文本。
+模型响应的 `content` 也可能是内容块列表，而不只是字符串；需要统一处理多模态响应时，可以读取 `message.content_blocks` 获取标准化内容块。只有需要纯文本时，才应按实际响应结构提取文本。
 
 ### 3. API 说明
 
