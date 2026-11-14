@@ -703,46 +703,48 @@ d = {"a": 1, "b": 2}
 
 ### base64
 
-Base64 将二进制数据编码为纯 ASCII 文本，方便通过 JSON 等文本协议传输。
+Base64 用 ASCII 字符表示二进制数据（`bytes`），常用于在 JSON 或 Data URL 中传递图片等数据。它是编码方式，不是加密方式；编码后的数据通常会比原始数据大约三分之一。
 
-**原理：** 每 3 个字节（24 bits）切成 4 个 6-bit 片段，每个片段查表映射一个字符（A-Z、a-z、0-9、+、/）。
+**转换流程：**
+
+```mermaid
+flowchart TD
+A["原始数据<br/>bytes"] -->|"b64encode()"| B["Base64 结果<br/>bytes"]
+B -->|"decode('ascii')"| C["Base64 文本<br/>str"]
+C -->|"b64decode()"| D["还原数据<br/>bytes"]
+```
+
+**编码原理：** 每 3 个字节（24 bits）分成 4 组 6 bits，再把每组映射为一个 Base64 字符；原始数据总长度不是 3 的倍数时，编码结果末尾会用 `=` 补位。
 
 ```text
-JPEG 文件头 FF D8 FF（前 3 字节）：
-11111111 11011000 11111111  → 切成 4 组 6-bit
-111111  111101  100011  111111
-  63      61      35      63    ← 十进制
-  /       9       j       /     ← 查表
-
-所以 JPEG 的 base64 总是以 /9j/ 开头。
+JPEG 文件头 FF D8 FF：
+二进制：11111111 11011000 11111111
+分组：  111111 111101 100011 111111
+数值：    63     61     35     63
+字符：     /      9      j      /
 ```
 
-**API：**
+因此，JPEG 文件头编码后以 `/9j/` 开头。
+
+**Python 编解码：**
 
 ```python
 import base64
 
-raw = base64.b64encode(b"hello")   # bytes: b'aGVsbG8='
-text = raw.decode()                 # str:   'aGVsbG8='
+original_bytes = b"hello"  # 示例原始二进制数据
+encoded_bytes = base64.b64encode(original_bytes)  # 编码结果仍是 bytes
+encoded_text = encoded_bytes.decode("ascii")  # 转成可拼接、传输的 str
+decoded_bytes = base64.b64decode(encoded_text)  # 解码还原为原始 bytes
 
-original = base64.b64decode(text)   # bytes: b'hello'
+print(encoded_bytes)  # b'aGVsbG8='
+print(encoded_text)  # aGVsbG8=
+print(decoded_bytes)  # b'hello'
+assert decoded_bytes == original_bytes
 ```
 
-- `b64encode()` 返回 `bytes`，必须 `.decode()` 转为 `str` 才能拼进 f-string 或 JSON
-- `b64decode()` 接收 `str` 或 `bytes`，还原为原始二进制
-
-**实战示例（图片传输）：**
-
-```python
-import base64
-import httpx
-
-resp = httpx.get(image_url, headers={"User-Agent": "Mozilla/5.0"})
-resp.raise_for_status()
-image_data = base64.b64encode(resp.content).decode()
-# 拼成 data URL 传给模型：
-data_url = f"data:image/jpeg;base64,{image_data}"
-```
+- `b64encode()` 接收 `bytes`，返回 Base64 编码后的 `bytes`；需要拼入文本时，再用 ASCII 解码为 `str`。
+- `b64decode()` 接收 Base64 的 `str` 或 `bytes`，返回原始 `bytes`。
+- 图片 Data URL 的形式是 `data:image/jpeg;base64,<Base64文本>`；前缀说明媒体类型和编码方式，后面才是图片的 Base64 文本。
 
 ### httpx
 
@@ -2678,7 +2680,31 @@ print(message.content)
 # 这是模型生成的回答
 ```
 
-`AIMessage(...)` 返回的是一个完整的消息对象，不是普通字符串。`message.content` 才是消息正文，类型为 `str`；消息对象还可以包含角色、响应元数据等信息。
+`AIMessage(...)` 返回的是一个完整的消息对象，不是普通字符串。`message.content` 是消息正文；纯文本时通常是 `str`，多模态时也可以是内容块列表。消息对象还可以包含角色、响应元数据等信息。
+
+#### `content` 的常见形式
+
+`content` 可以是纯文本，也可以是按顺序排列的文本和多模态内容块。常见形式如下：
+
+| 形式 | 示例 | 用途 |
+| --- | --- | --- |
+| 纯文本字符串 | `HumanMessage(content="你好")` | 普通文本对话，最常用 |
+| 内容块列表 | `[{"type": "text", "text": "描述图片"}, ...]` | 混合文本、图片、音频、视频或文件等内容 |
+
+例如，下面将文字和图片放在同一条用户消息中：
+
+```python
+from langchain_core.messages import HumanMessage
+
+message = HumanMessage(content=[
+    {"type": "text", "text": "用中文描述这张图片中的天气"},
+    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,<Base64 图片数据>"}},
+])
+```
+
+`image_url` 是 OpenAI 风格的图片内容块；LangChain 也提供标准化的 `image`、`audio`、`video`、`file` 等内容块。具体字段格式和支持的媒体类型取决于模型集成及模型本身，不能只凭消息构造成功就判断模型支持该输入。图片 Data URL 中的 MIME 类型应与实际图片格式一致。
+
+模型响应的 `content` 也可能是内容块列表，而不只是字符串；只有需要纯文本时，才应按实际响应结构提取文本。
 
 ### 3. API 说明
 
