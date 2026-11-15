@@ -1114,6 +1114,7 @@ print(add(2, 3))
 - `*args` 和 `**kwargs` 让包装函数可以接收并转发原函数的位置参数与关键字参数。
 - `return result` 保留原函数的返回值；省略它时，包装函数默认返回 `None`。
 - `@wraps(func)` 将原函数的名称、文档字符串等元数据复制到包装函数，避免调试或查看 `__name__` 时只看到 `wrapper`。
+- LangChain 的 `@tool` 也采用装饰器语法，但会生成工具对象，而不是普通的包装函数；工具的定义与调用见后文“工具”章节。
 
 输出：
 
@@ -3941,239 +3942,125 @@ print(safe_parser.invoke("invalid"))
 
 ## 对话历史 API
 
-### 1. 概念
+### 1. 对话历史的作用
 
-聊天模型不会自动保存前一次请求中的对话。要实现多轮对话，应用需要保存历史消息，并在后续调用时再次传给模型。
+聊天模型的每次调用需要接收本次所需的上下文。为了让模型在多轮对话中参考前文，应用需要保存消息，并在后续调用时把适当的历史重新传入模型。
 
-本节介绍两种职责不同的对象：
+对话历史管理可以拆成三个职责：
 
-- `ChatMessageHistory`：保存一份聊天消息，负责存储和读取。
-- `RunnableWithMessageHistory`：包装已有的 Runnable，负责在调用时读取历史，并在调用完成后更新历史。
-
-两者之间还需要一个由开发者编写的 `get_session_history()` 函数：它根据会话标识找到对应的历史对象。历史消息如何插入提示词，参见前面的 `MessagesPlaceholder` 介绍。
-
-一次多轮对话的大致过程：
-
-1. 调用方传入当前问题和会话 ID。
-2. 包装器调用 `get_session_history()`，取得该会话的历史。
-3. 包装器将历史传给原始链，原始链再调用模型。
-4. 原始链成功结束后，包装器把当前用户消息和模型回复加入历史。
-
-> `RunnableWithMessageHistory` 已被官方标记为弃用，本节用于理解和维护旧版链式示例。新应用可参考 LangGraph 的持久化机制；相关安全注意事项见后面的多轮对话实战。
-
-### 2. 使用场景
-
-- **多轮问答**：让模型在回答当前问题时能够参考同一会话中的前文。
-- **会话隔离**：为不同会话获取不同的历史对象，避免混用对话。
-- **本地学习**：使用内存保存历史，不需要数据库；但程序退出后通常不能恢复。
-- **单次独立问答**：如果不需要上下文，可以直接调用原始链，不一定需要历史管理。
-
-### 3. API 说明
-
-#### `ChatMessageHistory`
-
-`ChatMessageHistory` 是用于在**内存**中保存聊天消息的类。当前示例从 `langchain_community.chat_message_histories` 导入它；在项目使用的版本中，它是 `InMemoryChatMessageHistory` 的别名。调用 `ChatMessageHistory()` 会创建历史对象，消息保存在对象的 `messages` 列表中。
-
-| 操作 | 作用 |
+| 职责 | 作用 |
 | --- | --- |
-| `ChatMessageHistory()` | 创建一份空的历史记录 |
+| 历史对象 | 保存、读取和更新一份消息记录 |
+| 历史获取函数 | 根据会话标识找到或创建对应的历史对象 |
+| 历史包装器 | 在调用原始链时读取历史，并在结束后更新记录 |
+
+应用也可以不使用包装器，自己保存和传入历史。手动传入、内存管理以及不同会话的完整代码，参见[多轮对话：对话历史与会话隔离](#多轮对话对话历史与会话隔离)。
+
+### 2. `ChatMessageHistory`：保存对话消息
+
+`ChatMessageHistory` 是一份聊天消息的内存存储对象。后文实战从 `langchain_community.chat_message_histories` 导入这个名称；在本项目当前安装的 `langchain-core 1.6.1` 环境中，它是 `langchain_core.chat_history.InMemoryChatMessageHistory` 的别名，两者指向同一个类。
+
+因此，使用 `ChatMessageHistory()` 创建对象后，打印结果可能显示为 `InMemoryChatMessageHistory(messages=[])`。名称关系以实际安装的版本为准；弃用状态见本节末尾的版本说明。
+
+| 常用操作 | 作用 |
+| --- | --- |
+| `ChatMessageHistory()` | 创建一份空的历史对象 |
 | `history.add_messages(messages)` | 按顺序添加消息对象 |
-| `history.messages` | 读取消息列表 |
+| `history.messages` | 读取当前保存的消息列表 |
 | `history.clear()` | 清空这份历史记录 |
 
-每个对象只负责保存自己的一份消息，不会自动决定它属于哪个用户或会话。示例通过字典建立 `session_id` 与历史对象的对应关系；历史只保存在当前进程内。
+历史对象负责提供保存和读取消息的操作；`messages` 是其中存放消息的列表，并不是整个历史对象。刚创建对象时，列表通常为空；只有添加消息后才包含对话内容。具体使用见[内存保存历史实战](#内存保存历史)。
 
-**历史对象在会话字典中是什么样的？**
+### 3. 按会话获取历史
 
-下面以多字段会话为例，创建一个空历史对象并放入字典：
+一个历史对象只保存自己的一份记录，不会自动判断它属于哪个用户或会话。应用需要建立会话标识与历史记录的对应关系，并提供历史获取函数。
 
-```python
-from langchain_community.chat_message_histories import ChatMessageHistory
+- `session_id`：用于标识当前会话，帮助应用查找相应的历史。
+- `get_session_history()`：由开发者提供；按会话标识查找历史，没有记录时可以创建新对象。
+- 会话存储：可以是内存字典，也可以是支持持久化的存储；具体的隔离方式由应用实现。
 
-store = {}
-store[("123", "1")] = ChatMessageHistory()
-print(store)
-```
+同一个会话要复用同一份历史，不同会话则应对应各自的记录。也可以使用用户 ID 和会话 ID 等多个字段共同定位记录，参见[多字段区分会话](#多字段区分会话)。这些标识用于查找历史，本身不是身份认证或授权机制。
 
-在当前项目的版本中，输出为：
+### 4. `RunnableWithMessageHistory`：自动管理历史
 
-```text
-{('123', '1'): InMemoryChatMessageHistory(messages=[])}
-```
+`RunnableWithMessageHistory` 是为已有 Runnable 增加对话历史管理的包装器。它负责读取和更新历史；原始 Runnable 负责处理输入并产生输出，历史对象负责存储消息。提示模板使用 `MessagesPlaceholder` 指定历史插入位置时，包装器需要将历史提供给对应字段。
 
-- `('123', '1')` 是字典的键，分别表示用户 ID 和会话 ID。
-- `InMemoryChatMessageHistory(...)` 是创建出的历史对象。虽然代码使用 `ChatMessageHistory()`，打印时会显示原始类名，因为两者是同一个类。
-- `messages=[]` 表示对象刚创建，还没有保存任何消息；`messages` 是对象内部的列表，而不是整个历史对象。
+#### 常用参数
 
-在[多字段会话的原始代码](../../lm-ai-future/study/day5-langchain-chat-model/03-chat-model/02-chat_history_config.py)中，`print(store)` 紧跟对象创建，因此此时看到的是空列表。这个打印只在创建新会话时执行；再次使用已有会话不会进入创建分支。
+| 参数 | 作用 |
+| --- | --- |
+| `runnable` | 被包装的原始 Runnable，例如提示模板和模型组成的链 |
+| `get_session_history` | 根据会话配置获取历史对象的函数 |
+| `input_messages_key` | 输入为字典时，指定本轮用户消息所在的字段 |
+| `history_messages_key` | 历史与本轮输入分别使用不同字段时，指定历史字段，应与提示模板中的占位符名称一致 |
+| `output_messages_key` | 输出为字典时，指定其中包含输出消息的字段 |
+| `history_factory_config` | 可选；自定义历史获取函数所需的配置字段，如用户 ID 和会话 ID |
 
-后续通过 `RunnableWithMessageHistory` 调用链并成功结束后，可以再次打印 `store` 查看更新。下面的内容仅作示意，模型回复和消息元数据以实际运行为准，`...` 表示省略的字段：
+默认情况下，调用包装器时通过 `config={"configurable": {"session_id": "会话标识"}}` 指定会话。这个配置用于选择历史，不会自动成为一条聊天消息。输入、输出结构不同，需要选择与原始 Runnable 匹配的字段配置。
 
-```text
-{
-    ('123', '1'): InMemoryChatMessageHistory(messages=[
-        HumanMessage(content='余弦是什么意思？', ...),
-        AIMessage(content='余弦是一种三角函数。', ...),
-    ])
-}
-```
+#### 一次调用中发生什么
 
-字典保存的是历史对象的引用；消息追加到这个对象后，通过同一个字典键读取时就能看到更新，不需要另建对象。创建 `ChatMessageHistory()` 本身不会生成对话内容。
+1. 包装器读取会话配置，通过历史获取函数取得对应的历史对象。
+2. 包装器读取历史，并按配置将历史和本轮输入交给原始 Runnable。
+3. 原始 Runnable 处理输入并产生输出；若使用提示模板，历史会被插入模板指定的位置。
+4. 原始 Runnable 正常结束时，包装器处理本轮输入和输出，并尝试写入历史对象。
+5. 调用方取得原始 Runnable 的输出，之后可以通过历史对象读取已保存的消息。
 
-#### `RunnableWithMessageHistory`
+因此，使用包装器时，业务代码通常不需要在每轮调用后再手动执行 `add_messages()`。以当前项目的 `langchain-core 1.6.1` 同步实现为例，包装器通过结束回调调用历史对象的 `add_messages()`；这是内部实现，不应依赖其私有方法名称。普通字符串输入和输出会分别按用户消息和 AI 消息处理，具体支持的结构参见[官方 API 说明](https://reference.langchain.com/python/langchain-core/runnables/history/RunnableWithMessageHistory)。
 
-`RunnableWithMessageHistory` 是为已有 Runnable 增加对话历史管理能力的包装器。它不负责生成回答，也不是存储本身；它负责在调用前取出历史，在调用结束后将本轮消息写回历史对象。
+完整调用和结果展示见[内存保存历史实战](#内存保存历史)。
 
-要使用它，需要准备：
+### 5. 使用边界与版本说明
 
-- **原始 Runnable**：处理当前输入并返回结果，例如提示模板和聊天模型组成的 `prompt | model`。
-- **历史对象**：保存、读取和更新消息，例如内存中的 `InMemoryChatMessageHistory`。
-- **历史获取函数**：由开发者编写，根据会话标识返回对应的历史对象。
-- **历史占位符**：如果提示模板将历史和当前问题放在不同字段，可使用 `MessagesPlaceholder` 指定历史消息的插入位置。
+- **存储生命周期**：内存历史位于当前进程中，进程结束后通常无法恢复；需要跨重启保留时，应选择适当的持久化存储，参见 [Redis 保存历史](#redis-保存历史)。
+- **上下文长度**：历史消息会占用模型上下文并增加调用成本；长对话需要根据业务选择裁剪、摘要等策略。
+- **隔离与权限**：会话 ID 只是查找记录的标识；应用仍需校验当前用户是否有权访问对应历史。
+- **失败与写入**：原始 Runnable 失败或历史写入发生异常时，本轮记录可能没有保存。不能仅凭模型产生了回复就断定记录已成功写入。
+- **版本与迁移**：本项目当前的 `langchain-core 1.6.1` 在创建 `RunnableWithMessageHistory` 时提示该 API 自 1.3.3 起弃用，并建议使用 LangGraph 持久化。此处保留它是为了理解和维护后文已有的链式示例。
+- **内存历史的版本状态**：[官方参考](https://reference.langchain.com/python/langchain-core/chat_history/InMemoryChatMessageHistory)标注 `InMemoryChatMessageHistory` 自 1.6.4 起弃用，计划在 2.0.0 移除；本项目当前安装的是 1.6.1，具体提示以实际安装版本为准。新应用可参考 LangChain 的[短期记忆文档](https://docs.langchain.com/oss/python/langchain/short-term-memory)，使用 Agent 状态和 checkpointer 管理会话；内存 checkpointer 同样不等于跨进程持久化。
 
-**常用参数：**
-
-- `runnable`：需要包装的原始 Runnable。
-- `get_session_history`：获取历史对象的函数，通常接收会话 ID。
-- `input_messages_key`：当输入为字典时，指定本轮用户消息所在的字段。
-- `history_messages_key`：当历史和本轮消息使用不同字段时，指定历史字段；它应与提示模板中的占位符名称一致。
-- `output_messages_key`：当原始 Runnable 返回字典时，可用于指定包含输出消息的字段。
-- `history_factory_config`：可选，用于自定义历史获取函数需要的配置字段，例如使用用户 ID 与会话 ID 共同定位历史。
-
-默认情况下，调用包装器时通过 `config={"configurable": {"session_id": "会话标识"}}` 选择会话。会话标识用于查找历史，不会因为写在配置中就自动成为一条聊天消息。
-
-**一次调用的过程：**
-
-1. 包装器读取会话配置，调用历史获取函数，取得该会话的历史对象。
-2. 包装器读取历史消息，并按配置将其传给原始 Runnable。
-3. 原始 Runnable 处理本轮输入，例如由提示模板组织消息，再交给模型生成回复。
-4. 原始 Runnable 正常结束且历史写入成功时，包装器将本轮输入和输出加入历史对象。
-5. 调用方取得原始 Runnable 的输出；历史消息则保存在历史对象中，供后续调用使用。
-
-如果本轮输入是普通字符串，包装器会将其转换为 `HumanMessage`；如果输出是普通字符串，会将其转换为 `AIMessage`。若输入或输出本身已经是消息对象，则按消息对象处理。
-
-**为什么没有手动调用 `add_messages()` 也能保存？**
-
-- 使用包装器时，业务代码通常不需要再手动调用 `add_messages()`：包装器会在原始 Runnable 结束时处理本轮消息。
-- 以 `langchain-core` 1.6.1 的同步实现为例，包装器为原始 Runnable 注册 `on_end` 回调；结束后，内部的 `_exit_history()` 会调用历史对象的 `add_messages()`。这些内部方法属于实现细节，不同版本可能变化。
-- 对于内存历史对象，消息最终被追加到其 `messages` 列表。会话字典保存的是历史对象的引用，因此通过同一个键读取时可以看到更新，无需另建对象或手动同步字典。
-
-```text
-invoke() → 获取历史对象 → 读取历史并执行原始 Runnable
-         → 结束回调 → add_messages(本轮输入和输出) → 更新历史对象
-```
-
-**通用示例：**
-
-下面使用固定回复模拟模型，不需要 API Key，也不会请求外部服务。它演示历史如何注入和保存，而不是演示模型理解能力。
-
-```python
-from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.messages import AIMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableLambda
-from langchain_core.runnables.history import RunnableWithMessageHistory
-
-histories = {}
-received_messages = []
-
-def get_history(session_id):
-    if session_id not in histories:
-        histories[session_id] = InMemoryChatMessageHistory()
-    return histories[session_id]
-
-def fake_model(prompt_value):
-    received_messages.append(prompt_value.to_messages())
-    return AIMessage(content="收到。")
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "你是一个助手。"),
-    MessagesPlaceholder("history"),
-    ("human", "{question}"),
-])
-chain = prompt | RunnableLambda(fake_model)
-
-with_history = RunnableWithMessageHistory(
-    chain,
-    get_history,
-    input_messages_key="question",
-    history_messages_key="history",
-)
-
-config = {"configurable": {"session_id": "session-1"}}
-with_history.invoke({"question": "我叫小明"}, config=config)
-with_history.invoke({"question": "我叫什么？"}, config=config)
-
-print("第二次传给模型的消息：")
-for message in received_messages[1]:
-    print(message.type, message.content)
-
-print("保存的历史消息：")
-for message in histories["session-1"].messages:
-    print(message.type, message.content)
-```
-
-运行后的标准输出如下；部分版本还可能显示弃用提示：
-
-```text
-第二次传给模型的消息：
-system 你是一个助手。
-human 我叫小明
-ai 收到。
-human 我叫什么？
-保存的历史消息：
-human 我叫小明
-ai 收到。
-human 我叫什么？
-ai 收到。
-```
-
-- 第二次调用使用相同会话 ID，因此模拟模型收到第一次对话和本轮问题。
-- 历史对象中保存了两轮用户消息及回复；系统消息由提示模板提供，不在此例的历史列表中。
-- 模拟模型始终返回“收到。”，因此不能用它判断模型是否真正理解了上下文。
-
-**注意事项：**
-
-- 历史获取函数需要根据会话标识正确返回对应记录；会话 ID 不是身份认证，应用仍需校验访问权限。
-- 内存历史随进程结束而丢失；需要跨重启保留时，应使用合适的持久化存储。
-- 原始 Runnable 失败或历史写入异常时，本轮记录可能无法保存；不要仅凭模型回复断定历史已经写入。
-- 历史消息会增加模型输入长度，应根据需要进行裁剪或摘要。
-- `RunnableWithMessageHistory` 已被官方标记为弃用；它适合学习或维护旧版链式用法，新应用可参考 LangGraph 的持久化机制。
-
-### 4. 示例
-
-下面只操作一份内存历史，不需要模型服务或 API Key：
-
-```python
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.messages import AIMessage, HumanMessage
-
-history = ChatMessageHistory()
-history.add_messages([
-    HumanMessage(content="我叫小明"),
-    AIMessage(content="你好，小明！"),
-])
-
-for message in history.messages:
-    print(message.type, message.content)
-```
-
-输出为：
-
-```text
-human 我叫小明
-ai 你好，小明！
-```
-
-这个例子只展示如何保存和读取消息，并没有调用模型，也没有自动区分多个会话。完整的包装和会话隔离过程参见[内存保存历史实战](#内存保存历史)。
-
-参考：[InMemoryChatMessageHistory](https://reference.langchain.com/python/langchain-core/chat_history/InMemoryChatMessageHistory)、[RunnableWithMessageHistory](https://reference.langchain.com/python/langchain-core/runnables/history/RunnableWithMessageHistory)。
+参考：[InMemoryChatMessageHistory](https://reference.langchain.com/python/langchain-core/chat_history/InMemoryChatMessageHistory)、[RunnableWithMessageHistory](https://reference.langchain.com/python/langchain-core/runnables/history/RunnableWithMessageHistory)、[短期记忆](https://docs.langchain.com/oss/python/langchain/short-term-memory)。
 
 ## 工具
 
-工具是应用提供给模型使用的能力，例如查询天气、搜索信息或计算数据。工具通常包含名称、用途说明、参数结构和执行逻辑。
+### 1. 工具概述
 
-模型负责判断是否需要工具，并生成结构化的调用请求；真正执行函数、访问 API 或操作数据的是应用程序，不是模型本身。
+#### 1.1 什么是工具
+
+工具是应用提供的一项可执行能力，例如计算数据、查询天气、搜索信息或读取数据库。可以先把它理解为“带有使用说明的函数”：函数负责做事，工具名称、描述和参数说明帮助模型知道它能做什么、需要传什么。
+
+例如，模型需要计算 `2 × 3` 时，应用可以提供一个乘法工具：模型提出调用请求，应用运行乘法函数，得到 `6`，再把结果交给模型组织回答。
+
+本章先学习如何创建和直接调用工具，再学习如何让模型请求工具，最后介绍异步、错误处理和第三方集成。示例中的 Python 代码块除特别说明外都可以分别保存为 `.py` 文件运行。
+
+运行前需要 Python 环境；先在终端安装基础依赖：
+
+```powershell
+python -m pip install langchain-core pydantic
+```
+
+例如，将第 2 节代码保存为 `tool_example.py`，在该文件所在目录运行 `python tool_example.py`。基础示例不需要模型账号或 API 密钥；模型和第三方工具示例需要额外准备，见相应小节。依赖安装到哪个 Python 环境，就需要用同一个环境的 Python 执行代码。
+
+#### 1.2 工具由哪些部分组成
+
+| 部分 | 作用 | 示例 |
+| --- | --- | --- |
+| 名称 `name` | 标识工具，供模型和应用选择 | `multiply` |
+| 描述 `description` | 说明工具的用途，帮助模型判断何时使用 | 计算两个整数的乘积 |
+| 参数结构 | 说明工具需要哪些输入及其类型 | 整数 `a`、`b` |
+| 执行逻辑 | 实际执行的函数或异步函数 | `return a * b` |
+
+名称、描述和参数结构相当于工具的使用说明；函数是实际做事的部分。应用把使用说明提供给模型，收到调用请求后再执行函数。工具集合中的名称应保持唯一，方便应用按名称找到工具。
+
+#### 1.3 模型、工具与应用各自负责什么
+
+- **模型**：根据用户问题和工具定义，决定是否请求调用工具，并生成工具名和参数。
+- **工具**：按照输入执行具体操作并返回结果。
+- **应用或 Agent**：检查请求、执行对应工具，将结果交回模型；Agent 还可以负责重复调度。
+
+模型生成工具调用请求本身不会执行 Python 函数。应用也可以直接调用工具，无须先调用模型。
+
+#### 1.4 一次工具调用的完整流程
 
 ```mermaid
 flowchart TD
@@ -4186,94 +4073,387 @@ flowchart TD
     G --> B
 ```
 
-### 用 `@tool` 定义工具
+其中 `tool_calls` 是模型提出的工具请求；`ToolMessage` 是应用放入对话中的工具执行结果。模型可以直接回答，也可以请求一个或多个工具。上图表示可能的循环；第 5 节会用具体数据解释每一步，后续 [agent](#agent) 章节介绍自动调度。
 
-`@tool` 可以把 Python 函数转换为 LangChain 工具：
+### 2. 创建自定义工具
 
-- 函数名默认作为工具名称；
-- 文档字符串用于说明工具用途，帮助模型选择工具；
-- 参数类型注解用于生成参数结构，函数返回值则作为工具执行结果。
+#### 2.1 使用 `@tool` 装饰函数
+
+先定义一个计算乘法的函数，再用 `@tool` 把它包装成 LangChain 工具。包装后除了计算功能，还可以查看名称、描述和输入参数：
+
+- 默认使用函数名作为工具名称；
+- 默认使用文档字符串作为工具描述；
+- 根据参数类型注解推导输入结构，函数返回值作为执行结果。
 
 ```python
 from langchain_core.tools import tool
 
-@tool  # 根据函数签名和文档字符串生成工具定义。
-def get_weather(city: str) -> str:
-    """返回指定城市的示例天气。"""
-    return f"{city}：晴，25°C"
+@tool
+def multiply(a: int, b: int) -> int:
+    """计算两个整数的乘积。"""
+    return a * b
+
+print(multiply.name)         # multiply
+print(multiply.description)  # 计算两个整数的乘积。
+print(multiply.args)         # 输入字段的 JSON Schema，具体格式可能因版本而异
+print(multiply.invoke({"a": 2, "b": 3}))  # 6
 ```
 
-这个函数返回固定的示例数据；实际工具可以在函数中调用天气服务。工具也可以通过 `get_weather.invoke({"city": "北京"})` 在 Python 代码中直接执行。
+预期输出如下；参数结构的具体字段和排列可能因版本而异：
 
-### 用 `bind_tools()` 绑定工具
+```text
+multiply
+计算两个整数的乘积。
+{'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}}
+6
+```
 
-`model.bind_tools([...])` 将工具的名称、说明和参数结构提供给聊天模型，返回可调用的模型对象。它**只让模型能够提出工具调用请求，不会自动执行工具函数**。
+这里的 `multiply` 已经是工具对象：`name` 是名称，`description` 是说明，`args` 展示参数结构。`invoke({"a": 2, "b": 3})` 把字典中的 `2` 和 `3` 分别传给函数的 `a` 和 `b`，函数计算后返回 `6`。这次调用由 Python 代码直接发起，没有调用模型。
+
+#### 2.2 使用 `StructuredTool` 包装函数
+
+`StructuredTool.from_function()` 可以将已有的普通函数包装为工具：
+
+```python
+from langchain_core.tools import StructuredTool
+
+def multiply(a: int, b: int) -> int:
+    """计算两个整数的乘积。"""
+    return a * b
+
+calculator = StructuredTool.from_function(
+    func=multiply,
+    name="calculator",
+    description="计算两个整数的乘积。",
+)
+print(calculator.invoke({"a": 2, "b": 3}))  # 6
+```
+
+输出为 `6`。`func` 指向已有函数；`name` 和 `description` 分别指定工具名称与用途说明。这里保留了普通函数 `multiply`，工具对象是 `calculator`。参数结构仍可从函数签名推导，也可以使用下一节的 `args_schema` 指定。
+
+#### 2.3 两种创建方式如何选择
+
+| 方式 | 适合的场景 |
+| --- | --- |
+| `@tool` | 新定义一个工具，喜欢在函数上直接声明；也支持自定义名称和参数结构 |
+| `StructuredTool.from_function()` | 包装已有函数，或为同一个工具分别提供同步函数和异步函数 |
+
+两者都创建 LangChain 工具，都可以直接调用或提供给模型；并不是只有 `StructuredTool` 才能配置参数。
+
+### 3. 配置工具
+
+#### 3.1 自定义工具名称和描述
+
+名称应简洁且能区分其他工具；描述应说明工具做什么、适合什么时候使用。名称和描述会影响模型的选择，但不能代替实际的权限校验。
+
+`@tool("名称", ...)` 可以覆盖默认名称；`StructuredTool.from_function()` 可以传入 `name` 和 `description`。工具描述也可以放在被装饰函数的文档字符串中。
+
+#### 3.2 使用 `args_schema` 定义参数
+
+函数的类型注解能告诉工具 `a` 和 `b` 是整数。如果还想说明它们的含义或限制取值，就可以用 Pydantic 模型定义参数。`args_schema` 是“工具输入参数的结构”，下面用 `CalculatorInput` 告诉工具应该接收什么：
+
+```python
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+
+class CalculatorInput(BaseModel):
+    a: int = Field(ge=0, description="第一个非负整数")
+    b: int = Field(ge=0, description="第二个非负整数")
+
+@tool("multiplication-tool", args_schema=CalculatorInput)
+def multiply(a: int, b: int) -> int:
+    """计算两个整数的乘积。"""
+    return a * b
+
+print(multiply.args)  # 查看包含字段描述的输入结构
+print(multiply.invoke({"a": 2, "b": 3}))  # 6
+```
+
+`BaseModel` 用来定义输入结构，`Field` 为字段设置说明和约束；`ge=0` 表示值必须大于或等于 0。第一行输出包含字段类型、描述及最小值的结构，第二行输出 `6`。这里定义的 `a`、`b` 与函数参数同名，工具才能把输入传给函数。`StructuredTool.from_function()` 同样可以接收 `args_schema=CalculatorInput`。
+
+#### 3.3 参数描述与参数校验
+
+`Field(description="...")` 是对字段用途的说明，有助于模型填写参数；它本身不会执行文字中描述的业务规则。上一例中的 `ge=0` 才是真正的校验规则。接在上一段代码后尝试：
+
+```python
+from pydantic import ValidationError
+
+try:
+    multiply.invoke({"a": -1, "b": 3})
+except ValidationError as error:
+    print("输入校验失败：", error.errors()[0]["type"])
+```
+
+预期输出包含 `输入校验失败： greater_than_equal`。因为 `a=-1` 不满足 `ge=0`，工具会在执行乘法函数前报告校验错误。描述和校验规则各有作用：只写“非负整数”不会自动阻止负数。
+
+#### 3.4 `return_direct`：工具结果直接返回
+
+可以在创建工具时设置 `return_direct=True`。在支持该选项的 Agent 中，工具执行后会结束当前工具循环并直接返回工具结果；默认情况下 Agent 通常会把结果交回模型继续处理。例如计算工具返回 `6` 后，直接返回时用户看到工具结果；继续处理时模型可以把结果组织成“结果是 6”。具体返回消息结构取决于 Agent。
+
+直接调用 `tool.invoke()` 时，调用者本来就直接拿到工具结果；`return_direct` 主要影响 Agent 对结果的后续处理。具体返回消息结构取决于使用的 Agent。
+
+### 4. 同步与异步工具
+
+#### 4.1 `invoke()` 与 `ainvoke()`
+
+`invoke()` 用于同步调用，`ainvoke()` 用于异步调用，后者需要在异步上下文中 `await`。异步主要适合网络请求等 I/O 等待，不会自动加速同步计算。
+
+可以先把两者理解为两种调用入口：`invoke()` 等待结果并继续运行；`await tool.ainvoke(...)` 在异步函数中等待结果，让事件循环在等待期间有机会运行其他协程。下一例只是用延时模拟等待，并没有真实请求网络。
+
+#### 4.2 使用 `@tool` 定义异步工具
+
+```python
+import asyncio
+from langchain_core.tools import tool
+
+@tool
+async def amultiply(a: int, b: int) -> int:
+    """计算两个整数的乘积。"""
+    await asyncio.sleep(0.1)  # 仅用于模拟 I/O 等待
+    return a * b
+
+async def main():
+    print(await amultiply.ainvoke({"a": 2, "b": 3}))  # 6
+
+asyncio.run(main())
+```
+
+普通脚本使用 `asyncio.run()` 启动；如果已经在运行中的事件循环内，应在异步函数中直接 `await`，不要再次调用 `asyncio.run()`。
+
+输出为 `6`：`amultiply.ainvoke()` 发起异步调用，`await` 等待函数返回的结果。
+
+#### 4.3 使用 `StructuredTool` 提供同步和异步实现
+
+```python
+import asyncio
+from langchain_core.tools import StructuredTool
+
+def multiply(a: int, b: int) -> int:
+    """计算两个整数的乘积。"""
+    return a * b
+
+async def amultiply(a: int, b: int) -> int:
+    """计算两个整数的乘积。"""
+    await asyncio.sleep(0.1)  # 模拟 I/O 等待
+    return a * b
+
+calculator = StructuredTool.from_function(func=multiply, coroutine=amultiply)
+
+async def main():
+    print(calculator.invoke({"a": 2, "b": 3}))         # 6
+    print(await calculator.ainvoke({"a": 2, "b": 5}))  # 10
+
+asyncio.run(main())
+```
+
+输出依次为 `6` 和 `10`。`func` 指定同步实现，`coroutine` 指定异步实现；两者都代表同一个乘法工具。这里演示两种入口；实际异步程序中的同步函数若执行阻塞 I/O，仍会阻塞事件循环。同步、异步实现应提供一致的业务语义。
+
+### 5. 将工具提供给模型
+
+#### 5.1 使用 `bind_tools()` 绑定工具
+
+`model.bind_tools([...])` 将工具的名称、描述和参数结构提供给支持工具调用的聊天模型，返回新的可调用模型对象。它让模型能够提出调用请求，不会自动执行工具。
+
+可以把它理解为先给模型一份“工具菜单”。例如菜单上写着 `get_weather(city)`：模型可以请求查询北京天气，但真正查询要等应用收到请求后执行。
+
+#### 5.2 读取模型返回的 `tool_calls`
+
+模型响应的 `tool_calls` 包含工具名、参数和调用 ID；列表为空时，模型没有在本次响应中请求工具。请求不等于工具执行结果，模型也不一定每次都会选择调用工具。
+
+一次可能的请求如下，其中 ID 用来让后续结果对应这次调用；实际 ID 和参数内容由模型服务生成：
+
+```text
+{'name': 'get_weather', 'args': {'city': '北京'}, 'id': 'call_123', 'type': 'tool_call'}
+```
+
+这条记录的意思是“请用 `get_weather` 查询北京”，里面没有天气结果。
+
+#### 5.3 按工具名称执行并回传 `ToolMessage`
+
+下面使用固定天气数据演示一轮手动调用；天气来自函数里的示例文本，不是真实天气。
+
+**运行前准备：**
+
+1. 安装模型集成：`python -m pip install langchain-openai`。
+2. 准备可调用 OpenAI API 的密钥和模型权限。ChatGPT 或 Codex 订阅与 API 计费是独立的；具体可用模型和费用以服务商为准。
+3. 在运行程序的 PowerShell 窗口设置 `OPENAI_API_KEY`。例如执行 `$env:OPENAI_API_KEY = Read-Host "请输入 OpenAI API 密钥"`，然后输入密钥；这个输入会显示在终端中，不要把密钥写进示例代码或分享终端记录。关闭该窗口后需要重新设置。
+4. 将以下完整代码保存为 Python 文件，在同一窗口用 `python 文件名.py` 运行。
+
+如果使用其他支持工具调用的模型服务，应按其集成文档替换模型配置；不同服务的参数不一定完全相同。运行会产生网络请求，可能产生费用。
 
 ```python
 from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 
-# 假设 model 已配置，且模型服务支持工具调用。
-model_with_tools = model.bind_tools([get_weather])
+# 选择当前账号可用、支持工具调用的模型。
+model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+@tool
+def get_weather(city: str) -> str:
+    """返回指定城市的示例天气。"""
+    return f"{city}：晴，25°C"
+
+tools = [get_weather]
+tools_by_name = {item.name: item for item in tools}
+model_with_tools = model.bind_tools(tools)  # 让模型了解工具
 question = HumanMessage(content="北京的天气怎么样？")
 response = model_with_tools.invoke([question])
+print("模型的工具请求：", response.tool_calls)
 
 if response.tool_calls:
     tool_messages = []
     for call in response.tool_calls:
-        result = get_weather.invoke(call["args"])  # 应用在这里执行函数。
+        selected_tool = tools_by_name.get(call["name"])
+        if selected_tool is None:
+            raise ValueError(f"未知工具：{call['name']}")
+        result = selected_tool.invoke(call["args"])  # 在应用中执行工具
+        print("工具结果：", result)
         tool_messages.append(
             ToolMessage(content=str(result), tool_call_id=call["id"])
         )
 
-    # 把工具请求和执行结果一并交回模型，让模型组织最终回答。
+    # 把原始问题、工具请求和结果一起传回模型。
     final_response = model_with_tools.invoke([question, response, *tool_messages])
     print(final_response.content)
 else:
     print(response.content)
 ```
 
-- `response.tool_calls` 是模型返回的工具请求，包含工具名、参数和调用 ID；它不是工具执行结果。
-- 应用根据请求执行对应工具，再用 `ToolMessage` 把结果交回模型；`tool_call_id` 用于对应原请求。
-- 模型服务必须支持工具调用；具体支持范围取决于所用模型和服务商。若接入 DeepSeek 官方 API，LangChain 提供对应的 `ChatDeepSeek` 集成；OpenAI 兼容接口不代表所有集成行为完全相同。上例只展示一轮手动调用，Agent 的多轮调度可参见后文 `create_agent`。
-- 对写入、删除等有副作用的工具，应用仍需自行进行权限校验或人工确认；模型提出调用不代表获得授权。
+如果模型选择调用工具，输出会依次包含工具请求、`工具结果： 北京：晴，25°C` 和模型组织的回答；具体格式、调用 ID 和回答措辞不是固定值。模型也可能不请求工具，这时只输出它的直接回答。
 
-参考：[LangChain `tool` API](https://reference.langchain.com/python/langchain-core/tools/convert/tool)、[`ChatOpenAI.bind_tools()` API](https://reference.langchain.com/python/langchain-openai/chat_models/base/BaseChatOpenAI/bind_tools)、[`ChatDeepSeek` 集成](https://reference.langchain.com/python/langchain-deepseek/chat_models/ChatDeepSeek)。
+对照代码看数据如何变化：
 
-### `TavilySearchResults`
+| 步骤 | 发生了什么 |
+| --- | --- |
+| 绑定 | 把 `get_weather` 的使用说明提供给模型 |
+| 首次调用 | 模型返回 `tool_calls`，其中包含名称、参数和 ID |
+| 应用执行 | 按 `call["name"]` 找工具，用 `call["args"]` 执行，得到天气字符串 |
+| 回传 | 用 `ToolMessage` 保存工具结果，`tool_call_id` 对应原请求的 ID |
+| 再次调用 | 把原问题、模型请求和工具结果一起交回模型，生成回答 |
 
-`TavilySearchResults` 是 LangChain 社区集成的 Tavily 搜索工具。它接收搜索词并返回网页搜索结果，供 Agent 补充外部信息。
+`tools_by_name` 是按工具名查找工具的字典；本例只有一个工具，这种写法也能扩展到多个工具。实际应用还需处理无效参数、工具执行失败及调用权限等情况。
+
+#### 5.4 手动调用与 Agent 自动循环的区别
+
+上例只处理第一轮工具请求并再次调用模型；第二次响应仍可能请求工具，示例没有继续执行它。需要循环处理时，可以自行实现循环，也可以使用后文的 Agent。模型是否支持工具调用，取决于具体模型和服务商。
+
+### 6. 处理工具错误
+
+#### 6.1 `ToolException` 与 `handle_tool_error`
+
+对于可预期的工具业务错误，可以抛出 `ToolException`，并配置 `handle_tool_error` 将错误转换为工具输出：
 
 ```python
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_core.tools import StructuredTool, ToolException
 
-search_tool = TavilySearchResults(max_results=1)
+def get_weather(city: str) -> str:
+    """查询指定城市的示例天气。"""
+    raise ToolException(f"没有找到城市：{city}")
 
-agent = create_agent(
-    model,
-    tools=[search_tool],
-    system_prompt="你是一位得力的助手。",
+weather_tool = StructuredTool.from_function(
+    func=get_weather,
+    handle_tool_error=True,
 )
-
-result = agent.invoke({
-    "messages": [
-        {"role": "user", "content": "谁执导了2023年的电影《奥本海默》？"}
-    ]
-})
-
-print(result["messages"][-1].content)
+print(weather_tool.invoke({"city": "foobar"}))  # 没有找到城市：foobar
 ```
 
-- 使用前安装 `langchain-tavily`，并配置 `TAVILY_API_KEY`。
-- `max_results` 限制返回的搜索结果数量。
-- 旧集成 `langchain_community.tools.tavily_search.TavilySearchResults` 已弃用；新项目使用 `langchain_tavily.TavilySearch`。
+这里的函数为了演示始终抛出异常；实际工具应仅在对应业务条件发生时抛出。
 
-参考：[TavilySearch API](https://reference.langchain.com/python/langchain-tavily/tavily_search/TavilySearch)、[已弃用的 TavilySearchResults API](https://reference.langchain.com/python/langchain-community/tools/tavily_search/tool/TavilySearchResults)。
+运行时，`get_weather` 抛出 `ToolException`，工具看到 `handle_tool_error=True` 后把异常消息作为输出，所以程序打印 `没有找到城市：foobar`。如果不配置该选项，异常会继续向调用方抛出，后续代码不会像这样直接得到错误文本。
 
-### 工具调用的安全边界
+#### 6.2 返回异常信息、自定义文本或处理函数
 
-- 模型生成的工具名和参数应视为待校验输入；执行前检查参数格式、当前用户权限和操作范围。
-- 模型提出调用不代表用户已授权。写入、删除等有副作用的操作，应由应用执行权限检查；高风险操作还应要求人工确认。
-- 第三方搜索结果属于外部内容，不能默认视为可信事实或可直接执行的指令。
+| `handle_tool_error` | 处理方式 |
+| --- | --- |
+| 未设置或 `False` | 重新抛出 `ToolException` |
+| `True` | 将异常消息作为工具输出 |
+| 字符串 | 将该字符串作为工具输出 |
+| 函数 | 接收 `ToolException`，返回自定义工具输出 |
+
+例如 `handle_tool_error="没找到这个城市"` 会返回固定文本；也可以传入接收异常的函数，按业务需要生成提示。错误输出应避免泄露密钥、堆栈或内部服务细节。
+
+#### 6.3 参数校验错误和其他运行异常
+
+`handle_tool_error` 针对 `ToolException`，不会自动处理任意异常或输入校验错误。参数校验失败可以根据工具的 `handle_validation_error` 配置处理；网络异常、超时等其他错误则需要在工具或上层调用逻辑中有针对性地处理。不要把所有异常都伪装成成功结果。
+
+### 7. 使用第三方工具与工具包
+
+#### 7.1 使用 Wikipedia 工具
+
+集成工具将已有服务包装为工具对象。下面使用 Wikipedia 查询，不需要先创建 Agent：
+
+准备：运行 `python -m pip install langchain-community wikipedia` 安装依赖，并确认能够访问 Wikipedia。此示例需要网络，不需要模型或模型 API 密钥。
+
+```python
+from langchain_community.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
+
+api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=100)
+wiki_tool = WikipediaQueryRun(api_wrapper=api_wrapper)
+print(wiki_tool.invoke({"query": "LangChain"}))
+print(wiki_tool.name, wiki_tool.description, wiki_tool.args)
+```
+
+第一行通常输出包含页面标题和摘要的文本，第二行展示工具名称、描述和输入结构；具体内容会随网络、百科内容和版本变化。`WikipediaAPIWrapper` 负责与 Wikipedia 的查询交互，`WikipediaQueryRun` 把查询能力包装成工具；`top_k_results` 限制结果数量，`doc_content_chars_max` 限制返回内容长度。
+
+#### 7.2 配置第三方工具的名称和参数
+
+创建集成工具时也可以传入自定义 `name`、`description` 和 `args_schema`，让工具用途与应用场景更贴合。参数字段必须与底层工具能接收的输入兼容，例如 Wikipedia 工具的查询字段是 `query`。不要将字段说明误认为自动生效的校验规则。
+
+#### 7.3 使用 Tavily 搜索工具
+
+`TavilySearch` 是 LangChain 的 Tavily 搜索集成，接收查询并返回搜索结果。先直接调用工具观察输出，再把它提供给 Agent 会更容易理解。
+
+准备：运行 `python -m pip install langchain-tavily`，从 Tavily 获取 API 密钥，然后在当前 PowerShell 窗口执行 `$env:TAVILY_API_KEY = Read-Host "请输入 Tavily API 密钥"` 并输入密钥。输入会显示在终端，注意不要分享密钥。运行需要联网，可能产生服务费用。
+
+```python
+from langchain_tavily import TavilySearch
+
+search_tool = TavilySearch(max_results=1)
+result = search_tool.invoke({"query": "LangChain 是什么"})
+print(result)
+```
+
+输出是搜索服务返回的数据，其中可包含标题、网址和内容摘要；具体字段和结果取决于服务及版本，不是固定答案。`max_results=1` 限制结果数量。旧版 `TavilySearchResults` 已弃用；Agent 接入可参见后文 [agent](#agent) 章节。
+
+#### 7.4 工具包：`SQLDatabaseToolkit` 与 `get_tools()`
+
+工具包是一组围绕某项任务协作的工具。例如 SQL 工具包可以提供列出表、查看表结构、查询和检查 SQL 等工具，具体列表以安装版本返回值为准：
+
+准备：运行 `python -m pip install langchain-community langchain-openai`；按第 5 节配置模型 API 密钥。将下面的数据库路径替换为自己准备的 SQLite 数据库。这个片段只获取和打印工具定义，不会因为 `get_tools()` 就让模型自动查询数据库。
+
+```python
+from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+from langchain_community.utilities import SQLDatabase
+from langchain_openai import ChatOpenAI
+
+# 把路径替换为实际存在的数据库；选择账号可用的模型。
+model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+db = SQLDatabase.from_uri("sqlite:///langchain.db")
+toolkit = SQLDatabaseToolkit(db=db, llm=model)
+sql_tools = toolkit.get_tools()
+for item in sql_tools:
+    print(item.name, item.description)
+```
+
+输出是工具名称及说明；例如可能出现列出数据库表或查看表结构的工具，具体名称和数量以实际版本为准。`toolkit` 是工具包，`get_tools()` 把其中的工具取出来供后续 Agent 使用。SQLite 相对路径以程序运行时的工作目录为准；路径错误时可能创建新的空数据库。数据库查询可能读取敏感数据或产生副作用，应使用受限权限，按需配置只读访问。
+
+### 8. 工具设计与安全
+
+#### 8.1 编写清晰的名称、描述和参数
+
+工具职责尽量明确；用名称和描述说明它做什么、何时使用，并为参数补充有意义的字段描述。需要强制满足的规则应写成实际校验，而不只写在描述里。
+
+#### 8.2 校验工具调用与控制操作权限
+
+模型生成的工具名和参数应视为待校验输入。执行前检查工具是否允许使用、参数是否合法、当前用户是否有权限以及操作范围是否正确。模型提出调用不代表用户已授权；写入、删除等有副作用的操作应根据风险执行权限检查或人工确认。
+
+#### 8.3 处理第三方内容和有副作用的操作
+
+第三方搜索结果和数据库内容属于外部数据，不应默认视为可信事实或可直接执行的指令。工具输出和日志也应避免暴露敏感数据；错误处理需要保留足够的排查信息，但不要把内部细节直接返回给模型或用户。
+
+参考：[LangChain 工具指南](https://docs.langchain.com/oss/python/langchain/tools)、[`StructuredTool.from_function()` API](https://reference.langchain.com/python/langchain-core/tools/structured/StructuredTool/from_function)、[`BaseTool.handle_tool_error`](https://reference.langchain.com/python/langchain-core/tools/base/BaseTool/handle_tool_error)、[`ChatOpenAI.bind_tools()` API](https://reference.langchain.com/python/langchain-openai/chat_models/base/BaseChatOpenAI/bind_tools)、[Tavily 搜索集成指南](https://docs.langchain.com/oss/python/integrations/tools/tavily_search)。本文基础示例按本项目 `langchain-core 1.6.1`、Pydantic 2 的环境核对；第三方服务结果及兼容性以实际安装版本为准。
 
 ## agent
 

@@ -476,7 +476,7 @@ for s in chain.stream({"query": actor_query}):
 <font style="color:rgb(28, 30, 33);">这个</font>`<font style="color:rgb(28, 30, 33);">@tool</font>`<font style="color:rgb(28, 30, 33);">装饰器是定义自定义工具的最简单方式。该装饰器默认使用函数名称作为工具名称，但可以通过传递字符串作为第一个参数来覆盖。此外，装饰器将使用函数的文档字符串作为工具的描述 - 因此必须提供文档字符串。</font>
 
 ```python
-#示例：tools_decorator.py
+# 示例：01-tools_decorator.py
 from langchain_core.tools import tool
 @tool
 def multiply(a: int, b: int) -> int:
@@ -497,18 +497,23 @@ multiply(a: int, b: int) -> int - Multiply two numbers.
 <font style="color:rgb(28, 30, 33);">或者创建一个</font>**<font style="color:rgb(28, 30, 33);">异步</font>**<font style="color:rgb(28, 30, 33);">实现，如下所示：</font>
 
 ```python
-#示例：tools_async.py
+# 示例：02-tools_async.py
+import asyncio
 from langchain_core.tools import tool
 @tool
 async def amultiply(a: int, b: int) -> int:
     """Multiply two numbers."""
+    await asyncio.sleep(0.1)  # 用延迟模拟 I/O 等待。
     return a * b
+print(asyncio.run(amultiply.ainvoke({"a": 2, "b": 3})))
 ```
 
 <font style="color:rgb(28, 30, 33);">您还可以通过将它们传递给工具装饰器来自定义工具名称和 JSON 参数。</font>
 
 ```python
+# 示例：03-tool_config.py
 from pydantic import BaseModel, Field
+from langchain_core.tools import tool
 class CalculatorInput(BaseModel):
     a: int = Field(description="first number")
     b: int = Field(description="second number")
@@ -535,6 +540,7 @@ True
 
 ```python
 from langchain_core.tools import StructuredTool
+# 示例：04-structured_tools.py
 import asyncio
 
 def multiply(a: int, b: int) -> int:
@@ -543,6 +549,7 @@ def multiply(a: int, b: int) -> int:
 
 async def amultiply(a: int, b: int) -> int:
     """Multiply two numbers."""
+    await asyncio.sleep(0.1)  # 用延迟模拟 I/O 等待。
     return a * b
 
 async def main():
@@ -550,7 +557,6 @@ async def main():
     print(calculator.invoke({"a": 2, "b": 3}))
     print(await calculator.ainvoke({"a": 2, "b": 5}))
 
-# 运行异步主函数
 asyncio.run(main())
 ```
 
@@ -562,41 +568,33 @@ asyncio.run(main())
 <font style="color:rgb(28, 30, 33);">可以配置自定义参数</font>
 
 ```python
+# 示例：05-structured_tools_config.py
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
-import asyncio
+
 
 class CalculatorInput(BaseModel):
-    a: int = Field(description="first number")
-    b: int = Field(description="second number")
+    a: int = Field(description="第一个乘数")
+    b: int = Field(description="第二个乘数")
+
 
 def multiply(a: int, b: int) -> int:
     """Multiply two numbers."""
     return a * b
 
-# 创建一个异步包装器函数
-async def async_addition(a: int, b: int) -> int:
-    """Multiply two numbers."""
-    return a + b
-async def main():
-    calculator = StructuredTool.from_function(
-        func=multiply,
-        name="Calculator",
-        description="multiply numbers",
-        args_schema=CalculatorInput,
-        return_direct=True,
-        #coroutine= async_addition
-        # coroutine= ... <- 如果需要，也可以指定异步方法
-    )
-    print(calculator.invoke({"a": 2, "b": 3}))
-    #print(await calculator.ainvoke({"a": 2, "b": 5}))
-    print(calculator.name)
-    print(calculator.description)
-    print(calculator.args)
 
+calculator = StructuredTool.from_function(
+    func=multiply,
+    name="Calculator",
+    description="计算两个整数的乘积",
+    args_schema=CalculatorInput,
+    return_direct=True,
+)
 
-# 运行异步主函数
-asyncio.run(main())
+print(calculator.invoke({"a": 2, "b": 3}))
+print(calculator.name)
+print(calculator.description)
+print(calculator.args)
 ```
 
 ### <font style="color:rgb(28, 30, 33);">处理工具错误</font>
@@ -604,15 +602,15 @@ asyncio.run(main())
 
 ```python
 from langchain_core.tools import ToolException
-def get_weather(city: str) -> int:
+def get_weather(city: str) -> str:
     """获取给定城市的天气。"""
     raise ToolException(f"错误：没有名为{city}的城市。")
 ```
 
-<font style="color:rgb(28, 30, 33);">下面是一个使用默认的</font>`<font style="color:rgb(28, 30, 33);">handle_tool_error=True</font>`<font style="color:rgb(28, 30, 33);">行为的示例。</font>
+<font style="color:rgb(28, 30, 33);">下面是显式设置</font>`<font style="color:rgb(28, 30, 33);">handle_tool_error=True</font>`<font style="color:rgb(28, 30, 33);">的示例。</font>
 
 ```python
-#示例：tools_exception.py
+# 示例：06-tools_exception.py
 get_weather_tool = StructuredTool.from_function(
     func=get_weather,
     handle_tool_error=True,
@@ -627,7 +625,7 @@ get_weather_tool.invoke({"city": "foobar"})
 <font style="color:rgb(28, 30, 33);">我们可以将</font>`<font style="color:rgb(28, 30, 33);">handle_tool_error</font>`<font style="color:rgb(28, 30, 33);">设置为一个始终返回的字符串。</font>
 
 ```python
-#示例：tools_exception_handle.py
+# 示例：07-tools_exception_handle.py
 get_weather_tool = StructuredTool.from_function(
     func=get_weather,
     handle_tool_error="没找到这个城市",
@@ -636,15 +634,15 @@ get_weather_tool.invoke({"city": "foobar"})
 ```
 
 ```plain
-"没有这样的城市，但可能在那里的温度超过0K！"
+"没找到这个城市"
 ```
 
 <font style="color:rgb(28, 30, 33);">使用函数处理错误：</font>
 
 ```python
-#示例：tools_exception_handle_error.py
+# 示例：08-tools_exception_handle_error.py
 def _handle_error(error: ToolException) -> str:
-    return f"工具执行期间发生以下错误：`{error.args[0]}`"
+    return f"工具执行期间发生以下错误：`{error}`"
 get_weather_tool = StructuredTool.from_function(
     func=get_weather,
     handle_tool_error=_handle_error,
