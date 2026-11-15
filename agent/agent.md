@@ -135,82 +135,94 @@ print len(u"你好")
 
 | 特性 | Python 2 | Python 3 |
 | --- | --- | --- |
-| 普通字符串 `"hello"` | `str`（字节序列） | `str`（Unicode 文本） |
+工具是应用提供给模型使用的能力，例如查询天气、搜索信息或计算数据。一个工具通常包含名称、用途说明、参数结构和执行逻辑。
 | 文本类型 | `unicode` | `str`（Unicode 文本） |
-| 字节类型 | `str`（字节序列） | `bytes`（字节序列） |
+工具调用中，模型负责判断是否需要工具，并生成结构化的调用请求；应用程序负责校验请求、执行函数或访问外部服务，再把结果交回模型。模型本身不会直接运行 Python 函数。
 | 转换结果 | `str.decode(encoding)` → `unicode`；`unicode.encode(encoding)` → `str` | `bytes.decode(encoding)` → `str`；`str.encode(encoding)` → `bytes` |
 
 Python 2 和 Python 3 的内存中都可以同时存在字节串和 Unicode 文本。下面以 UTF-8 编码的“你好”为例，用 `len()` 比较两者：
-
-```python
-# -*- coding: utf-8 -*-
-value = "你好"  # Python 2：普通 str 是字节串
-text = value.decode("utf-8")  # 显式解码为 unicode
-
-print len(value)  # 6：UTF-8 字节数
+    A[用户问题] --> B[模型读取工具定义]
+    B --> C{模型是否请求工具?}
+    C -- 否 --> D[返回模型回答]
+    C -- 是 --> E[生成 tool_calls 请求]
+    E --> F[应用校验并执行工具]
+    F --> G[ToolMessage 携带工具结果]
+    G --> B
 print len(text)   # 2：本例中的 Unicode 码点数
 ```
-
+### 定义自定义工具
 ```python
 value = "你好"  # Python 3：普通 str 是 Unicode 文本
 data = value.encode("utf-8")  # 显式编码为 bytes
 
 print(len(value))  # 2：Unicode 码点数
-print(len(data))   # 6：UTF-8 字节数
+- 参数类型注解用于生成参数结构；函数返回值作为工具执行结果。
 ```
 
 #### 文件、键盘与终端 I/O
 
-| 场景 | Python 2 | Python 3 |
+@tool
 | --- | --- | --- |
 | 读文本文件 | `open("f.txt", "rb").read().decode("utf-8")` | `open("f.txt", encoding="utf-8").read()` |
 | 写文本文件 | `open("f.txt", "wb").write(u"你好".encode("utf-8"))` | `open("f.txt", "w", encoding="utf-8").write("你好")` |
 | 键盘输入 | `raw_input()` 返回字节串，按输入编码解码后再处理 | `input()` 返回 `str`；输入流负责将输入转换为文本 |
 | 输出文本 | `print str` 输出字节；`print unicode` 需要转换为输出流可表示的编码 | `print()` 将文本写入输出流，由输出流处理编码 |
-
+这个函数返回固定的示例数据；实际工具可以在函数中调用天气服务。应用也可以通过 `get_weather.invoke({"city": "北京"})` 直接执行工具。
 Python 3 源码默认 UTF-8，不代表文件、终端和网络的所有数据都自动使用 UTF-8。Python 3.15 起 UTF-8 mode 默认启用；为兼容不同版本和环境，读写文本文件仍建议显式设置 `encoding="utf-8"`。
-
+### 将工具提供给模型
 **速记：** Python 2 的主要风险是把字节串当文本操作，以及混用时发生 ASCII 隐式转换；Python 3 分开了文本和字节类型，但 I/O 边界仍要使用正确编码。
-
+`model.bind_tools([...])` 将工具的名称、说明和参数结构提供给聊天模型，返回可调用的模型对象。模型服务还必须支持工具调用。
 参考：[Python 2.7 Unicode 指南](https://docs.python.org/zh-cn/2.7/howto/unicode.html)、[Python 2.7 `io` 模块](https://docs.python.org/2.7/library/io.html)、[PEP 263：源码编码声明](https://peps.python.org/pep-0263/)、[PEP 3120：Python 3 源码默认 UTF-8](https://peps.python.org/pep-3120/)、[Python `open()` 文档](https://docs.python.org/3/library/functions.html#open)、[PEP 686：默认 UTF-8 mode](https://peps.python.org/pep-0686/)、[PowerShell 字符编码说明](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_character_encoding)、[Microsoft `chcp` 命令说明](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/chcp)。
 
-### 四、文本流转与乱码
+from langchain_core.messages import HumanMessage
 
 #### 3. 数据流转：磁盘 → 内存 → 终端
-
+model_with_tools = model.bind_tools([get_weather])  # 只提供工具定义，不执行工具。
 文本在机器与人之间流动，可以拆成**两条单向链路**。Python 2/3 在各个边界如何处理数据，见前面的特性总览。
 
+print(response.tool_calls)
+```
 **链路一：显示（读文件 → 给人看）**
+`response.tool_calls` 是模型提出的调用请求，包含工具名、参数和调用 ID；它不是工具执行结果。应用需要根据请求选择并执行对应工具。
+
+### 执行工具并回传结果
+
+应用执行工具后，用 `ToolMessage` 将结果与原调用 ID 对应起来，再交回模型生成面向用户的回答：
+
+```python
+from langchain_core.messages import ToolMessage
+
 
 ```mermaid
 flowchart LR
-    F["硬盘文件<br/>（字节）"]
+        result = get_weather.invoke(call["args"])
     M["内存<br/>程序 decode / encode"]
     S["屏幕<br/>（人看到的字符）"]
 
     F -->|"① 读取字节并按文件编码解码"| M
-    M -->|"② 写入输出流；由输出流和宿主环境处理显示"| S
 ```
 
 1. 读取文本时，程序或文本 I/O 接口按文件编码把字节转换为文本。
 2. 输出时，输出流按其编码规则转换数据；屏幕显示还受终端或宿主环境影响。
 
 **链路二：录入（人输入 → 存文件）**
-
-```mermaid
-flowchart LR
-    K["键盘输入<br/>（终端或输入流）"]
+- `tool_call_id` 用于将工具结果对应到模型提出的那次调用。
+- 上例演示一轮手动调用；Agent 可以负责调度多轮模型与工具调用，参见后文 `create_agent`。
+- 不同模型和服务商对工具调用的支持可能不同；使用 OpenAI 兼容接口时，也要确认其工具调用格式与 LangChain 集成兼容。
     M2["内存<br/>程序 decode / encode"]
-    F2["硬盘文件<br/>（字节）"]
+### 第三方工具
 
-    K -->|"① 按输入流实际编码转换为文本"| M2
+第三方工具集成会将外部服务封装成 LangChain 工具，应用仍需配置服务凭据，并由 Agent 或应用代码调度执行。
     M2 -->|"② 按目标编码转换为字节并写入"| F2
-```
+#### 搜索工具：Tavily
+
+Tavily 搜索工具接收查询词并返回网页搜索结果，可供 Agent 补充外部信息。新项目可使用 `langchain-tavily` 提供的 `TavilySearch`：
 
 1. 输入经终端或标准输入流进入程序；需要文本时，按输入流实际使用的编码解码。
-2. 写入文本时，按目标编码转换为字节；之后读取时要使用匹配的编码。
+from langchain.agents import create_agent
+from langchain_tavily import TavilySearch
 
-**三个环节的职责：**
+search_tool = TavilySearch(max_results=1)
 
 - **磁盘**：只存字节，不记录编码（除非 BOM），读之前必须知道编码。
 - **程序**：在内存中负责编解码；Python 2/3 的文本与字节类型和转换行为不同，见前面的特性总览。
@@ -2755,7 +2767,7 @@ message = HumanMessage(content=[
 
 模型响应的 `content` 也可能是内容块列表，而不只是字符串；需要统一处理多模态响应时，可以读取 `message.content_blocks` 获取标准化内容块。只有需要纯文本时，才应按实际响应结构提取文本。
 
-### 3. API 说明
+### 提示模板 API
 
 #### PromptTemplate
 
@@ -3167,7 +3179,7 @@ print(prompt_value.to_string())
 
 相似度只表示文本在向量空间中的相关程度，不代表示例内容一定正确。示例质量、字段一致性和数据分布会影响最终结果。
 
-#### OutputParser
+### Output Parser API
 
 OutputParser 用于接收模型输出并转换为目标格式。简单文本可以使用 `StrOutputParser`，结构化结果则应根据目标数据类型选择解析器。
 
@@ -3178,12 +3190,25 @@ OutputParser 用于接收模型输出并转换为目标格式。简单文本可�
 | Pydantic 模型 | 强类型对象 | `PydanticOutputParser` |
 | 结构化字段 | 字段化字典 | `StructuredOutputParser` |
 | 逗号分隔列表 | `list[str]` | `CommaSeparatedListOutputParser` |
-| XML | XML 结构 | `XMLOutputParser` |
+| XML 文本 | 嵌套 Python 结构（`dict` / `list`） | `XMLOutputParser` |
 | 自定义格式 | 任意类型 | 自定义 Runnable 或解析函数 |
 
-##### StrOutputParser
+#### StrOutputParser
 
 `StrOutputParser` 用于将模型的输出转换为普通字符串。聊天模型通常返回一个 `AIMessage` 对象，解析器会提取其中的 `content` 内容，方便后续代码直接使用文本。
+
+##### 创建实例
+
+`StrOutputParser()` 没有需要配置的专属构造参数，直接创建实例即可。
+
+##### 实例 API
+
+**`invoke(input, config=None)`** 用于解析一次模型输出：
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `input` | 是 | 模型输出，通常是 `AIMessage`、`AIMessageChunk` 或普通文本；传入消息对象时解析器会提取其内容，返回 `str`。 |
+| `config` | 否 | 可选的 `RunnableConfig` 运行配置，可用于传入标签、元数据或回调等跟踪信息，不改变文本解析规则。 |
 
 ```python
 from langchain_core.messages import AIMessage
@@ -3198,9 +3223,29 @@ print(result)
 # 这是模型生成的回答。
 ```
 
-##### JsonOutputParser
+#### JsonOutputParser
 
 `JsonOutputParser` 用于将模型输出的 JSON 文本解析为 Python 字典或列表，适合处理结构化结果。
+
+##### 创建实例
+
+创建时可设置以下参数：
+
+| 参数 | 位置 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `pydantic_object` | 构造函数 | `None` | 可选的 Pydantic 模型类。传入后，`get_format_instructions()` 会根据模型字段生成 JSON 格式说明；`JsonOutputParser` 仍返回普通 Python 数据，不创建 Pydantic 实例，也不执行字段校验。 |
+| `diff` | 构造函数 | `False` | 控制流式解析结果：默认逐步产出当前 JSON 结果；设为 `True` 时产出相邻结果之间的 JSON Patch 操作。 |
+
+##### 实例 API
+
+**`invoke(input, config=None)`** 用于解析一次模型输出：
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `input` | 是 | 包含 JSON 内容的字符串或模型消息；解析后得到 Python 数据，常见为 `dict` 或 `list`。 |
+| `config` | 否 | 可选的 `RunnableConfig` 运行配置，可用于传入标签、元数据或回调等跟踪信息。 |
+
+**`get_format_instructions()`** 不接收参数，返回供模型参考的 JSON 格式说明；实例创建时传入 `pydantic_object` 后，说明中会包含对应的字段结构。
 
 ```python
 from langchain_core.messages import AIMessage
@@ -3213,15 +3258,21 @@ print(parser.get_format_instructions())
 model_response = AIMessage(
     content='{"title": "LangChain 入门", "level": "beginner"}'
 )
-result = parser.invoke(model_response)
+result = parser.invoke(model_response)  # 结果是普通 Python 对象，不是消息对象
 
 print(result)
 # {'title': 'LangChain 入门', 'level': 'beginner'}
 ```
 
-###### 使用 Pydantic 模型定制 JSON 输出
+##### 使用 Pydantic 模型定制 JSON 输出
 
-可以把 Pydantic 模型传给 `JsonOutputParser`，将字段结构和说明加入格式指令，再把指令放进提示模板。下面沿用前面定义的 `ArticleSummary`。示例用预构造的 `AIMessage` 演示解析，不会调用模型：
+用 Pydantic 模型去定制模型的 JSON 输出。下面沿用前面定义的 `ArticleSummary`：
+
+1. 将 `ArticleSummary` 传给 `JsonOutputParser`，生成包含字段结构和说明的格式指令。
+2. 将格式指令放入提示模板，作为模型生成 JSON 的参考。
+3. `JsonOutputParser` 会把返回的 JSON 解析成普通 Python 数据（本例为 `dict`），不会创建 `ArticleSummary` 实例或校验字段；提示指令也不能保证模型一定遵守格式。
+
+下面用预构造的 `AIMessage` 演示，不会调用模型：
 
 ```python
 from langchain_core.messages import AIMessage
@@ -3246,11 +3297,83 @@ print(result)
 # {'title': 'Agent 入门', 'summary': 'Agent 可结合模型与工具完成任务。'}
 ```
 
-在本项目锁定的 `langchain-core` 1.6.1 中，`JsonOutputParser` 解析后得到的是 `dict`，不会返回 `ArticleSummary` 实例，也不会执行 Pydantic 模型校验；格式指令也不保证模型一定遵守 Schema。
+`parser.get_format_instructions()` 返回的内容较长，其中与 `ArticleSummary` 对应的 Schema 片段如下：
 
-##### PydanticOutputParser
+```json
+{
+    "properties": {
+        "title": {
+            "description": "文章标题",
+            "title": "Title",
+            "type": "string"
+        },
+        "summary": {
+            "description": "文章摘要",
+            "title": "Summary",
+            "type": "string"
+        }
+    },
+    "required": ["title", "summary"]
+}
+```
 
-如果希望解析结果是经过 Pydantic 校验的模型实例，可使用 `PydanticOutputParser`。这里继续使用前面定义的 `ArticleSummary`：
+- `properties` 描述字段及类型；`required` 列出必填字段。
+
+#### XMLOutputParser
+
+`XMLOutputParser` 用于将 XML 文本解析为嵌套的 Python 字典；重复标签可能对应列表。它也可以放在 LCEL 链尾部，将模型输出转换为程序可处理的数据。
+
+##### 创建实例
+
+创建时可以设置以下参数：
+
+- `tags`：可选的预期标签列表，解析器会将它们写入格式说明。
+- `parser`：XML 解析器。`langchain-core` 1.6.1 默认使用 `defusedxml`；设为 `"xml"` 会改用标准库解析器，只有确认运行环境安全时才应这样做。
+
+```python
+from langchain_core.output_parsers import XMLOutputParser
+
+# tags 只提示模型使用这些标签，不会校验输出。
+parser = XMLOutputParser(tags=["movies", "movie", "title", "year"])
+```
+
+XML 内容应按不可信输入处理。使用 `langchain-core` 1.6.1 时，如果没有安装 `defusedxml`，默认解析会抛出 `ImportError`；其他版本应核对对应的 API 和安全说明。
+
+##### 实例 API
+
+- `get_format_instructions()`：无参数，返回 XML 格式说明，可放入提示模板。
+- `parse(text)`：接收 XML 字符串，返回嵌套的 Python 数据；业务代码仍需校验必需字段和值。
+- `invoke(input, config=None)`：按 Runnable 接口解析一次输入；`config` 是可选运行配置。
+- 流式调用：模型支持流式输出且解析器位于 LCEL 链尾时，`chain.stream(...)` 会逐步产出部分解析结果；中间结果不一定是完整对象。
+
+##### 使用示例
+
+下面沿用前面创建的 `parser`，构造带格式说明的提示模板，并解析一段示例 XML；示例不调用模型：
+
+```python
+from langchain_core.prompts import PromptTemplate
+
+prompt = PromptTemplate(
+    template="根据要求生成电影列表。\n{format_instructions}\n{query}",
+    input_variables=["query"],
+    partial_variables={"format_instructions": parser.get_format_instructions()},
+)
+
+prompt_value = prompt.invoke({"query": "列出一部电影及其上映年份。"})
+print(prompt_value.to_string())
+
+xml_text = """<movies>
+  <movie><title>功夫</title><year>2004</year></movie>
+</movies>"""
+result = parser.parse(xml_text)
+print(result)
+```
+
+如果要让模型生成 XML，可将提示模板、模型和解析器连接为 `prompt | model | parser`。参见 [`langchain-core` 1.6.1 官方源码](https://github.com/langchain-ai/langchain/blob/langchain-core%3D%3D1.6.1/libs/core/langchain_core/output_parsers/xml.py)（2026-11-15 查阅）。
+
+#### PydanticOutputParser
+
+如果希望解析结果是经过 Pydantic 校验的模型实例，使用 `PydanticOutputParser`：
 
 ```python
 from langchain_core.messages import AIMessage
@@ -3259,13 +3382,11 @@ from langchain_core.output_parsers import PydanticOutputParser
 parser = PydanticOutputParser(pydantic_object=ArticleSummary)
 result = parser.invoke(
     AIMessage(content='{"title": "Agent 入门", "summary": "介绍 Agent 的基本组成。"}')
-)
+)  # 返回经过校验的 ArticleSummary 实例
 
 print(result.title)
 print(result.model_dump())
 ```
-
-与 `JsonOutputParser` 的区别是：前者返回 Pydantic 模型实例并校验字段；后者返回解析后的字典。
 
 在实际链路中，通常将提示模板、模型和输出解析器连接起来：
 
@@ -3276,7 +3397,11 @@ answer = chain.invoke({"topic": "cats"})
 print(answer)
 ```
 
-执行顺序是：提示模板生成输入，模型生成 `AIMessage`，`StrOutputParser` 提取消息内容并返回字符串。
+执行顺序如下：
+
+1. 提示模板根据输入生成模型提示。
+2. 模型生成 `AIMessage`。
+3. `StrOutputParser` 提取消息内容，返回字符串。
 
 如果需要结构化 JSON 结果，可以将链末尾的 `StrOutputParser` 替换为 `JsonOutputParser`。
 
@@ -4138,9 +4263,17 @@ result = agent.invoke({
 print(result["messages"][-1].content)
 ```
 
-- `max_results`：限制返回的搜索结果数量。
-- 使用前需要配置 `TAVILY_API_KEY`。
-- `TavilySearchResults` 已被弃用；新项目建议安装 `langchain-tavily`，并改用 `from langchain_tavily import TavilySearch`。
+- 使用前安装 `langchain-tavily`，并配置 `TAVILY_API_KEY`。
+- `max_results` 限制返回的搜索结果数量。
+- 旧集成 `langchain_community.tools.tavily_search.TavilySearchResults` 已弃用；新项目使用 `langchain_tavily.TavilySearch`。
+
+参考：[TavilySearch API](https://reference.langchain.com/python/langchain-tavily/tavily_search/TavilySearch)、[已弃用的 TavilySearchResults API](https://reference.langchain.com/python/langchain-community/tools/tavily_search/tool/TavilySearchResults)。
+
+### 工具调用的安全边界
+
+- 模型生成的工具名和参数应视为待校验输入；执行前检查参数格式、当前用户权限和操作范围。
+- 模型提出调用不代表用户已授权。写入、删除等有副作用的操作，应由应用执行权限检查；高风险操作还应要求人工确认。
+- 第三方搜索结果属于外部内容，不能默认视为可信事实或可直接执行的指令。
 
 ## agent
 
@@ -4892,6 +5025,140 @@ with requests.post(
 
 
 # LangChain 实战
+
+## 多模态输入与工具调用
+
+### 实战目标
+
+普通文本消息只包含文字；多模态消息可以由多个内容块组成，例如文字和图片。本节聚焦图像输入：先让模型分析图片，再将图片信息用于工具调用，不涉及音频和视频。
+
+### 准备模型
+
+本项目已包含 `langchain-openai`。在项目根目录的 `.env` 中配置 OpenAI API 密钥和本节使用的模型：
+
+```dotenv
+OPENAI_API_KEY=你的 OpenAI API 密钥
+OPENAI_MULTIMODAL_MODEL=gpt-6.1-terra
+```
+
+下面的代码片段按顺序执行，共用同一个模型对象和图片 URL：
+
+```python
+import base64
+import os
+
+import core.config
+from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
+
+model = ChatOpenAI(
+    model=os.environ["OPENAI_MULTIMODAL_MODEL"],
+    use_responses_api=True,
+    output_version="responses/v1",
+)
+
+image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+```
+
+### 传入一张图片
+
+一种方式是传入图片 URL。消息中的 `content` 列表将问题文字和图片分别作为内容块：
+
+```python
+message = HumanMessage(
+    content=[
+        {"type": "text", "text": "用中文描述这张图片中的天气。"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+    ],
+)
+response = model.invoke([message])
+print(response.text)
+```
+
+图片 URL 必须是模型服务可读取的完整地址。另一种方式是把本地图片编码为 Base64 Data URL，适合图片不适合公开托管的场景：
+
+```python
+with open("image.jpg", "rb") as image_file:
+    image_data = base64.b64encode(image_file.read()).decode("utf-8")
+
+message = HumanMessage(
+    content=[
+        {"type": "text", "text": "用中文描述这张图片中的天气。"},
+        {
+            "type": "image_url",
+            # Data URL 要标明图片类型；Base64 是编码，不是加密。
+            "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
+        },
+    ],
+)
+response = model.invoke([message])
+print(response.text)
+```
+
+这里的 `image.jpg` 应替换为实际图片路径；如果图片是 PNG，Data URL 中的 MIME 类型也要改为 `image/png`。Base64 的基本概念见[Base64](#base64)。
+
+### 传入多张图片
+
+在同一个 `content` 列表中加入多个图片块，模型就可以结合文字要求比较图片：
+
+```python
+image_url_2 = "https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/Morning_in_China_Snow_Town.jpg/1280px-Morning_in_China_Snow_Town.jpg"
+
+message = HumanMessage(
+    content=[
+        {"type": "text", "text": "比较两张图片中的天气有什么不同。"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+        {"type": "image_url", "image_url": {"url": image_url_2}},
+    ],
+)
+response = model.invoke([message])
+print(response.text)
+```
+
+模型的描述会因图片内容和模型版本而不同。图片会计入输入用量；增加图片可能提高请求费用。
+
+### 根据图片调用工具
+
+工具调用（tool calling）是模型根据输入提出结构化的函数调用请求。`bind_tools()` 会把工具名称和参数模式提供给模型；普通的模型调用只返回请求，不会自动执行 Python 函数。
+
+```python
+from typing import Literal
+
+from langchain_core.tools import tool
+
+
+@tool
+def weather_tool(weather: Literal["晴朗的", "多云的", "多雨的", "下雪的"]) -> str:
+    """返回图片中判断出的天气类别。"""
+    return weather
+
+
+model_with_tools = model.bind_tools(
+    [weather_tool],
+    tool_choice="weather_tool",
+)
+message = HumanMessage(
+    content=[
+        {"type": "text", "text": "判断图片中的天气，并用 weather_tool 返回天气类别。"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+    ],
+)
+response = model_with_tools.invoke([message])
+print(response.tool_calls)
+```
+
+`response.tool_calls` 中包含工具名称、参数和调用 ID。真正的 Agent 还需要执行对应工具，并把工具结果交回模型；本例只展示模型如何根据图片提出调用请求。
+
+### 运行与注意事项
+
+- 本节示例使用 OpenAI 官方接口和 `gpt-6.1-terra`；截至 **2026-11-15**，该模型支持图像输入，且工具调用需使用 Responses API，因此模型配置显式设置了 `use_responses_api=True`。模型能力和名称可能变化，运行前应核对官方模型说明。
+- `ChatOpenAI` 面向 OpenAI 官方 API。使用 DeepSeek 等其他服务商时，应按其当前文档选择相应的 LangChain 集成；不要只替换模型名称就假定图像和工具调用格式兼容。
+- 当前 OpenAI 图像输入支持完整图片 URL 或 Base64 Data URL；可用文件格式、请求限制和费用以服务商文档为准。使用真实图片时，确认其可发送给所选服务商，并妥善处理 API 密钥，不要提交到版本库。
+- 模型可能误读图片中的小字、物体数量或细节；重要判断应由其他可靠方式复核。API 调用需要网络，可能产生费用。
+
+**配套练习：**[docs/learn/day6-LangChain Tools  & Agent.md](docs/learn/day6-LangChain%20Tools%20%20%26%20Agent.md)、[Base64 图片示例](../../lm-ai-future/study/day6-agent-tool/01-multimode/multimode_image_base64.py)、[图片 URL 示例](../../lm-ai-future/study/day6-agent-tool/01-multimode/multimode_image_url.py)、[多图示例](../../lm-ai-future/study/day6-agent-tool/01-multimode/multimode_image_list.py)、[工具调用示例](../../lm-ai-future/study/day6-agent-tool/01-multimode/tools_call.py)。这些原练习使用了不同的模型配置；运行时应以服务商当前支持情况为准。
+
+**参考资料（核验日期：2026-11-15）：**[LangChain `ChatOpenAI` 图像输入与工具调用](https://reference.langchain.com/python/langchain-openai/chat_models/base/ChatOpenAI)、[`bind_tools()` API](https://reference.langchain.com/python/langchain-openai/chat_models/base/BaseChatOpenAI/bind_tools)、[OpenAI 图像与视觉指南](https://developers.openai.com/api/docs/guides/images-vision)、[GPT-6.1 Terra 模型说明](https://developers.openai.com/api/docs/models/gpt-6.1-terra)。
 
 ## 多轮对话：对话历史与会话隔离
 
