@@ -3443,41 +3443,17 @@ print(answer)
 
 ### 1. 概念与关系
 
-这几个概念可以先理解为：
-
 | 概念                        | 说明                          |
 | ------------------------- | --------------------------- |
 | 组件                        | 执行具体任务的对象，例如提示模板、模型或输出解析器，并提供 `invoke`、`stream`、`batch` 等调用方法 |
 | `Runnable`                | 组件遵循的统一调用协议                 |
 | LCEL                      | 用于组合多个 `Runnable` 的声明式表达式语法 |
 
-组件负责具体工作，`Runnable` 负责统一调用方式，LCEL 负责将多个组件组合成可执行的链。
-
-LCEL 全称为 LangChain Expression Language（LangChain 表达式语言）。`prompt | model | parser` 描述的是组件之间的数据流；组合后的链本身仍然是 Runnable，继续使用同一套调用方法。
-
-#### 组件与 Runnable
-
-`Runnable` 不是某一个具体的模型或链，而是一套统一的调用协议。只要一个组件实现了 `Runnable`，就可以用相同的方法调用它、组合它，并获取它的输入输出模式。
-
-聊天模型、普通 LLM、提示模板、输出解析器、检索器和工具等组件都可以实现这个协议。因此，LCEL 能够把不同类型的组件连接成一条链，而不需要为每个组件学习完全不同的调用方式。
-
-这里的“组件”可以理解为一个职责明确、可以独立使用或与其他模块组合的功能单元。例如：
-
-- **提示模板**：根据输入变量生成模型需要的提示词。
-- **聊天模型**：接收消息并生成聊天回复。
-- **输出解析器**：将模型返回的文本或消息转换为指定格式。
-- **检索器**：根据问题查找相关文档。
-- **工具**：执行搜索、计算或访问外部系统等具体操作。
+LCEL 全称为 LangChain Expression Language（LangChain 表达式语言），用 `|` 连接 Runnable 组件。组合后的链本身仍是 Runnable，可以继续使用 `invoke` 等方法。
 
 #### 案例
 
-组件通常只负责一件事，通过 `Runnable` 提供统一的调用方式，再使用 LCEL 将多个组件连接起来。例如：
-
-```text
-输入 → 提示模板 → 聊天模型 → 输出解析器 → 最终结果
-```
-
-下面以翻译为例，观察三个组件如何协同工作：
+下面以翻译为例：提示模板生成提示，模型生成回复，输出解析器提取文本。
 
 ```python
 from langchain_core.output_parsers import StrOutputParser
@@ -3491,16 +3467,10 @@ parser = StrOutputParser()
 chain = prompt | model | parser
 result = chain.invoke({"text": "Apple"})
 
-print(result)  # 苹果
+print(result)  # 可能输出：苹果
 ```
 
-这段代码中的 `prompt`、`model` 和 `parser` 都是组件：
-
-- `prompt` 是提示模板组件，接收字典输入，将 `text` 填入模板后生成模型消息。
-- `model` 是聊天模型组件，接收提示消息并请求模型服务，返回 `AIMessage`。
-- `parser` 是输出解析器组件，接收 `AIMessage`，提取其中的文本内容，返回字符串。
-
-通过 `|`，三个组件被 LCEL 连接成一条链。数据依次经过：
+`prompt` 接收输入字典并生成提示，`model` 返回 `AIMessage`，`parser` 将消息转换为字符串：
 
 ```text
 {"text": "Apple"}
@@ -3522,23 +3492,11 @@ model_result = model.invoke(prompt_result)
 result = parser.invoke(model_result)
 ```
 
-这三次调用与下面的链式调用效果相同：
+分步调用和链式调用的数据处理顺序相同；分别运行时会各自请求模型，回答不一定完全相同：
 
 ```python
 result = (prompt | model | parser).invoke({"text": "Apple"})
 ```
-
-三者之间的关系如下：
-
-```text
-prompt、model、parser：具体的组件
-          ↓ 遵循
-       Runnable：统一的调用协议
-          ↓ 提供
-invoke、stream、batch 等调用方法
-```
-
-因此，`invoke` 和 `stream` 不是组件本身，而是组件遵循 `Runnable` 规范后提供的调用方法。`model` 是聊天模型组件，`model.invoke(...)` 和 `model.stream(...)` 分别表示以完整结果或流式数据块的方式调用这个组件。
 
 ### 2. Runnable 调用方法
 
@@ -3548,7 +3506,15 @@ invoke、stream、batch 等调用方法
 - `stream`：以数据块的形式流式返回结果。
 - `batch`：对一组输入执行调用。
 
-异步调用适合模型请求、向量检索和外部工具调用等 I/O 密集型操作。当程序等待这些操作返回时，可以将执行权交给事件循环，处理其他任务，从而提高并发处理能力。异步调用不会自动让单次请求变快，主要收益体现在同时处理多个请求时。
+下面用同一类输入比较三种常见用法：
+
+| 用法 | 输入和处理方式 | 示例结果 |
+| --- | --- | --- |
+| `invoke` | 一个输入经过一个 Runnable 或一条链 | 对 `"hello"` 调用一次，得到 `"HELLO"` |
+| `batch` | 多个输入分别经过同一个 Runnable 或同一条链 | 对 `["hello", "hi"]` 分别处理，得到 `["HELLO", "HI"]` |
+| `RunnableParallel` | 同一个输入分别传给多个分支 | 对 `"hello"` 同时计算大写和长度，得到 `{"upper": "HELLO", "length": 5}` |
+
+并行组合的代码见第 5 节。异步调用适合网络请求等 I/O 等待，有助于并发处理，但不会自动加快单次请求。
 
 对应的异步方法包括：
 
@@ -3592,12 +3558,6 @@ response = model.invoke(messages)
 print(response.content)
 ```
 
-调用过程可以理解为：
-
-```text
-发送请求 → 等待模型生成完成 → 返回完整 AIMessage
-```
-
 ##### `stream`
 
 `stream` 返回一个迭代器，需要通过 `for` 循环逐块读取：
@@ -3607,32 +3567,11 @@ for chunk in model.stream(messages):
    print(chunk.content, end="", flush=True)
 ```
 
-调用过程可以理解为：
-
-```text
-发送请求 → 返回第一个 chunk → 返回后续 chunk → 输出完成
-```
-
-每个 `chunk` 只是最终消息的一部分，例如：
-
-```text
-content='你'
-content='好'
-content='！'
-```
-
-因此，下面的写法只能打印迭代器对象，不能直接得到模型文本：
-
-```python
-response = model.stream(messages)
-print(response)
-```
-
-如果模型或底层接口不支持流式调用，`stream` 可能退化为调用 `invoke`，最终一次性返回完整结果。
+每个 `chunk` 只是消息的一部分，直接打印迭代器不会显示完整文本。如果模型或底层接口不支持流式调用，`stream` 可能退化为调用 `invoke`，一次返回完整结果。
 
 #### 异步调用
 
-异步方法需要配合 `asyncio` 和 `await` 使用：
+异步方法需要配合 `asyncio` 和 `await` 使用。以下片段假设在 `async def` 函数内，并且 `model` 和 `messages` 已准备好：
 
 ```python
 response = await model.ainvoke(messages)
@@ -3648,160 +3587,33 @@ async for chunk in model.astream(messages):
 
 #### 流式方法的层次
 
-Runnable 接口中的流式方法主要分为两类：
+`stream` 和 `astream` 用于获取链的最终输出；`astream_events` 和 `astream_log` 用于观察执行事件或中间步骤。
 
-1. `stream` 和 `astream`：流式传输链的**最终输出**。
-2. `astream_events` 和 `astream_log`：流式传输链的**中间步骤、执行事件和最终输出**。
+### 3. 自定义逻辑与数据转换
 
-因此，只有需要实时显示最终文本时，通常使用 `stream` 或 `astream`；需要观察提示模板、检索器、模型和解析器等中间步骤时，则使用 `astream_events` 或 `astream_log`。
-
-### 3. 自定义 Runnable
-
-LCEL 中，**Runnable 是可组合的最小执行单元**。自定义实现通常继承 `Runnable[Input, Output]`，至少实现 `invoke()`；框架会默认提供 `batch()`、`ainvoke()` 和非增量 `stream()`。
-
-#### 概念关系
-
-“自定义 Runnable”和 `Runnable[Input, Output]` 不是两个不同的概念：前者说明组件是由开发者自行实现的 Runnable，后者说明这个 Runnable 的输入和输出类型。
-
-自定义 Runnable 用于补充框架没有提供的确定性转换，例如给输入增加指令、清洗文本或格式化模型输出。
-
-当前示例中的 `PrefixRunnable` 接收一段文本，并在文本前拼接固定前缀。
-
-#### 输入输出契约
-
-`Runnable[Input, Output]` 使用泛型明确约束输入和输出类型：
+`RunnableLambda` 将普通函数包装成 Runnable，适合字段提取、格式转换和轻量清洗，不必为每个简单函数编写 Runnable 子类。
 
 ```python
-Runnable[str, str]
+from langchain_core.runnables import RunnableLambda
+
+def normalize_text(text):
+    return text.strip().lower()
+
+chain = RunnableLambda(normalize_text) | RunnableLambda(
+    lambda text: {"text": text, "length": len(text)}
+)
+
+print(chain.invoke(" HELLO "))
+# {'text': 'hello', 'length': 5}
 ```
 
-第一个 `str` 表示输入类型，第二个 `str` 表示输出类型。因此，`PrefixRunnable` 的 `invoke()` 接收字符串，并返回拼接前缀后的字符串。
-
-实现 Runnable 时，`invoke()` 是最基本的调用入口：
-
-```python
-result = runnable.invoke("苹果")
-```
-
-`result` 的类型应与 `Runnable` 声明的输出类型一致。
-
-#### 最小可运行示例
-
-```python
-from typing import Any
-
-from langchain_core.runnables import Runnable, RunnableConfig
-
-
-class PrefixRunnable(Runnable[str, str]):
-    def __init__(self, prefix: str) -> None:
-        self.prefix = prefix
-
-    def invoke(
-        self,
-        input: str,
-        config: RunnableConfig | None = None,
-        **kwargs: Any,
-    ) -> str:
-        return f"{self.prefix}{input}"
-```
-
-`prefix` 是创建对象时传入的固定前缀。`input` 是每次调用时传入的业务文本。`config` 用于接收 Runnable 的运行配置，`invoke()` 返回最终的转换结果。
-
-调用示例：
-
-```python
-runnable = PrefixRunnable("请翻译为英文：")
-result = runnable.invoke("苹果")
-
-print(result)
-```
-
-输出为 `请翻译为英文：苹果`。
-
-#### 接入 LCEL 链
-
-Runnable 可以通过 `|` 组成执行链，前一个节点的输出会传给后一个节点：
-
-```python
-chain = PrefixRunnable("请翻译为英文：") | model | StrOutputParser()
-
-print(chain.invoke("苹果"))
-```
-
-数据依次经过三个节点：
-
-```text
-苹果 → PrefixRunnable → ChatOpenAI → StrOutputParser → 英文翻译结果
-```
-
-`PrefixRunnable` 生成提示文本；`model` 根据提示调用模型；`StrOutputParser` 从模型响应中取出字符串内容。
-
-#### 异步、批处理与流式扩展
-
-只实现 `invoke()` 时，Runnable 已具备最基础的同步调用能力。LangChain 还提供以下调用方式：
-
-| 方法 | 使用场景 |
-| --- | --- |
-| `ainvoke()` | 异步执行单次调用 |
-| `batch()` | 对多个输入进行批量调用 |
-| `stream()` | 按增量持续产出结果 |
-
-当自定义逻辑只是简单的同步转换时，只实现 `invoke()` 即可。只有底层业务本身支持原生异步、批量接口或持续输出时，才需要重写对应方法。
+需要维护组件配置或定制调用行为时，可以使用后面的自定义 Runnable 类。普通 RunnableLambda 不会自动将函数结果拆成增量流；流式链路中的转换节点需要注意是否会等待上游收集完成。
 
 ### 4. LCEL 顺序组合
 
 `RunnableSequence` 表示按顺序执行多个步骤，通常通过 `|` 创建。前一步的输出直接成为后一步的输入，连接时应确保类型和字段匹配。
 
-Chain 用于将多个处理步骤组合成一个可复用的工作流。在 LangChain 中，每个步骤通常都遵循统一的 `Runnable` 接口，因此可以通过链式组合的方式连接提示模板、模型、输出解析器、检索器和工具。
-
-Chain 是工作流的泛称，不是所有 Chain 都通过 LCEL 实现。
-
-在 LCEL 中，`|` 是管道运算符，用于按照从左到右的顺序连接多个 `Runnable`。例如：
-
-```python
-chain = model | parser
-```
-
-这条链包含两个步骤：
-
-1. `model` 接收输入并生成模型响应，通常是字符串或 `AIMessage`。
-2. `parser` 接收模型响应，并将其转换为下游需要的格式，例如普通字符串。
-
-调用链时，输入会依次传递给每个步骤：
-
-```text
-输入
-    -> Chat Model
-    -> Output Parser
-    -> 最终结果
-```
-
-Chain 的输入类型和输出类型由组成它的各个步骤共同决定。使用 LangSmith 可以查看每个步骤的执行过程、输入输出和耗时，便于调试和监控。
-
-[https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r](https://smith.langchain.com/public/f1bdf656-2739-42f7-ac7f-0f1dd712322f/r)
-
-#### 调用示例
-
-```python
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import StrOutputParser
-
-model = ChatOpenAI(model="gpt-4o-mini")
-
-messages = [
-    SystemMessage(content="将以下内容从英语翻译成中文"),
-    HumanMessage(content="Let's go for a run"),
-]
-parser = StrOutputParser()
-
-# 使用管道运算符组合模型和输出解析器
-chain = model | parser
-response = chain.invoke(messages)
-print(response)
-# 我们去跑步吧
-```
+Chain 是把多个处理步骤组织起来的工作流，不是所有 Chain 都通过 LCEL 实现。前面的 `prompt | model | parser` 就是一条顺序链；使用 LangSmith 可以查看各步骤的输入、输出和耗时。
 
 ### 5. LCEL 并行组合
 
@@ -3833,25 +3645,59 @@ print(chain.invoke(" hello "))
 
 裸字典本身不是 Runnable，不能脱离组合语境直接调用 `.invoke()`。并发也不等于 CPU 密集型计算一定更快。
 
-### 6. 自定义逻辑与数据转换
+### 6. 自定义 Runnable
 
-`RunnableLambda` 将普通函数包装成 Runnable，适合字段提取、格式转换和轻量清洗，不必为每个简单函数编写 Runnable 子类。
+需要保存配置或定制调用行为时，可以继承 `Runnable[Input, Output]` 并实现 `invoke()`。泛型表示预期的输入和输出类型；例如 `Runnable[str, str]` 表示输入和输出都是字符串。
+
+#### 最小可运行示例
 
 ```python
-from langchain_core.runnables import RunnableLambda
+from typing import Any
 
-def normalize_text(text):
-    return text.strip().lower()
+from langchain_core.runnables import Runnable, RunnableConfig
 
-chain = RunnableLambda(normalize_text) | RunnableLambda(
-    lambda text: {"text": text, "length": len(text)}
-)
 
-print(chain.invoke(" HELLO "))
-# {'text': 'hello', 'length': 5}
+class PrefixRunnable(Runnable[str, str]):
+    def __init__(self, prefix: str) -> None:
+        self.prefix = prefix
+
+    def invoke(
+        self,
+        input: str,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> str:
+        return f"{self.prefix}{input}"
 ```
 
-需要维护组件配置或定制调用行为时，可以使用前面的自定义 Runnable 类。普通 RunnableLambda 不会自动将函数结果拆成增量流；流式链路中的转换节点需要注意是否会等待上游收集完成。
+`prefix` 是固定前缀，`input` 是本次输入，`config` 用于接收运行配置。
+
+调用示例：
+
+```python
+runnable = PrefixRunnable("请翻译为英文：")
+result = runnable.invoke("苹果")
+
+print(result)
+```
+
+输出为 `请翻译为英文：苹果`。
+
+#### 接入 LCEL 链
+
+Runnable 可以通过 `|` 组成执行链，前一个节点的输出会传给后一个节点：
+
+```python
+chain = PrefixRunnable("请翻译为英文：") | model | StrOutputParser()
+
+print(chain.invoke("苹果"))
+```
+
+`PrefixRunnable` 生成提示文本，模型处理后由 `StrOutputParser` 提取字符串。
+
+#### 异步、批处理与流式扩展
+
+只实现 `invoke()` 时，框架也提供 `batch()`、`ainvoke()` 和默认 `stream()`。默认 `stream()` 调用 `invoke()` 并一次返回结果；要逐块输出，需要提供流式实现。底层支持原生异步或批量接口时，也可以按需重写对应方法。
 
 ### 7. 数据透传与字段扩展
 
@@ -3938,7 +3784,7 @@ print(safe_parser.invoke("invalid"))
 
 这里使用转换错误演示重试后降级的顺序；真实业务中，非法输入通常应直接校验失败，而不是重试。`stop_after_attempt=2` 包含首次尝试。优先给可能失败的最小节点添加重试，避免整个链重复执行；发邮件、写数据库等有副作用的操作需要考虑幂等性。降级组件应接受相同输入，并返回下游能处理的结果类型。
 
-参考：LangChain 官方 Runnable API、RunnableBranch API 与 RunnablePassthrough 源码；示例用于说明数据流，不依赖模型服务。
+参考：[Runnable API](https://reference.langchain.com/python/langchain-core/runnables/base/Runnable)、[Runnable.stream 默认实现](https://reference.langchain.com/python/langchain-core/runnables/base/Runnable/stream)、[RunnableLambda API](https://reference.langchain.com/python/langchain-core/runnables/base/RunnableLambda)。本节包含不依赖模型的转换示例，也包含需要模型服务的调用示例。
 
 ## 对话历史 API
 
@@ -4027,19 +3873,15 @@ print(safe_parser.invoke("invalid"))
 
 #### 1.1 什么是工具
 
-工具是应用提供的一项可执行能力，例如计算数据、查询天气、搜索信息或读取数据库。可以先把它理解为“带有使用说明的函数”：函数负责做事，工具名称、描述和参数说明帮助模型知道它能做什么、需要传什么。
+工具是应用提供的可执行能力，例如计算、查询天气或搜索信息。可以把它理解为“带有使用说明的函数”：说明告诉模型工具能做什么、需要什么参数，函数负责执行。
 
-例如，模型需要计算 `2 × 3` 时，应用可以提供一个乘法工具：模型提出调用请求，应用运行乘法函数，得到 `6`，再把结果交给模型组织回答。
-
-本章先学习如何创建和直接调用工具，再学习如何让模型请求工具，最后介绍异步、错误处理和第三方集成。示例中的 Python 代码块除特别说明外都可以分别保存为 `.py` 文件运行。
-
-运行前需要 Python 环境；先在终端安装基础依赖：
+基础示例需要安装：
 
 ```powershell
 python -m pip install langchain-core pydantic
 ```
 
-例如，将第 2 节代码保存为 `tool_example.py`，在该文件所在目录运行 `python tool_example.py`。基础示例不需要模型账号或 API 密钥；模型和第三方工具示例需要额外准备，见相应小节。依赖安装到哪个 Python 环境，就需要用同一个环境的 Python 执行代码。
+基础示例不需要模型或 API 密钥；使用模型和第三方服务时，按对应小节配置。
 
 #### 1.2 工具由哪些部分组成
 
@@ -4050,7 +3892,7 @@ python -m pip install langchain-core pydantic
 | 参数结构 | 说明工具需要哪些输入及其类型 | 整数 `a`、`b` |
 | 执行逻辑 | 实际执行的函数或异步函数 | `return a * b` |
 
-名称、描述和参数结构相当于工具的使用说明；函数是实际做事的部分。应用把使用说明提供给模型，收到调用请求后再执行函数。工具集合中的名称应保持唯一，方便应用按名称找到工具。
+同一组工具的名称应保持唯一，方便应用按名称找到工具。
 
 #### 1.3 模型、工具与应用各自负责什么
 
@@ -4073,7 +3915,7 @@ flowchart TD
     G --> B
 ```
 
-其中 `tool_calls` 是模型提出的工具请求；`ToolMessage` 是应用放入对话中的工具执行结果。模型可以直接回答，也可以请求一个或多个工具。上图表示可能的循环；第 5 节会用具体数据解释每一步，后续 [agent](#agent) 章节介绍自动调度。
+`tool_calls` 是模型提出的工具请求，`ToolMessage` 是应用返回的工具结果。第 5 节展示手动调用，后续 [agent](#agent) 章节介绍自动循环。
 
 ### 2. 创建自定义工具
 
@@ -4099,16 +3941,7 @@ print(multiply.args)         # 输入字段的 JSON Schema，具体格式可能�
 print(multiply.invoke({"a": 2, "b": 3}))  # 6
 ```
 
-预期输出如下；参数结构的具体字段和排列可能因版本而异：
-
-```text
-multiply
-计算两个整数的乘积。
-{'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}}
-6
-```
-
-这里的 `multiply` 已经是工具对象：`name` 是名称，`description` 是说明，`args` 展示参数结构。`invoke({"a": 2, "b": 3})` 把字典中的 `2` 和 `3` 分别传给函数的 `a` 和 `b`，函数计算后返回 `6`。这次调用由 Python 代码直接发起，没有调用模型。
+`multiply` 已经是工具对象。`invoke()` 将字典中的参数传给函数，返回 `6`；这里由代码直接调用，没有调用模型。`args` 的输出格式可能因版本而异。
 
 #### 2.2 使用 `StructuredTool` 包装函数
 
@@ -4129,7 +3962,7 @@ calculator = StructuredTool.from_function(
 print(calculator.invoke({"a": 2, "b": 3}))  # 6
 ```
 
-输出为 `6`。`func` 指向已有函数；`name` 和 `description` 分别指定工具名称与用途说明。这里保留了普通函数 `multiply`，工具对象是 `calculator`。参数结构仍可从函数签名推导，也可以使用下一节的 `args_schema` 指定。
+`func` 指向已有函数，`name` 和 `description` 指定工具名称与说明；输出为 `6`。
 
 #### 2.3 两种创建方式如何选择
 
@@ -4138,19 +3971,17 @@ print(calculator.invoke({"a": 2, "b": 3}))  # 6
 | `@tool` | 新定义一个工具，喜欢在函数上直接声明；也支持自定义名称和参数结构 |
 | `StructuredTool.from_function()` | 包装已有函数，或为同一个工具分别提供同步函数和异步函数 |
 
-两者都创建 LangChain 工具，都可以直接调用或提供给模型；并不是只有 `StructuredTool` 才能配置参数。
+两种方式都支持配置参数、直接调用或提供给模型。
 
 ### 3. 配置工具
 
 #### 3.1 自定义工具名称和描述
 
-名称应简洁且能区分其他工具；描述应说明工具做什么、适合什么时候使用。名称和描述会影响模型的选择，但不能代替实际的权限校验。
-
-`@tool("名称", ...)` 可以覆盖默认名称；`StructuredTool.from_function()` 可以传入 `name` 和 `description`。工具描述也可以放在被装饰函数的文档字符串中。
+名称应能区分其他工具，描述应说明用途。`@tool("名称", ...)` 可以覆盖默认名称；`StructuredTool.from_function()` 可以传入 `name` 和 `description`。
 
 #### 3.2 使用 `args_schema` 定义参数
 
-函数的类型注解能告诉工具 `a` 和 `b` 是整数。如果还想说明它们的含义或限制取值，就可以用 Pydantic 模型定义参数。`args_schema` 是“工具输入参数的结构”，下面用 `CalculatorInput` 告诉工具应该接收什么：
+需要补充参数说明或限制取值时，可以用 Pydantic 模型定义 `args_schema`：
 
 ```python
 from langchain_core.tools import tool
@@ -4169,7 +4000,7 @@ print(multiply.args)  # 查看包含字段描述的输入结构
 print(multiply.invoke({"a": 2, "b": 3}))  # 6
 ```
 
-`BaseModel` 用来定义输入结构，`Field` 为字段设置说明和约束；`ge=0` 表示值必须大于或等于 0。第一行输出包含字段类型、描述及最小值的结构，第二行输出 `6`。这里定义的 `a`、`b` 与函数参数同名，工具才能把输入传给函数。`StructuredTool.from_function()` 同样可以接收 `args_schema=CalculatorInput`。
+`Field` 设置字段说明和约束，`ge=0` 表示不小于 0；字段名应与函数参数匹配。`StructuredTool.from_function()` 同样支持 `args_schema`。
 
 #### 3.3 参数描述与参数校验
 
@@ -4184,21 +4015,17 @@ except ValidationError as error:
     print("输入校验失败：", error.errors()[0]["type"])
 ```
 
-预期输出包含 `输入校验失败： greater_than_equal`。因为 `a=-1` 不满足 `ge=0`，工具会在执行乘法函数前报告校验错误。描述和校验规则各有作用：只写“非负整数”不会自动阻止负数。
+输出包含 `greater_than_equal`：`a=-1` 不满足 `ge=0`，工具在执行函数前报告校验错误。
 
 #### 3.4 `return_direct`：工具结果直接返回
 
-可以在创建工具时设置 `return_direct=True`。在支持该选项的 Agent 中，工具执行后会结束当前工具循环并直接返回工具结果；默认情况下 Agent 通常会把结果交回模型继续处理。例如计算工具返回 `6` 后，直接返回时用户看到工具结果；继续处理时模型可以把结果组织成“结果是 6”。具体返回消息结构取决于 Agent。
-
-直接调用 `tool.invoke()` 时，调用者本来就直接拿到工具结果；`return_direct` 主要影响 Agent 对结果的后续处理。具体返回消息结构取决于使用的 Agent。
+设置 `return_direct=True` 后，支持此选项的 Agent 会在工具执行后结束循环并直接返回结果；默认情况下，结果通常会交回模型继续处理。直接使用 `tool.invoke()` 时，调用者本来就直接得到工具结果。
 
 ### 4. 同步与异步工具
 
 #### 4.1 `invoke()` 与 `ainvoke()`
 
-`invoke()` 用于同步调用，`ainvoke()` 用于异步调用，后者需要在异步上下文中 `await`。异步主要适合网络请求等 I/O 等待，不会自动加速同步计算。
-
-可以先把两者理解为两种调用入口：`invoke()` 等待结果并继续运行；`await tool.ainvoke(...)` 在异步函数中等待结果，让事件循环在等待期间有机会运行其他协程。下一例只是用延时模拟等待，并没有真实请求网络。
+`invoke()` 是同步调用；`ainvoke()` 是异步调用，需要在异步函数中 `await`。异步适合网络请求等 I/O 等待，不会自动加速同步计算。下一例用延时模拟等待。
 
 #### 4.2 使用 `@tool` 定义异步工具
 
@@ -4218,9 +4045,7 @@ async def main():
 asyncio.run(main())
 ```
 
-普通脚本使用 `asyncio.run()` 启动；如果已经在运行中的事件循环内，应在异步函数中直接 `await`，不要再次调用 `asyncio.run()`。
-
-输出为 `6`：`amultiply.ainvoke()` 发起异步调用，`await` 等待函数返回的结果。
+输出为 `6`。普通脚本使用 `asyncio.run()` 启动；已有事件循环中应直接 `await`，不要再次调用 `asyncio.run()`。
 
 #### 4.3 使用 `StructuredTool` 提供同步和异步实现
 
@@ -4246,15 +4071,13 @@ async def main():
 asyncio.run(main())
 ```
 
-输出依次为 `6` 和 `10`。`func` 指定同步实现，`coroutine` 指定异步实现；两者都代表同一个乘法工具。这里演示两种入口；实际异步程序中的同步函数若执行阻塞 I/O，仍会阻塞事件循环。同步、异步实现应提供一致的业务语义。
+`func` 指定同步实现，`coroutine` 指定异步实现；输出依次为 `6` 和 `10`。两种实现应具有一致的业务语义。
 
 ### 5. 将工具提供给模型
 
 #### 5.1 使用 `bind_tools()` 绑定工具
 
-`model.bind_tools([...])` 将工具的名称、描述和参数结构提供给支持工具调用的聊天模型，返回新的可调用模型对象。它让模型能够提出调用请求，不会自动执行工具。
-
-可以把它理解为先给模型一份“工具菜单”。例如菜单上写着 `get_weather(city)`：模型可以请求查询北京天气，但真正查询要等应用收到请求后执行。
+`model.bind_tools([...])` 将工具的名称、描述和参数结构提供给聊天模型。模型可以据此提出调用请求，但绑定本身不会执行工具。
 
 #### 5.2 读取模型返回的 `tool_calls`
 
@@ -4266,20 +4089,13 @@ asyncio.run(main())
 {'name': 'get_weather', 'args': {'city': '北京'}, 'id': 'call_123', 'type': 'tool_call'}
 ```
 
-这条记录的意思是“请用 `get_weather` 查询北京”，里面没有天气结果。
+这表示请求查询北京天气，尚未得到天气结果。
 
 #### 5.3 按工具名称执行并回传 `ToolMessage`
 
 下面使用固定天气数据演示一轮手动调用；天气来自函数里的示例文本，不是真实天气。
 
-**运行前准备：**
-
-1. 安装模型集成：`python -m pip install langchain-openai`。
-2. 准备可调用 OpenAI API 的密钥和模型权限。ChatGPT 或 Codex 订阅与 API 计费是独立的；具体可用模型和费用以服务商为准。
-3. 在运行程序的 PowerShell 窗口设置 `OPENAI_API_KEY`。例如执行 `$env:OPENAI_API_KEY = Read-Host "请输入 OpenAI API 密钥"`，然后输入密钥；这个输入会显示在终端中，不要把密钥写进示例代码或分享终端记录。关闭该窗口后需要重新设置。
-4. 将以下完整代码保存为 Python 文件，在同一窗口用 `python 文件名.py` 运行。
-
-如果使用其他支持工具调用的模型服务，应按其集成文档替换模型配置；不同服务的参数不一定完全相同。运行会产生网络请求，可能产生费用。
+准备：安装 `langchain-openai`，配置 `OPENAI_API_KEY`，并选择账号可用、支持工具调用的模型。ChatGPT 或 Codex 订阅与 API 计费独立；实际调用可能产生费用。环境变量的设置方法参见[环境变量](#6-环境变量)。
 
 ```python
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -4322,21 +4138,11 @@ else:
 
 如果模型选择调用工具，输出会依次包含工具请求、`工具结果： 北京：晴，25°C` 和模型组织的回答；具体格式、调用 ID 和回答措辞不是固定值。模型也可能不请求工具，这时只输出它的直接回答。
 
-对照代码看数据如何变化：
-
-| 步骤 | 发生了什么 |
-| --- | --- |
-| 绑定 | 把 `get_weather` 的使用说明提供给模型 |
-| 首次调用 | 模型返回 `tool_calls`，其中包含名称、参数和 ID |
-| 应用执行 | 按 `call["name"]` 找工具，用 `call["args"]` 执行，得到天气字符串 |
-| 回传 | 用 `ToolMessage` 保存工具结果，`tool_call_id` 对应原请求的 ID |
-| 再次调用 | 把原问题、模型请求和工具结果一起交回模型，生成回答 |
-
-`tools_by_name` 是按工具名查找工具的字典；本例只有一个工具，这种写法也能扩展到多个工具。实际应用还需处理无效参数、工具执行失败及调用权限等情况。
+应用通过 `tools_by_name` 按名称找到工具，使用 `call["args"]` 执行，再通过 `ToolMessage` 返回结果。`tool_call_id` 将结果与原请求关联；原问题、请求和结果一起交回模型生成回答。
 
 #### 5.4 手动调用与 Agent 自动循环的区别
 
-上例只处理第一轮工具请求并再次调用模型；第二次响应仍可能请求工具，示例没有继续执行它。需要循环处理时，可以自行实现循环，也可以使用后文的 Agent。模型是否支持工具调用，取决于具体模型和服务商。
+上例只处理一轮工具请求；第二次响应仍可能请求工具，但示例不会继续执行。多轮调度可以自行实现，也可以交给后文的 Agent。
 
 ### 6. 处理工具错误
 
@@ -4358,9 +4164,7 @@ weather_tool = StructuredTool.from_function(
 print(weather_tool.invoke({"city": "foobar"}))  # 没有找到城市：foobar
 ```
 
-这里的函数为了演示始终抛出异常；实际工具应仅在对应业务条件发生时抛出。
-
-运行时，`get_weather` 抛出 `ToolException`，工具看到 `handle_tool_error=True` 后把异常消息作为输出，所以程序打印 `没有找到城市：foobar`。如果不配置该选项，异常会继续向调用方抛出，后续代码不会像这样直接得到错误文本。
+示例始终抛出异常；`handle_tool_error=True` 将异常消息作为输出。实际工具应只在对应业务错误发生时抛出。
 
 #### 6.2 返回异常信息、自定义文本或处理函数
 
@@ -4371,7 +4175,7 @@ print(weather_tool.invoke({"city": "foobar"}))  # 没有找到城市：foobar
 | 字符串 | 将该字符串作为工具输出 |
 | 函数 | 接收 `ToolException`，返回自定义工具输出 |
 
-例如 `handle_tool_error="没找到这个城市"` 会返回固定文本；也可以传入接收异常的函数，按业务需要生成提示。错误输出应避免泄露密钥、堆栈或内部服务细节。
+错误输出应避免泄露密钥、堆栈或内部服务细节。
 
 #### 6.3 参数校验错误和其他运行异常
 
@@ -4395,17 +4199,17 @@ print(wiki_tool.invoke({"query": "LangChain"}))
 print(wiki_tool.name, wiki_tool.description, wiki_tool.args)
 ```
 
-第一行通常输出包含页面标题和摘要的文本，第二行展示工具名称、描述和输入结构；具体内容会随网络、百科内容和版本变化。`WikipediaAPIWrapper` 负责与 Wikipedia 的查询交互，`WikipediaQueryRun` 把查询能力包装成工具；`top_k_results` 限制结果数量，`doc_content_chars_max` 限制返回内容长度。
+`WikipediaAPIWrapper` 负责查询，`WikipediaQueryRun` 将其包装为工具；`top_k_results` 限制结果数量，`doc_content_chars_max` 限制内容长度。结果会随百科内容和版本变化。
 
 #### 7.2 配置第三方工具的名称和参数
 
-创建集成工具时也可以传入自定义 `name`、`description` 和 `args_schema`，让工具用途与应用场景更贴合。参数字段必须与底层工具能接收的输入兼容，例如 Wikipedia 工具的查询字段是 `query`。不要将字段说明误认为自动生效的校验规则。
+集成工具也可以自定义 `name`、`description` 和 `args_schema`。参数字段需要与底层工具兼容，例如 Wikipedia 工具使用 `query`。
 
 #### 7.3 使用 Tavily 搜索工具
 
-`TavilySearch` 是 LangChain 的 Tavily 搜索集成，接收查询并返回搜索结果。先直接调用工具观察输出，再把它提供给 Agent 会更容易理解。
+`TavilySearch` 接收查询并返回搜索结果。
 
-准备：运行 `python -m pip install langchain-tavily`，从 Tavily 获取 API 密钥，然后在当前 PowerShell 窗口执行 `$env:TAVILY_API_KEY = Read-Host "请输入 Tavily API 密钥"` 并输入密钥。输入会显示在终端，注意不要分享密钥。运行需要联网，可能产生服务费用。
+准备：安装 `langchain-tavily` 并配置 `TAVILY_API_KEY`。运行需要联网，可能产生服务费用。
 
 ```python
 from langchain_tavily import TavilySearch
@@ -4415,13 +4219,13 @@ result = search_tool.invoke({"query": "LangChain 是什么"})
 print(result)
 ```
 
-输出是搜索服务返回的数据，其中可包含标题、网址和内容摘要；具体字段和结果取决于服务及版本，不是固定答案。`max_results=1` 限制结果数量。旧版 `TavilySearchResults` 已弃用；Agent 接入可参见后文 [agent](#agent) 章节。
+`max_results=1` 限制结果数量；返回内容取决于服务和版本。旧版 `TavilySearchResults` 已弃用。
 
 #### 7.4 工具包：`SQLDatabaseToolkit` 与 `get_tools()`
 
 工具包是一组围绕某项任务协作的工具。例如 SQL 工具包可以提供列出表、查看表结构、查询和检查 SQL 等工具，具体列表以安装版本返回值为准：
 
-准备：运行 `python -m pip install langchain-community langchain-openai`；按第 5 节配置模型 API 密钥。将下面的数据库路径替换为自己准备的 SQLite 数据库。这个片段只获取和打印工具定义，不会因为 `get_tools()` 就让模型自动查询数据库。
+准备：安装 `langchain-community` 和 `langchain-openai`，配置模型 API 密钥，并将数据库路径替换为实际路径。
 
 ```python
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
@@ -4437,7 +4241,7 @@ for item in sql_tools:
     print(item.name, item.description)
 ```
 
-输出是工具名称及说明；例如可能出现列出数据库表或查看表结构的工具，具体名称和数量以实际版本为准。`toolkit` 是工具包，`get_tools()` 把其中的工具取出来供后续 Agent 使用。SQLite 相对路径以程序运行时的工作目录为准；路径错误时可能创建新的空数据库。数据库查询可能读取敏感数据或产生副作用，应使用受限权限，按需配置只读访问。
+`get_tools()` 返回工具列表，不会自动让模型查询数据库。SQLite 相对路径以运行时的工作目录为准；路径错误时可能创建空数据库。数据库应使用受限权限，按需配置只读访问。
 
 ### 8. 工具设计与安全
 
