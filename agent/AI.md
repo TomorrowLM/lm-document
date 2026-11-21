@@ -3586,21 +3586,32 @@ Zstandard（Zstd）压缩用于减少会话日志占用的存储空间。
 
 JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JSONL 后端中，**第一行是会话头，后续每一行是一个事件**。会话头描述这是谁的会话；事件按顺序记录发生了什么。元数据与事件在逻辑上分开，但使用同一个日志文件。
 
-下面是一份会话日志的**开头片段**：一个会话开始处理用户说的“你好”。示例符合本机 DSH v0.2.2-rc.3 的数据结构，标识和时间为虚构值；实际日志还有请求配置、模型响应和结束事件等，内容由运行过程决定。
+下面以一个完整 Turn 为例：用户请求回显“你好”，第 1 个 Step 调用 `echo_text` 工具，第 2 个 Step 根据工具结果答复。示例依据本机 DSH v0.2.2-rc.3 的结构构造，名称、时间和内容均为虚构值；为便于阅读，假设只有一个可用工具，并省略该组合未产生的插件事件。真实日志可能包含更多事件。
 
 ```jsonl
 {"type":"session","version":4,"id":"example-session","createdAt":1700000000000,"isSeeded":false,"delegationDepth":0}
 {"type":"turn/start","seq":0,"time":1700000001000,"data":{"turn":1}}
 {"type":"step/start","seq":1,"time":1700000001001,"data":{"turn":1,"step":1}}
-{"type":"user/message","seq":2,"time":1700000001002,"data":{"id":"msg-1","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"你好"}]},"surfaceOp":"append"}
+{"type":"system/message","seq":2,"time":1700000001002,"data":{"turn":1,"step":1,"message":{"id":"sys-1","role":"system","source":{"kind":"system-prompt"},"content":[{"type":"text","text":"按用户要求使用工具。"}]}},"surfaceOp":"append"}
+{"type":"user/message","seq":3,"time":1700000001003,"data":{"id":"user-1","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"请用工具回显你好。"}]},"surfaceOp":"append"}
+{"type":"request/header","seq":4,"time":1700000001004,"data":{"header":{"config":{"provider":"example-provider","model":"example-model"},"tools":[{"name":"echo_text","description":"返回输入文本","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}]},"reason":"initial"}}
+{"type":"request/context","seq":5,"time":1700000001005,"data":{"provider":"example-provider","model":"example-model"}}
+{"type":"assistant/message","seq":6,"time":1700000001010,"data":{"turn":1,"step":1,"message":{"id":"assistant-1","role":"assistant","source":{"kind":"model","provider":"example-provider","model":"example-model"},"content":[{"type":"tool-call","id":"call-1","name":"echo_text","arguments":"{\"text\":\"你好\"}"}]},"stream":[{"type":"chunk","time":1700000001006,"chunk":{"type":"block-start","index":0,"blockType":"tool-call"}},{"type":"tool-call-chunks","time0":1700000001007,"index":0,"dt":[],"id":"call-1","name":"echo_text","args":["{\"text\":\"你好\"}"]},{"type":"chunk","time":1700000001008,"chunk":{"type":"block-end","index":0,"block":{"type":"tool-call","id":"call-1","name":"echo_text","arguments":"{\"text\":\"你好\"}"}}},{"type":"chunk","time":1700000001009,"chunk":{"type":"finish","reason":{"kind":"tool-calls"}}}]},"surfaceOp":"append"}
+{"type":"tool/call","seq":7,"time":1700000001011,"data":{"turn":1,"step":1,"callId":"call-1","name":"echo_text","arguments":"{\"text\":\"你好\"}"}}
+{"type":"tool/result","seq":8,"time":1700000001012,"data":{"turn":1,"step":1,"message":{"id":"result-1","role":"tool","source":{"kind":"tool","callId":"call-1"},"toolCallId":"call-1","content":[{"type":"text","text":"你好"}]}},"surfaceOp":"append","sourceEventSeqs":[7]}
+{"type":"step/end","seq":9,"time":1700000001013,"data":{"turn":1,"step":1}}
+{"type":"step/start","seq":10,"time":1700000001014,"data":{"turn":1,"step":2}}
+{"type":"assistant/message","seq":11,"time":1700000001019,"data":{"turn":1,"step":2,"message":{"id":"assistant-2","role":"assistant","source":{"kind":"model","provider":"example-provider","model":"example-model"},"content":[{"type":"text","text":"你好"}]},"stream":[{"type":"chunk","time":1700000001015,"chunk":{"type":"block-start","index":0,"blockType":"text"}},{"type":"text-chunks","time0":1700000001016,"index":0,"dt":[],"texts":["你好"]},{"type":"chunk","time":1700000001017,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"你好"}}},{"type":"chunk","time":1700000001018,"chunk":{"type":"finish","reason":{"kind":"stop"}}}]},"surfaceOp":"append"}
+{"type":"step/end","seq":12,"time":1700000001020,"data":{"turn":1,"step":2}}
+{"type":"turn/end","seq":13,"time":1700000001021,"data":{"turn":1,"reason":{"kind":"completed"}}}
 ```
 
-按行阅读：
+按过程阅读：
 
-1. **会话头**：创建了 ID 为 `example-session` 的会话。
-2. **`turn/start`**：开始第 1 个 Turn，即一轮输入处理。
-3. **`step/start`**：开始该 Turn 的第 1 个 Step。
-4. **`user/message`**：将用户消息“你好”加入当前会话历史。它的顺序号是 `2`；会话头不占事件序号。
+1. **会话头与 Turn 开始**：首行描述 Session；`seq: 0` 的 `turn/start` 开始第 1 个 Turn，文件头不占事件序号。
+2. **Step 1 准备请求**：`step/start` 开始第 1 步；`system/message` 和 `user/message` 记录指令与用户输入；`request/header` 保存模型配置及工具声明，`request/context` 保存模型路由信息。
+3. **Step 1 调用工具**：`assistant/message` 中的 `tool-call` 是模型提出的调用；`tool/call` 记录运行时开始该调用；`tool/result` 记录结果。三处的 `call-1` 将它们关联起来，结果中的 `sourceEventSeqs: [7]` 指向对应的 `tool/call` 事件。随后第 1 步结束。
+4. **Step 2 给出答复**：下一步使用会话历史中的工具结果，模型生成文本“你好”。第 2 步结束后，`turn/end` 的 `reason.kind: "completed"` 表示本轮正常结束。
 
 **第一行：会话头**
 
@@ -3619,13 +3630,28 @@ JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JS
 
 | 字段 | 以上示例中的值 | 含义 |
 | --- | --- | --- |
-| `type` | `"turn/start"`、`"step/start"`、`"user/message"` | 事件类型，决定 `data` 如何解释 |
-| `seq` | `0`、`1`、`2` | 同一会话内的事件序号，从 0 连续递增 |
-| `time` | 如 `1700000001002` | 事件发生的 Unix 毫秒时间戳 |
+| `type` | 如 `"turn/start"`、`"tool/call"` | 事件类型，决定 `data` 如何解释 |
+| `seq` | `0`～`13` | 同一会话内的事件序号，从 0 连续递增 |
+| `time` | 如 `1700000001003` | 事件发生的 Unix 毫秒时间戳 |
 | `data` | 如 `{"turn":1,"step":1}` | 当前事件的数据；这里表示第 1 个 Turn 的第 1 个 Step |
-| `surfaceOp` | `"append"` | 对模型可见的消息事件，表示将消息追加到模型历史视图；不是每种事件都有此字段 |
+| `surfaceOp` | `"append"` | 将消息追加到模型历史视图；仅消息类事件使用 |
+| `sourceEventSeqs` | `[7]` | 将工具结果关联到序号为 7 的调用事件；不是每个事件都有此字段 |
 
-第 4 行 `data` 中，`id: "msg-1"` 是消息标识，`role: "user"` 是消息角色，`source.kind: "user"` 表示来源是用户；`content` 是内容块数组，其中 `type: "text"` 表示文本块，`text: "你好"` 是文本内容。`data` 的结构随事件类型变化，不能把消息字段套用于所有事件。
+**示例中的消息和工具字段**
+
+| 字段 | 示例值与作用 |
+| --- | --- |
+| `message.id`、`message.role` | 如 `"assistant-1"` 和 `"assistant"`，分别标识消息及其角色；用户消息的角色是 `"user"`，工具结果的角色是 `"tool"` |
+| `message.source` | `kind` 指明消息来自用户、模型、系统提示词或工具；模型来源还包含 `provider` 和 `model`，工具来源中的 `callId` 指向该次调用 |
+| `message.content` | 内容块数组；`type: "text"` 的 `text` 是文本，`type: "tool-call"` 的 `id`、`name`、`arguments` 分别是调用标识、工具名和 JSON 参数字符串 |
+| `tool/call` 的 `callId`、`name`、`arguments` | 分别记录调用标识 `"call-1"`、工具 `"echo_text"` 和原始参数字符串 `"{\"text\":\"你好\"}"` |
+| `tool/result` 的 `toolCallId`、`content` | `toolCallId: "call-1"` 对应工具调用；文本内容 `"你好"` 是工具返回值 |
+| `assistant/message` 的 `stream` | 保存本次模型流的片段：`chunk` 包含开始、结束或完成信息；`tool-call-chunks` 中 `id`、`name`、`args` 保存工具调用片段；`text-chunks` 中 `texts` 保存文本片段。`time0` 是首片时间，`index` 是内容块索引，`dt: []` 表示示例只有一个片段、没有后续间隔 |
+| `request/header` 的 `config`、`tools`、`reason` | `config.provider` 与 `config.model` 是模型路由；`tools` 中 `name` 和 `description` 是工具名及说明；`parameters.type: "object"` 表示参数对象，`properties.text.type: "string"` 声明文本参数，`required: ["text"]` 表示必须提供该参数；`reason: "initial"` 表示初始请求配置快照 |
+| `request/context` | `provider` 和 `model` 保存本次路由元数据；这里与请求头的选择一致 |
+| `turn/end` 的 `reason.kind` | `"completed"` 表示 Turn 正常结束；不是每个 Turn 都以此状态结束 |
+
+`data` 的具体结构取决于事件类型；同一个字段名出现在不同嵌套位置时，含义也要结合所在事件理解。
 
 除了 `append`，`surfaceOp` 也可描述对模型历史视图的替换；部分消息事件可用 `sourceEventSeqs` 关联来源事件。事件不一定进入模型历史，详见 1.5.4。未知事件仅在明确标记 `ignorable` 时可跳过，否则读取方需要拒绝恢复。
 
@@ -3635,8 +3661,8 @@ JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JS
 
 前两类场景使用上面的日志片段；从第 3 类开始，每个代码块都是独立的 JSONL 事件行，按本机 v0.2.2-rc.3 的事件类型构造，内容和标识均为虚构值。它们不构成同一会话的完整事件序列；插件事件仅在相应功能装配并发生操作时出现。第 3 类起各行的 `seq: 1` 是所在会话中的示例序号，`time: 1700000000000` 是示例 Unix 毫秒时间戳；实际序号在同一会话中连续增长。
 
-1. **输入与消息**：上方日志片段中的 `user/message` 记录了用户说的“你好”；消息字段和 `surfaceOp` 已在片段后说明。
-2. **执行生命周期**：上方片段中的 `turn/start` 和 `step/start` 分别记录了一个 Turn 和其中一个 Step 的开始。
+1. **输入与消息**：上方完整 Turn 中的 `user/message` 记录了用户提出的回显请求；消息字段和 `surfaceOp` 已在示例后说明。
+2. **执行生命周期**：上方示例展示了一个 Turn 内两个 Step 的开始和结束，以及整个 Turn 的开始与结束。
 
 3. **模型与请求**：记录请求配置快照。
 
@@ -3758,11 +3784,13 @@ JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JS
 
 ###### 1.5.2.3 写入、恢复与存储边界
 
-- JSONL 会话延迟创建：创建后尚未写入事件时可能没有磁盘文件；首次追加会实体化文件，显式 `flush()` 也可只写入文件头。
-- 内存事件可以分批异步保存；等待 `ctx.sessions.flush(session)` 是需要明确持久化保证时的屏障。单个 Session 由一个活动写入者持有，写入和同步失败会报告错误。
-- 恢复会读取已保存的有效前缀并处理可恢复的不完整尾部；完整帧校验或结构损坏会被拒绝，不能把所有损坏都当成可自动修复。中断和分叉详见 1.5.6。
-- 旧格式读取可在内存中转换为当前逻辑格式；写方式打开时，可在校验后发布当前代文件并保留旧文件。版本支持范围以已安装的格式目录为准。
-- 会话记录可以包含附件引用和 Job 事件，但不保证包含附件原文件或后台任务的完整运行状态。默认本地附件后端将对象另存于 DSH home 的 `attachments/v1`；本地 Job 的运行状态和输出保存在进程内，详见 1.7.4。备份会话时应同时考虑关联的附件和部署所用的其他存储。
+会话事件先写入内存，再由持久化后端保存。使用 JSONL 后端时，文件的创建、恢复和备份需要注意以下边界：
+
+1. **文件创建**：会话创建后，如果还没有写入事件，磁盘上可能尚无会话文件。首次追加事件时才创建文件；显式调用 `flush()` 也可以创建只包含文件头的文件。
+2. **写入与同步**：内存中的事件可以分批异步保存。需要确认待保存的数据已写入时，等待 `ctx.sessions.flush(session)` 完成；写入或同步失败会报告错误。同一 Session 同时只由一个活动写入者持有。
+3. **恢复与损坏**：恢复时读取文件中已保存的有效部分，并尝试处理可恢复的不完整尾部。如果完整记录的校验失败或结构损坏，恢复会拒绝该文件，并非所有损坏都能自动修复。中断与分叉的处理见 1.5.6。
+4. **格式兼容**：读取旧格式时，可以在内存中转换为当前逻辑格式；以写入方式打开时，系统可在校验后生成当前格式的文件并保留旧文件。支持哪些旧版本，以已安装的格式目录为准。
+5. **附件与后台任务**：会话记录可以包含附件引用和 Job 事件，但不一定包含附件原文件或后台任务的完整运行状态。默认本地附件后端将附件另存于 DSH home 的 `attachments/v1`；本地 Job 的运行状态和输出保存在进程内，见 1.7.4。备份会话时，还需考虑关联附件和部署使用的其他存储。
 
 ##### 1.5.3 DSH 如何记录一次会话
 
@@ -3798,22 +3826,24 @@ Session 事件先进入内存，装配的持久化后端再异步保存；文件
 
 ###### 1.6.1.1 Agent Loop 执行机制
 
-**Agent Loop（代理循环）**是驱动 Agent 持续处理任务的运行机制。用户提交一次任务后，Loop 可以根据模型响应自动安排后续步骤，无需用户逐次要求调用工具或继续执行。
+**Agent Loop（代理循环）**是 DSH 驱动 Agent 处理输入的默认机制。它协调模型、工具和 Session：模型根据上下文生成答复或提出调用，Loop 负责将请求交给模型、将工具调用交给执行器，并根据结果决定后续步骤。
 
-1. **接收输入**：用户输入进入队列并唤醒 Loop，Loop 领取输入，开始处理一个 Turn。
-2. **请求模型**：Loop 将用户输入、适用的会话历史和可用工具声明组织成请求，发送给模型。
-3. **执行工具**：如果模型提出工具调用，Loop 将调用交给工具执行器；执行器按调度和权限规则处理，并将结果记录到会话。模型只提出调用请求，实际工具操作由运行时执行。
-4. **继续或结束**：Loop 将工具结果纳入后续请求的历史，再次请求模型；模型可以根据结果继续调用工具，也可以给出答复。满足结束条件时，Loop 结束当前 Turn，之后仍可处理队列中的新输入。
+| 阶段 | Loop 的职责 | 可能出现的情况 |
+| --- | --- | --- |
+| 等待输入 | 空闲时等待可唤醒的输入，领取后开启 Turn | 普通消息排队等待后续 Turn；中途引导可在下一 Step 边界处理 |
+| 准备 Step | 确定模型、可用工具和提示词，并让扩展决定是否接纳输入 | 输入可能被调整或拒绝；未接纳的首批输入不会产生模型 Step |
+| 发起模型请求 | 根据会话历史、上下文和工具声明构造请求，处理流式响应 | 模型可以直接答复、提出一个或多个工具调用；可恢复错误可能触发重试 |
+| 处理工具与结果 | 把调用交给执行器，等待本批处理并将结果纳入会话 | 调用可能成功、失败、被拒绝或被取消；可能需要核实已发生的外部操作 |
+| 决定继续或结束 | 根据模型结果、待处理输入和扩展的继续条件决定下一步 | 可进入下一 Step、结束 Turn，或因错误和取消停止当前运行 |
 
-这个“自执行”过程由 Loop 编排模型请求和工具执行，并不是模型自己在后台运行。这里的循环指每次响应和工具处理完成后判断是否继续，不必理解为按固定时间间隔轮询模型；没有可处理的输入时，Agent 可进入空闲状态，等待后续输入唤醒。模型请求失败、用户取消或扩展要求继续等情况也会影响流程，详见 1.6.3。
+这里的“循环”表示一次处理过程中可能多次请求模型，并在每步后判断是否继续；它不是按固定时间轮询模型。没有需要处理的输入时，Agent 可以空闲，直到可唤醒的输入到来。各阶段的实际时机和边界见 1.6.3。
 
 ###### 1.6.1.2 Turn 与 Step
 
 | 概念 | 含义 |
 | --- | --- |
-| Agent Loop | 默认执行驱动，接收输入、组织模型请求，并决定继续或结束 |
-| Turn | 一轮输入处理的生命周期，可以包含零个或多个 Step |
-| Step | 一次模型响应及其触发的工具处理所在的步骤 |
+| Turn（轮次） | 一次输入处理的生命周期，可包含零个或多个 Step |
+| Step（步骤） | Turn 中一次模型交互及其触发的工具处理；请求失败时也可能没有成功响应 |
 
 例如，用户要求 Agent 分析项目，一个 Turn 可能连续执行四个 Step：
 
@@ -3834,15 +3864,22 @@ Turn：分析项目
 
 ##### 1.6.2 Agent 生命周期与输入队列
 
-Agent 持有执行状态和输入队列；Session 保存可记录、可恢复的会话事实。应用通过 Agent 接口创建或恢复执行，再向其投递输入。
+Agent 负责当前执行和输入投递；Session 记录可回放的会话事实。创建或恢复 Agent 后，调用方可以投递输入，也可以等待空闲、取消或释放 Agent。
+
+DSH 为不同处理时机维护两类待处理输入：
+
+| 输入 | 投递方式 | 何时处理 | 是否唤醒空闲 Agent |
+| --- | --- | --- | --- |
+| 普通后续消息 | `followup()` | 排队等待下一个 Turn；每次领取一条普通消息 | 是 |
+| 中途引导 | `steer()` | 在下一个 Step 边界参与当前 Turn；空闲时可开启 Turn | 是 |
+| 补充上下文 | `inject()` | 在下一次可处理输入的 Step 边界接纳 | 否 |
+
+例如，Agent 正在读文件时，用户补充“只检查配置文件”可作为引导在后续 Step 生效；注入的环境通知本身不会启动空闲 Agent。输入进入队列不等于已送达模型：领取及准入过程见 1.6.3.1。
 
 | API | 作用与边界 |
 | --- | --- |
 | `ctx.agents.create(options)` | 创建 Agent，返回包含 `agent` 和 `dispose()` 的句柄 |
 | `ctx.agents.resume(options)` | 基于已持久化 Session 恢复 Agent，依赖相应持久化能力 |
-| `agent.followup(message)` | 将普通消息加入队列并唤醒 Agent，供后续 Turn 处理 |
-| `agent.steer(message)` | 投递中途引导；运行时在后续 Step 边界处理，空闲时可开启 Turn |
-| `agent.inject(message)` | 投递模型可见的补充上下文；自身不唤醒空闲 Agent |
 | `agent.cancel(cause, options?)` | 取消在途工作，可选择保留队列；不会撤销已发生的外部操作 |
 | `agent.whenIdle()` | 等待当前 Agent 空闲，不代表整棵子代理树已完成 |
 | `handle.dispose()` | 由句柄持有方停止 Agent 并释放资源 |
@@ -3853,16 +3890,18 @@ Agent 持有执行状态和输入队列；Session 保存可记录、可恢复的
 
 ###### 1.6.3.1 输入领取与 Step 准入
 
-1. 普通输入进入队列后唤醒 Agent Loop；Loop 开启 Turn，领取一个待处理普通输入及可在下一 Step 处理的补充输入。运行中的中途引导和注入内容也在后续 Step 边界领取。
-2. 对每个拟议 Step，Loop 捕获本 Step 的模型选择，解析当前可用工具，并据此组装提示词。模型选择在同一 Step 的重试期间保持不变。
-3. 扩展通过 `agent/pre-step` 参与准入，可以接纳、调整或拒绝本批消息。例如，工作区指令插件可在此阶段补充适用指令，压缩组件也可检查上下文压力。
-4. 接纳后才进入 Step 并记录 `step/start`；如果首批输入被拒绝或为空，Turn 可以不产生 Step。已领取并被拒绝的批次不会自动留在队列中。
+**准入**是决定一批已领取的输入能否进入当前 Step 的过程。它与输入排队、请求发送是不同阶段：
 
-因此，消息进入队列、被领取和最终进入模型历史是不同阶段。`inject()` 本身不会唤醒空闲 Agent；它要等后续可唤醒的输入到来，才能参与处理。
+1. `followup()` 或 `steer()` 唤醒空闲 Agent 后，Loop 开始一个 Turn，领取待处理的下一 Step 输入，以及队列中**至多一条**普通后续消息。空闲时仅有引导消息也可以开启 Turn。
+2. 对拟议的每个 Step，Loop 固定本 Step 的模型选择，确定当前可用工具并组装提示词。相同 Step 内的重试沿用这份模型选择。
+3. 扩展通过 `agent/pre-step` 接纳、调整或拒绝已领取的消息。例如，工作区指令插件可补充指令，压缩组件可检查上下文压力。
+4. 准入通过后，Loop 记录 `step/start`，继续准备模型请求。若首批输入为空或被拒绝，Turn 可能没有 Step；已领取并被拒绝的消息不会自动留在队列中。
+
+准入通过也不等于消息已写入历史：在后续请求准备的异步阶段被取消时，系统提示词和本批接纳的用户消息都不会提交。
 
 ###### 1.6.3.2 上下文来源与注入
 
-一次请求需要当前有效的指令、输入和历史，还需要让模型知道本 Step 可以请求哪些工具。DSH 按各内容的来源和时机组装它们，而非在创建 Session 的瞬间固定一份永久上下文。
+**模型上下文**是本次请求提供给模型的内容，包括指令、消息历史和本次输入；请求还携带当前可用工具的声明。工具声明中的 Schema 是对工具参数及其格式的机器可读描述，不是工具实现。DSH 按各来源的条件组装这些内容；它们不会在创建 Session 时永久固定。
 
 下表以已安装的 v0.2.2-rc.3 为准。实际内容取决于 Agent 作用域、已装配插件、配置和文件是否存在；创建会话本身不等于立即将所有内容发送给模型。
 
@@ -3892,18 +3931,28 @@ Agent 持有执行状态和输入队列；Session 保存可记录、可恢复的
 
 | 情况 | DSH 如何处理 |
 | --- | --- |
-| 模型提出工具调用 | 将调用交给当前执行器；工具结果进入会话，供后续 Step 重新派生历史并判断下一步。一次响应可提出多个调用，具体调度和权限处理见 1.4。 |
-| 模型给出答复 | 如果满足自然停止条件，Loop 在结束前检查是否有下一 Step 输入或扩展要求继续；没有继续条件时结束 Turn。达到模型输出上限是另一种结束情况，不应把截断视为完整答复。 |
-| 运行中收到引导或上下文 | 待处理的 `steer()` 或 `inject()` 消息可在后续 Step 边界被领取并经过准入；普通 `followup()` 用于后续 Turn。 |
-| 请求失败或用户取消 | 按错误或取消原因结束相关运行；取消无法撤销已经完成的文件修改或其他外部操作。 |
+| 模型提出工具调用 | 将调用批次交给当前执行器；结果写入会话，后续 Step 可利用结果决定是否继续。多个调用的具体调度和权限处理见 1.4。 |
+| 工具返回错误或被拒绝 | 对产生了工具结果的情况，后续模型请求可以根据错误或拒绝内容调整行为；这不保证一定会自动重试工具。 |
+| 模型给出答复 | 满足自然停止条件时，Loop 检查是否有下一 Step 输入或扩展要求继续；没有时结束 Turn。若达到模型输出上限，答复可能被截断，不能视为完整结果。 |
+| 运行中收到引导或上下文 | `steer()` 或 `inject()` 的待处理消息在后续 Step 边界领取并准入；已发送的请求不会被改写。`followup()` 的普通消息等待后续 Turn。 |
+| 继续条件由扩展提出 | 自然停止前，扩展可以参与停止检查并促成后续工作；因此一次模型答复并不总是代表 Turn 已结束。 |
+| 请求失败或用户取消 | 无可用重试时结束当前运行；取消不撤销已完成的外部操作。已启动调用若结果未知，应先核实外部状态再决定是否重试，见 1.5.6。 |
 
 每个结束的 Step 释放本 Step 的工具集合；Turn 结束后 Agent 可以继续处理队列中的后续普通输入。是否空闲由当前 Agent 的运行与队列状态决定，不代表所有子代理或后台 Job 已经结束。
 
 ##### 1.6.4 上下文计量与压缩
 
-模型的上下文窗口有限。Token 计量用于估算当前或下一次请求的上下文压力；可用时结合模型提供方返回的 usage，否则使用估算。估算不等同于精确计费，不同语言和结构化内容可能有误差。
+**上下文窗口**是模型一次请求能够处理的内容容量，通常以 Token（模型处理文本等内容的计量单位）衡量。请求中的历史、指令和工具声明都会占用容量；内容过多时可能超出模型限制。
 
-装配压缩组件后，达到配置阈值或遇到可识别的上下文溢出时，DSH 可以尝试先裁剪过大的工具结果，再对较早且适合压缩的历史生成摘要，并保留近期需要的上下文。压缩改变后续模型可见的历史视图，不直接删除原始 Session 事件。系统提示词、工具声明及不可分割的内容仍会占用窗口，压缩也不保证每次成功；支持的交互环境可通过 `/compact` 发起压缩。
+DSH 的 Token 计量用于估算上下文压力。符合复用条件时，它以先前成功请求的模型提供方用量（usage）为基准，并估算此后历史的变化；否则使用估算。估算值不是精确账单。
+
+装配压缩组件后，达到配置阈值或遇到可识别的上下文溢出时，DSH 可以尝试**上下文压缩**：
+
+1. 根据配置，先裁剪适合处理的过大工具结果；这一步是可选的。
+2. 重新评估上下文压力；如仍有需要且存在适合压缩的历史范围，可生成摘要，并保留近期需要的上下文。只裁剪也可能已足够，不一定产生摘要。
+3. 后续请求使用调整后的历史视图；原始 Session 事件不会因此直接删除。系统提示词、工具声明和无法拆分的内容仍会占用窗口，压缩也可能无法完成。
+
+支持的交互环境可通过 `/compact` 为空闲会话发起压缩，但不保证一定生成摘要。**上下文压缩与 Zstandard 文件压缩是两件事**：前者调整模型后续看到的历史，后者减少会话文件的磁盘占用，见 1.5.2.1；执行 `/compact` 不会转换存储文件格式。
 
 资料来源：DSH v0.2.2-rc.3 的 [Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/agent-lifecycle.md)、[系统提示词组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/system-prompt.md)、[技能子系统](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/skills.md)、[上下文压缩](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/compaction.md)，以及本机安装包 `@deepseek-ai/dsh-agent-instructions`、`@deepseek-ai/dsh-working-directory` 和 `@deepseek-ai/dsh-agent-loop` 的 README。
 
