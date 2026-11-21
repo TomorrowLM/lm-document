@@ -3554,23 +3554,34 @@ Web/Desktop 的服务管理由 `ctx.mcpManager` 提供；Client 本身消费 `ct
 
 Session（会话）是一段持续交互的记录。用户后续提问时，Agent 可以利用之前的消息和工具结果理解上下文，而不必从零开始。不同 Session 有各自的标识和记录。
 
-##### 1.5.2 Session 如何存储
+##### 1.5.2 存储后端与位置
 
-###### 1.5.2.1 存储后端与位置
+Session 运行时先在内存中维护事件日志。是否能在进程退出后恢复，取决于是否配置了**持久化后端**：负责将会话记录保存到长期存储的组件。
 
-Session 在运行时先维护内存中的事件日志；是否保存到磁盘取决于是否装配持久化后端。DSH 的 `sessionPersistence` 是可替换的存储接口，随产品提供的 JSONL 后端以每个 Session 的文件保存；其他后端可以采用不同的存储方式。
+**一、存储方式**
 
-| 场景 | 存储方式和位置 |
+| 方式 | 会话保存在哪里 |
 | --- | --- |
-| 未装配持久化后端 | 会话仅在内存中，进程结束后不能依靠该内存恢复 |
-| JSONL 后端 | `root` 是必填的会话根目录；按工作目录和 Session ID 建目录，写入版本化日志文件 |
-| 发行版 `dsh-base` 组合 | 配置根目录为 `dshHomePath('sessions')`，通常是 `$DSH_HOME/sessions`，未设置 `DSH_HOME` 时通常为 `~/.dsh/sessions`；实际配置可以覆盖 |
-| `sdk-minimal` 组合 | 也配置 `dshHomePath('sessions')`，但显式选择不压缩；实际配置可以覆盖 |
-| 自定义持久化后端 | 存储位置、编码和文件形式由该后端决定，不能假定一定是 JSONL |
+| 未装配持久化后端 | 只在内存中；进程结束后无法依靠内存恢复 |
+| 随产品提供的 JSONL 后端 | 保存为按 Session 划分的日志文件，根目录由必填的 `root` 配置指定 |
+| 自定义持久化后端 | 由该后端决定位置、编码和存储形式 |
 
-例如 Windows 上未更改默认 DSH home 时，根目录通常位于 `%USERPROFILE%\.dsh\sessions`；容器或远程宿主使用的是运行 DSH 后端的机器上的目录，而不一定是浏览器所在机器的目录。`dshHomePath` 的显式配置优先于 `DSH_HOME` 和默认 home；以部署实际生效配置为准。
+DSH 通过可替换的 `sessionPersistence` 接口使用后端，因此自定义后端不一定保存为 JSONL 文件。
 
-JSONL 后端的目录结构如下，目录名是示意，实际项目目录由工作目录规范化得到，Session ID 会被安全编码。没有工作目录时使用 `_no-cwd`。
+**二、JSONL 后端的默认位置**
+
+| 组合 | 默认根目录 | 编码 |
+| --- | --- | --- |
+| 发行版 `dsh-base` | `dshHomePath('sessions')` | 默认使用 Zstandard 压缩 |
+| `sdk-minimal` | `dshHomePath('sessions')` | 默认不压缩 |
+
+这两个根目录都可以通过配置覆盖。`dshHomePath('sessions')` 通常指 `$DSH_HOME/sessions`；未设置 `DSH_HOME` 时通常为 `~/.dsh/sessions`。显式指定的 DSH home 优先于 `DSH_HOME` 和默认 home，实际位置以部署配置为准。
+
+例如，在 Windows 上使用默认 DSH home 时，根目录通常是 `%USERPROFILE%\.dsh\sessions`。如果 DSH 运行在容器或远程机器中，该路径位于**运行 DSH 后端的环境**，不一定在打开浏览器的电脑上。
+
+**三、JSONL 目录结构**
+
+后端在根目录下先按工作目录分组，再按 Session ID 创建目录。下面的目录名是示意：工作目录会被规范化，Session ID 会被安全编码；没有工作目录时使用 `_no-cwd`。
 
 ```text
 <root>/
@@ -3582,7 +3593,7 @@ JSONL 后端的目录结构如下，目录名是示意，实际项目目录由�
 
 Zstandard（Zstd）压缩用于减少会话日志占用的存储空间。
 
-###### 1.5.2.2 文件结构与各场景数据
+##### 1.5.3 文件结构与各场景数据
 
 JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JSONL 后端中，**第一行是会话头，后续每一行是一个事件**。会话头描述这是谁的会话；事件按顺序记录发生了什么。元数据与事件在逻辑上分开，但使用同一个日志文件。
 
@@ -3613,7 +3624,7 @@ JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JS
 3. **Step 1 调用工具**：`assistant/message` 中的 `tool-call` 是模型提出的调用；`tool/call` 记录运行时开始该调用；`tool/result` 记录结果。三处的 `call-1` 将它们关联起来，结果中的 `sourceEventSeqs: [7]` 指向对应的 `tool/call` 事件。随后第 1 步结束。
 4. **Step 2 给出答复**：下一步使用会话历史中的工具结果，模型生成文本“你好”。第 2 步结束后，`turn/end` 的 `reason.kind: "completed"` 表示本轮正常结束。
 
-**第一行：会话头**
+###### 1.5.3.1 会话头
 
 | 字段 | 示例值 | 含义 |
 | --- | --- | --- |
@@ -3626,219 +3637,604 @@ JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JS
 
 会话头还可能包含 `cwd`（工作目录）、`agentPreset`（Agent 预设）、`parentSession`（子代理的创建方会话）和 `origin`（来源分类）；未设置时省略。
 
-**后续行：事件**
+###### 1.5.3.2 各场景（事件）的数据示例
 
-| 字段 | 以上示例中的值 | 含义 |
-| --- | --- | --- |
-| `type` | 如 `"turn/start"`、`"tool/call"` | 事件类型，决定 `data` 如何解释 |
-| `seq` | `0`～`13` | 同一会话内的事件序号，从 0 连续递增 |
-| `time` | 如 `1700000001003` | 事件发生的 Unix 毫秒时间戳 |
-| `data` | 如 `{"turn":1,"step":1}` | 当前事件的数据；这里表示第 1 个 Turn 的第 1 个 Step |
-| `surfaceOp` | `"append"` | 将消息追加到模型历史视图；仅消息类事件使用 |
-| `sourceEventSeqs` | `[7]` | 将工具结果关联到序号为 7 的调用事件；不是每个事件都有此字段 |
+下面按场景逐项展示本节所涵盖的事件。每个代码块是一条独立 JSONL 事件，按 DSH v0.2.2-rc.3 的声明结构构造，名称、时间和内容均为虚构值；这些事件不是同一个会话中的完整序列。部分事件需要前置记录、关联对象或特定插件，示例仅展示数据结构。
 
-**示例中的消息和工具字段**
+事件是会话中发生的一条记录。它的公共字段包括：`type`（事件类型）、`seq`（会话内从 0 开始的连续序号）、`time`（Unix 毫秒时间戳）和 `data`（具体内容）。这里大多数示例使用 `seq: 100`、`time: 1700000001000`；消息事件中的 `surfaceOp: "append"` 表示追加到模型历史视图。工具结果沿用前面完整 Turn 示例中的关联值。
 
-| 字段 | 示例值与作用 |
-| --- | --- |
-| `message.id`、`message.role` | 如 `"assistant-1"` 和 `"assistant"`，分别标识消息及其角色；用户消息的角色是 `"user"`，工具结果的角色是 `"tool"` |
-| `message.source` | `kind` 指明消息来自用户、模型、系统提示词或工具；模型来源还包含 `provider` 和 `model`，工具来源中的 `callId` 指向该次调用 |
-| `message.content` | 内容块数组；`type: "text"` 的 `text` 是文本，`type: "tool-call"` 的 `id`、`name`、`arguments` 分别是调用标识、工具名和 JSON 参数字符串 |
-| `tool/call` 的 `callId`、`name`、`arguments` | 分别记录调用标识 `"call-1"`、工具 `"echo_text"` 和原始参数字符串 `"{\"text\":\"你好\"}"` |
-| `tool/result` 的 `toolCallId`、`content` | `toolCallId: "call-1"` 对应工具调用；文本内容 `"你好"` 是工具返回值 |
-| `assistant/message` 的 `stream` | 保存本次模型流的片段：`chunk` 包含开始、结束或完成信息；`tool-call-chunks` 中 `id`、`name`、`args` 保存工具调用片段；`text-chunks` 中 `texts` 保存文本片段。`time0` 是首片时间，`index` 是内容块索引，`dt: []` 表示示例只有一个片段、没有后续间隔 |
-| `request/header` 的 `config`、`tools`、`reason` | `config.provider` 与 `config.model` 是模型路由；`tools` 中 `name` 和 `description` 是工具名及说明；`parameters.type: "object"` 表示参数对象，`properties.text.type: "string"` 声明文本参数，`required: ["text"]` 表示必须提供该参数；`reason: "initial"` 表示初始请求配置快照 |
-| `request/context` | `provider` 和 `model` 保存本次路由元数据；这里与请求头的选择一致 |
-| `turn/end` 的 `reason.kind` | `"completed"` 表示 Turn 正常结束；不是每个 Turn 都以此状态结束 |
+1. **输入与消息**
 
-`data` 的具体结构取决于事件类型；同一个字段名出现在不同嵌套位置时，含义也要结合所在事件理解。
+   1. **`agent/inbox/spliced`**
 
-除了 `append`，`surfaceOp` 也可描述对模型历史视图的替换；部分消息事件可用 `sourceEventSeqs` 关联来源事件。事件不一定进入模型历史，详见 1.5.4。未知事件仅在明确标记 `ignorable` 时可跳过，否则读取方需要拒绝恢复。
+      ```json
+      {"type":"agent/inbox/spliced","seq":100,"time":1700000001000,"data":{"target":"next-turn","start":0,"removedCount":1,"inserted":[]}}
+      ```
 
-默认 `.zstd` 文件须由后端或兼容工具解压后才能按行查看；`compression: 'none'` 才能直接作为 UTF-8 文本读取。
+      从下轮收件箱第 0 项起移除 1 条，不插入新消息；需已有对应队列项。
 
-**各场景的数据示例**
+   2. **`system/message`**
 
-前两类场景使用上面的日志片段；从第 3 类开始，每个代码块都是独立的 JSONL 事件行，按本机 v0.2.2-rc.3 的事件类型构造，内容和标识均为虚构值。它们不构成同一会话的完整事件序列；插件事件仅在相应功能装配并发生操作时出现。第 3 类起各行的 `seq: 1` 是所在会话中的示例序号，`time: 1700000000000` 是示例 Unix 毫秒时间戳；实际序号在同一会话中连续增长。
+      ```json
+      {"type":"system/message","seq":100,"time":1700000001000,"data":{"turn":1,"step":1,"message":{"id":"system-1","role":"system","source":{"kind":"system-prompt"},"content":[{"type":"text","text":"请简洁回答。"}]}},"surfaceOp":"append"}
+      ```
 
-1. **输入与消息**：上方完整 Turn 中的 `user/message` 记录了用户提出的回显请求；消息字段和 `surfaceOp` 已在示例后说明。
-2. **执行生命周期**：上方示例展示了一个 Turn 内两个 Step 的开始和结束，以及整个 Turn 的开始与结束。
+      第 1 轮第 1 步的系统消息，含标识、来源和文本内容。
 
-3. **模型与请求**：记录请求配置快照。
+   3. **`developer/message`**
 
-   ```json
-   {"type":"request/header","seq":1,"time":1700000000000,"data":{"header":{"config":{"provider":"example-provider","model":"example-model"}},"reason":"initial"}}
-   ```
+      ```json
+      {"type":"developer/message","seq":100,"time":1700000001000,"data":{"turn":1,"step":1,"message":{"id":"developer-1","role":"developer","source":{"kind":"plan-mode","form":"instructions"},"content":[{"type":"text","text":"请先制定计划。"}]}},"surfaceOp":"append"}
+      ```
 
-   | 字段 | 示例值的作用 |
-   | --- | --- |
-   | `type` | `"request/header"` 表示请求状态快照 |
-   | `data.header.config` | 调用配置；`provider: "example-provider"` 和 `model: "example-model"` 分别是示例提供方及模型标识，实际值取决于配置 |
-   | `data.reason` | `"initial"` 表示初始请求头快照 |
+      开发者消息包含来源和文本块；未添加工具，因此不需要 headerSeq。
 
-4. **工具与 PTC**：记录一次 PTC 内部工具派发开始。
+   4. **`user/message`**
 
-   ```json
-   {"type":"tool/ptc-dispatch-start","seq":1,"time":1700000000000,"data":{"rootCallId":"call-1","parentCallId":"call-1","subCallId":"call-1:ptc:1","name":"example_tool","arguments":{}}}
-   ```
+      ```json
+      {"type":"user/message","seq":100,"time":1700000001000,"data":{"id":"user-1","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"你好。"}]},"surfaceOp":"append"}
+      ```
 
-   | 字段 | 示例值的作用 |
-   | --- | --- |
-   | `type` | `"tool/ptc-dispatch-start"` 表示内部调用开始派发 |
-   | `data.rootCallId`、`data.parentCallId` | 均为 `"call-1"`：示例的根调用和直接父调用是同一次调用 |
-   | `data.subCallId` | `"call-1:ptc:1"` 是此内部调用的标识 |
-   | `data.name`、`data.arguments` | `"example_tool"` 是内部工具名称；`{}` 表示此示例没有参数 |
+      用户消息包含消息标识、用户角色、来源及文本内容。
 
-   此事件属于 PTC 执行过程；完整过程还会包含其他关联事件，根工具调用与结果机制见 1.4。
+   5. **`assistant/message`**
 
-5. **权限与执行限制**：记录权限预设选择。
+      ```json
+      {"type":"assistant/message","seq":100,"time":1700000001000,"data":{"turn":1,"step":1,"message":{"id":"message-1","role":"assistant","source":{"kind":"model","provider":"example","model":"example-model"},"content":[{"type":"text","text":"你好"}]},"stream":[{"type":"chunk","time":1700000000000,"chunk":{"type":"block-start","index":0,"blockType":"text"}},{"type":"text-chunks","time0":1700000000010,"index":0,"dt":[],"texts":["你好"]},{"type":"chunk","time":1700000000020,"chunk":{"type":"block-end","index":0,"block":{"type":"text","text":"你好"}}},{"type":"chunk","time":1700000000030,"chunk":{"type":"finish","reason":{"kind":"stop"}}}]},"surfaceOp":"append"}
+      ```
 
-   ```json
-   {"type":"permission/preset","seq":1,"time":1700000000000,"data":{"preset":"example-preset"}}
-   ```
+      message 含模型来源和文本块；stream 依次记录文本块开始、文本增量、完整块和结束，文本与 message 一致。
 
-   `type: "permission/preset"` 表示权限预设记录；`data.preset: "example-preset"` 是示例预设标识，实际可用值以部署配置为准。
+   6. **`assistant/attempt`**
 
-6. **历史压缩**：记录一次压缩开始。
+      ```json
+      {"type":"assistant/attempt","seq":100,"time":1700000001000,"data":{"turn":1,"step":1,"stream":[]}}
+      ```
 
-   ```json
-   {"type":"compaction/start","seq":1,"time":1700000000000,"data":{"compactionId":"compact-1","turn":null}}
-   ```
+      turn 和 step 指示模型尝试所在回合和步骤；stream 为空数组。
 
-   `type: "compaction/start"` 表示压缩开始；`data.compactionId: "compact-1"` 用来关联本次压缩的记录；`data.turn: null` 表示该压缩不属于某个正在运行的 Turn。完整压缩还会有对应的结束事件。
+2. **执行生命周期**
 
-7. **目标、清单、后台任务和计划**：记录计划模式状态。
+   1. **`turn/start`**
 
-   ```json
-   {"type":"plan/mode","seq":1,"time":1700000000000,"data":{"active":true}}
-   ```
+      ```json
+      {"type":"turn/start","seq":100,"time":1700000001000,"data":{"turn":1}}
+      ```
 
-   `type: "plan/mode"` 表示计划模式变化；`data.active: true` 表示计划模式已启用。目标、清单和 Job 有各自的事件，并非都存入此字段。
+      开始第 1 轮。
 
-8. **子代理、团队和工作流**：记录团队模式状态。
+   2. **`turn/end`**
 
-   ```json
-   {"type":"team/mode","seq":1,"time":1700000000000,"data":{"enabled":true}}
-   ```
+      ```json
+      {"type":"turn/end","seq":100,"time":1700000001000,"data":{"turn":1,"reason":{"kind":"completed"}}}
+      ```
 
-   `type: "team/mode"` 表示团队模式状态记录；`data.enabled: true` 表示用户选择启用团队模式。子代理和工作流仍使用各自的记录。
+      第 1 轮以 completed 原因结束。
 
-9. **Session、工作目录与文件**：记录工作目录变化。
+   3. **`step/start`**
 
-   ```json
-   {"type":"working-directory/change","seq":1,"time":1700000000000,"data":{"cwd":"D:\\example"}}
-   ```
+      ```json
+      {"type":"step/start","seq":100,"time":1700000001000,"data":{"turn":1,"step":1}}
+      ```
 
-   `type: "working-directory/change"` 表示工作目录变更；`data.cwd` 的值表示 Windows 绝对路径 `D:\example`。JSON 中的 `\\` 表示路径中的一个反斜杠。
+      开始第 1 轮的第 1 步。
 
-10. **命令、扩展钩子与定时**：记录一条命令完成。
+   4. **`step/end`**
 
-    ```json
-    {"type":"command/done","seq":1,"time":1700000000000,"data":{"commandId":"cmd-1","kind":"success"}}
-    ```
+      ```json
+      {"type":"step/end","seq":100,"time":1700000001000,"data":{"turn":1,"step":1}}
+      ```
 
-    `type: "command/done"` 表示命令处理结束；`data.commandId: "cmd-1"` 将结果与相同标识的 `command/run` 关联；`data.kind: "success"` 表示成功。
+      结束第 1 轮的第 1 步。
 
-11. **内容、交付和反馈**：记录一次文件交付。
+3. **模型与请求**
 
-    ```json
-    {"type":"deliverables/presented","seq":1,"time":1700000000000,"data":{"turn":1,"callId":"call-1","files":[{"path":"report.pdf"}]}}
-    ```
+   1. **`agent-preset/selected`**
 
-    | 字段 | 示例值的作用 |
-    | --- | --- |
-    | `type` | `"deliverables/presented"` 表示记录已交付的文件 |
-    | `data.turn`、`data.callId` | `1` 是所属 Turn；`"call-1"` 是产生交付的工具调用标识 |
-    | `data.files` | 文件数组；其中 `path: "report.pdf"` 是示例文件路径，可相对于 Session 工作目录 |
+      ```json
+      {"type":"agent-preset/selected","seq":100,"time":1700000001000,"data":{"agentPreset":"standard"}}
+      ```
 
-12. **特定服务请求与投递**：记录服务端接收日志。
+      agentPreset 是选定的预设名称。
 
-    ```json
-    {"type":"session-log-deepseek/delivery-accepted","seq":1,"time":1700000000000,"data":{"sessionId":"session-1","throughSeq":0}}
-    ```
+   2. **`model/selection`**
 
-    `type: "session-log-deepseek/delivery-accepted"` 表示对应服务接受了一次投递；`data.sessionId: "session-1"` 标识被投递的会话；`data.throughSeq: 0` 是该次投递覆盖的最后一个事件序号。此记录适用于装配对应集成的场景。
+      ```json
+      {"type":"model/selection","seq":100,"time":1700000001000,"data":{"provider":"example","model":"example-model"}}
+      ```
 
-以上只展示每类的代表性结构。一个事件是否进入模型历史取决于事件类型及其 surface 信息；同类其他事件的 `data` 结构可能不同，应查询下方目录，不能照搬示例字段。
+      从下一模型步骤起使用所选 provider 和 model。
 
-**各类场景保存什么**
+   3. **`request/header`**
 
-下表按本机 v0.2.2-rc.3 官方持久化事件目录归类。插件相关事件仅在相应功能装配并发生对应操作时出现；同一个 Session 不会必然包含全部事件。事件的 `data` 随类型不同，例如工具调用记录 `callId`、名称和参数，结果通过调用 ID 关联；具体字段以官方目录为准。
+      ```json
+      {"type":"request/header","seq":100,"time":1700000001000,"data":{"header":{"config":{"provider":"example","model":"example-model"}},"reason":"initial"}}
+      ```
 
-| 场景 | 已声明的事件类型与作用 |
-| --- | --- |
-| 输入与消息 | `agent/inbox/spliced` 记录输入队列变化；`system/message`、`developer/message`、`user/message`、`assistant/message` 分别记录相应消息；`assistant/attempt` 记录未形成可见消息的已结算模型尝试 |
-| 执行生命周期 | `turn/start`、`turn/end` 和 `step/start`、`step/end` 记录回合与步骤边界 |
-| 模型与请求 | `agent-preset/selected`、`model/selection`、`request/header`、`request/context` 记录预设、模型选择与请求状态；`llm/retry`、`llm/retry-started` 记录重试 |
-| 工具与 PTC | `tool/call`、`tool/result` 记录根调用及结果；`tool/ptc-dispatch-start`、`tool/ptc-dispatch` 记录 PTC 内部派发 |
-| 权限与执行限制 | `approval/asked`、`approval/decided`、`approval/policy`、`permission/preset`、`sandbox/mode` 记录相应审批、权限或沙箱状态 |
-| 历史压缩 | `compaction/start`、`compaction/prune`、`compaction/summary`、`compaction/end` 记录压缩过程和结果；原始事件仍保留 |
-| 目标、清单、后台任务和计划 | `goal/change`、`todo/write`、`job/registered`、`job/settled`、`plan/mode` 分别记录目标、清单、Job 注册或结束，以及计划模式变化 |
-| 子代理、团队和工作流 | `subagent/catalog`、`subagent/descriptor`、`subagent/model-selection-policy`；`team/member`、`team/mode`、`team/task`、`team/message/queued`、`team/message/delivered`；`tool-workflow/agent-start`、`tool-workflow/agent-end`、`tool-workflow/run-start`、`tool-workflow/run-end` |
-| Session、工作目录与文件 | `session/end-seed` 标记继承或恢复边界；`session/title`、`session/title-llm-request` 记录标题及相关请求；`working-directory/change`、`workspace/changes` 记录工作目录和工作区变更 |
-| 命令、扩展钩子与定时 | `command/run`、`command/done`、`hook/invoked`、`hook/result`、`schedule/change` 记录相应操作；定时任务自身的存储不应由事件名推定 |
-| 内容、交付和反馈 | `image/offload`、`deliverables/presented`、`feedback/message-put`、`feedback/message-delete`、`feedback/record` 记录图片卸载、交付及反馈相关事实 |
-| 特定服务请求与投递 | `web/deepseek-search-llm-request`、`session-log-deepseek/delivery-accepted` 分别记录对应服务集成中的请求或投递事实 |
+      header 的 config 是模型调用配置；省略 tools 表示无工具，initial 表示初始请求头。
+
+   4. **`request/context`**
+
+      ```json
+      {"type":"request/context","seq":100,"time":1700000001000,"data":{"provider":"example","model":"example-model","contextWindow":128000,"systemPromptUpdate":"in-history"}}
+      ```
+
+      记录请求路由、上下文窗口大小和系统提示词更新方式。
+
+   5. **`llm/retry`**
+
+      ```json
+      {"type":"llm/retry","seq":100,"time":1700000001000,"data":{"turn":1,"step":1,"retryId":"retry-1","retry":1,"mode":"normal","maxRetries":3,"delayMs":1000,"failure":{"code":"rate_limit","message":"请求过多"},"policyKey":"rate-limit","provider":"example"}}
+      ```
+
+      记录失败后的第 1 次普通重试、重试上限、延迟、错误和策略路由。
+
+   6. **`llm/retry-started`**
+
+      ```json
+      {"type":"llm/retry-started","seq":100,"time":1700000001000,"data":{"turn":1,"step":1,"retryId":"retry-1","retry":1}}
+      ```
+
+      延迟结束后，第 1 次重试开始；retryId 与调度事件对应。
+
+4. **工具与 PTC**
+
+   1. **`tool/call`**
+
+      ```json
+      {"type":"tool/call","seq":100,"time":1700000001000,"data":{"turn":1,"step":1,"callId":"call-1","name":"read","arguments":"{\"file_path\":\"README.md\"}"}}
+      ```
+
+      模型请求工具调用；arguments 是模型输出的原始 JSON 字符串。
+
+   2. **`tool/result`**
+
+      ```json
+      {"type":"tool/result","seq":8,"time":1700000001012,"data":{"turn":1,"step":1,"message":{"id":"result-1","role":"tool","source":{"kind":"tool","callId":"call-1"},"toolCallId":"call-1","content":[{"type":"text","text":"你好"}]}},"surfaceOp":"append","sourceEventSeqs":[7]}
+      ```
+
+      | 字段 | 本例的值及作用 |
+      | --- | --- |
+      | `type` | `"tool/result"`：这条事件记录工具返回的结果；事件类型决定 `data` 的结构。 |
+      | `seq` | `8`：这是本会话中序号为 8 的事件；序号从 0 开始连续递增。 |
+      | `time` | `1700000001012`：该事件发生的 Unix 毫秒时间戳。 |
+      | `data` | 事件的具体内容：`turn: 1`、`step: 1` 表示第一个 Turn 的第一个 Step；`message` 保存工具结果。 |
+      | `data.message` | `id: "result-1"` 是结果消息 ID，`role: "tool"` 表示工具消息；`source.kind: "tool"` 和 `source.callId: "call-1"` 表示来源于该工具调用。 |
+      | `data.message.toolCallId` | `"call-1"`：与前面 `tool/call` 的 `callId` 对应，说明这是哪次调用的结果。 |
+      | `data.message.content` | 一个内容块数组；`type: "text"` 表示文本块，`text: "你好"` 是工具返回的内容。 |
+      | `surfaceOp` | `"append"`：把这条结果消息加入可派生的模型历史；只有消息类事件使用此字段。 |
+      | `sourceEventSeqs` | `[7]`：关联到序号为 7 的 `tool/call` 事件；不是每条事件都有此字段。 |
+
+   3. **`tool/ptc-dispatch-start`**
+
+      ```json
+      {"type":"tool/ptc-dispatch-start","seq":100,"time":1700000001000,"data":{"parentCallId":"call-1","rootCallId":"call-1","subCallId":"call-1:ptc:1","name":"read","arguments":{"file_path":"README.md"}}}
+      ```
+
+      程序化工具子调用开始；记录父调用、根调用、子调用、工具名和规范化参数。
+
+   4. **`tool/ptc-dispatch`**
+
+      ```json
+      {"type":"tool/ptc-dispatch","seq":100,"time":1700000001000,"data":{"parentCallId":"call-1","rootCallId":"call-1","subCallId":"call-1:ptc:1","name":"read","arguments":{"file_path":"README.md"},"content":[{"type":"text","text":"文件内容"}],"isError":false}}
+      ```
+
+      程序化工具子调用结束：关联父调用、根调用和子调用，记录参数、内容和成功状态；具体工具参数由工具自身定义。
+
+5. **权限与执行限制**
+
+   1. **`approval/asked`**
+
+      ```json
+      {"type":"approval/asked","seq":100,"time":1700000001000,"data":{"id":"approval-1","toolName":"pwsh","callId":"call-1","reason":"需要执行命令"}}
+      ```
+
+      id 标识审批，toolName 和 callId 指向工具调用，reason 是说明。
+
+   2. **`approval/decided`**
+
+      ```json
+      {"type":"approval/decided","seq":100,"time":1700000001000,"data":{"id":"approval-1","outcome":"allowed-once"}}
+      ```
+
+      同一 id 的审批结果为允许一次。
+
+   3. **`approval/policy`**
+
+      ```json
+      {"type":"approval/policy","seq":100,"time":1700000001000,"data":{"policy":"ask"}}
+      ```
+
+      policy 为 ask，表示遇到审批请求时询问。
+
+   4. **`permission/preset`**
+
+      ```json
+      {"type":"permission/preset","seq":100,"time":1700000001000,"data":{"preset":"standard"}}
+      ```
+
+      preset 记录用户选择的权限预设名称；具体可用名称取决于安装配置。
+
+   5. **`sandbox/mode`**
+
+      ```json
+      {"type":"sandbox/mode","seq":100,"time":1700000001000,"data":{"mode":"read-only"}}
+      ```
+
+      mode 为 read-only，记录切换到只读沙箱模式。
+
+6. **历史压缩**
+
+   1. **`compaction/start`**
+
+      ```json
+      {"type":"compaction/start","seq":100,"time":1700000001000,"data":{"compactionId":"compact-1","turn":null}}
+      ```
+
+      开始独立压缩事务，compactionId 用于与结束记录配对。
+
+   2. **`compaction/prune`**
+
+      ```json
+      {"type":"compaction/prune","seq":100,"time":1700000001000,"data":{"shadowedRange":{"start":2,"end":4},"shadowedSeqs":[2,4],"shadowedTokenCount":120}}
+      ```
+
+      记录被替换的 surface 范围、实际节点序号和估计 token 价格；须紧接对应替换事件。
+
+   3. **`compaction/summary`**
+
+      ```json
+      {"type":"compaction/summary","seq":100,"time":1700000001000,"data":{"compactionId":"compact-1","summary":[{"type":"text","text":"先前对话摘要"}],"shadowedRange":{"start":2,"end":4},"shadowedSeqs":[2,4],"shadowedTokenCount":120,"provider":"example","model":"example-model"}}
+      ```
+
+      记录压缩摘要、被替换节点和估算 token 数，以及生成摘要的路由；下一个事件须是对应替换消息。
+
+   4. **`compaction/end`**
+
+      ```json
+      {"type":"compaction/end","seq":100,"time":1700000001000,"data":{"compactionId":"compact-1","turn":null}}
+      ```
+
+      结束一次独立压缩事务；turn 为 null 表示回合之外。
+
+7. **目标、清单、后台任务和计划**
+
+   1. **`goal/change`**
+
+      ```json
+      {"type":"goal/change","seq":100,"time":1700000001000,"data":{"kind":"goal/change","version":1,"operation":"clear","cleared":{"id":"goal-1","revision":1},"clearedAt":1700000000000}}
+      ```
+
+      clear 分支记录已清除目标的 id、修订号和时间。
+
+   2. **`todo/write`**
+
+      ```json
+      {"type":"todo/write","seq":100,"time":1700000001000,"data":{"todos":[{"content":"检查结果","status":"pending"}]}}
+      ```
+
+      todos 是待办清单快照，条目包含内容与状态。
+
+   3. **`job/registered`**
+
+      ```json
+      {"type":"job/registered","seq":100,"time":1700000001000,"data":{"jobId":"job-1","kind":"process","label":"检查","owner":"session-1","startedAt":1700000000000}}
+      ```
+
+      记录后台任务的标识、类别、标签、所有者和开始时间。
+
+   4. **`job/settled`**
+
+      ```json
+      {"type":"job/settled","seq":100,"time":1700000001000,"data":{"jobId":"job-1","kind":"process","label":"检查","owner":"session-1","startedAt":1700000000000,"finishedAt":1700000001000,"status":"completed","cause":"producer","producerReported":true}}
+      ```
+
+      记录同一任务已完成、结束时间、由生产者结束及其已报告结果。
+
+   5. **`plan/mode`**
+
+      ```json
+      {"type":"plan/mode","seq":100,"time":1700000001000,"data":{"active":true}}
+      ```
+
+      active 为 true 表示计划模式生效。
+
+8. **子代理、团队和工作流**
+
+   1. **`subagent/catalog`**
+
+      ```json
+      {"type":"subagent/catalog","seq":100,"time":1700000001000,"data":{"version":3,"childCreatedAt":1760000000000,"childId":"child-1","label":"代码审查","mode":"continuable","name":"reviewer"}}
+      ```
+
+      父会话记录可继续子代理：版本、创建时间、子会话标识、显示标签与名称。
+
+   2. **`subagent/descriptor`**
+
+      ```json
+      {"type":"subagent/descriptor","seq":100,"time":1700000001000,"data":{"version":3,"mode":"one-shot","provider":"example","label":"审查"}}
+      ```
+
+      子会话记录一次性代理的描述信息：版本 3、模式、提供者和可选标签。
+
+   3. **`subagent/model-selection-policy`**
+
+      ```json
+      {"type":"subagent/model-selection-policy","seq":100,"time":1700000001000,"data":{"allowedModels":[{"provider":"example","model":"example-model"}]}}
+      ```
+
+      allowedModels 指定允许为子代理显式选择的提供者和模型路由。
+
+   4. **`team/member`**
+
+      ```json
+      {"type":"team/member","seq":100,"time":1700000001000,"data":{"version":2,"teamId":"team-1","member":{"context":"fresh","description":"审查代码","id":"member-1","name":"reviewer","phase":"active","provider":"example"}}}
+      ```
+
+      历史版本 2 的团队成员快照：版本、团队标识以及成员身份、上下文、阶段和提供者；新成员使用 Lead 的可继续子代理目录。
+
+   5. **`team/mode`**
+
+      ```json
+      {"type":"team/mode","seq":100,"time":1700000001000,"data":{"enabled":true}}
+      ```
+
+      enabled 为 true 表示用户选择启用团队模式。
+
+   6. **`team/task`**
+
+      ```json
+      {"type":"team/task","seq":100,"time":1700000001000,"data":{"version":2,"teamId":"team-1","task":{"id":"task-1","subject":"审查","description":"审查代码","status":"pending","revision":1,"blockedBy":[],"writeScopes":[]}}}
+      ```
+
+      当前仍写入版本 2 的共享任务完整快照，含身份、标题、描述、状态、修订号、阻塞项和写入范围。
+
+   7. **`team/message/queued`**
+
+      ```json
+      {"type":"team/message/queued","seq":100,"time":1700000001000,"data":{"version":2,"teamId":"team-1","message":{"id":"message-1","senderId":"session-1","senderName":"lead","targetId":"session-2","content":[{"type":"text","text":"请检查结果。"}]}}}
+      ```
+
+      历史版本 2 的入队消息，含团队标识、消息标识、发送者、目标和文本；新发送使用目标 Agent 收件箱。
+
+   8. **`team/message/delivered`**
+
+      ```json
+      {"type":"team/message/delivered","seq":100,"time":1700000001000,"data":{"version":2,"teamId":"team-1","messageId":"message-1","targetId":"session-2"}}
+      ```
+
+      历史投递确认，关联团队、消息和目标会话。
+
+   9. **`tool-workflow/agent-start`**
+
+      ```json
+      {"type":"tool-workflow/agent-start","seq":100,"time":1700000001000,"data":{"runId":"run-1","seq":1,"childId":"child-1","label":"检查"}}
+      ```
+
+      工作流成员开始，记录运行标识、成员序号、子会话及标签。
+
+   10. **`tool-workflow/agent-end`**
+
+      ```json
+      {"type":"tool-workflow/agent-end","seq":100,"time":1700000001000,"data":{"runId":"run-1","seq":1,"outcome":"completed"}}
+      ```
+
+      工作流成员结束，runId 与 seq 关联运行和成员，outcome 表示完成。
+
+   11. **`tool-workflow/run-start`**
+
+      ```json
+      {"type":"tool-workflow/run-start","seq":100,"time":1700000001000,"data":{"runId":"run-1","name":"代码审查"}}
+      ```
+
+      工作流运行开始，记录运行标识与名称。
+
+   12. **`tool-workflow/run-end`**
+
+      ```json
+      {"type":"tool-workflow/run-end","seq":100,"time":1700000001000,"data":{"runId":"run-1","stopReason":"completed"}}
+      ```
+
+      工作流运行结束，stopReason 表示正常完成。
+
+9. **Session、工作目录与文件**
+
+   1. **`session/end-seed`**
+
+      ```json
+      {"type":"session/end-seed","seq":100,"time":1700000001000,"data":{"inherited":true}}
+      ```
+
+      inherited 为 true，标识分叉会话的继承历史边界。
+
+   2. **`session/title`**
+
+      ```json
+      {"type":"session/title","seq":100,"time":1700000001000,"data":{"title":"项目讨论","source":{"kind":"fallback"},"messageSeqs":[1,2]}}
+      ```
+
+      title 是标题，source 表示回退生成，messageSeqs 是所依据的消息序号。
+
+   3. **`session/title-llm-request`**
+
+      ```json
+      {"type":"session/title-llm-request","seq":100,"time":1700000001000,"data":{"maxTokens":64,"messageSeqs":[1],"messages":[{"id":"user-1","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"讨论项目"}]}],"route":{"provider":"example","model":"example-model"},"system":"生成简短标题","titleProvider":"example"}}
+      ```
+
+      记录标题模型请求：token 上限、依据序号、消息列表、模型路由、系统指令和标题提供者；示例模型路由可用性待确认。
+
+   4. **`working-directory/change`**
+
+      ```json
+      {"type":"working-directory/change","seq":100,"time":1700000001000,"data":{"cwd":"D:\\LM"}}
+      ```
+
+      cwd 是后续目录操作使用的绝对工作目录。
+
+   5. **`workspace/changes`**
+
+      ```json
+      {"type":"workspace/changes","seq":100,"time":1700000001000,"data":{"turn":1}}
+      ```
+
+      第 1 轮的工作区变更汇总已生成，实际汇总由 Host 提供。
+
+10. **命令、扩展钩子与定时**
+
+   1. **`command/run`**
+
+      ```json
+      {"type":"command/run","seq":100,"time":1700000001000,"data":{"commandId":"command-1","name":"help","source":{"kind":"user"}}}
+      ```
+
+      记录用户发起的 help 命令；可选 args 此处省略。
+
+   2. **`command/done`**
+
+      ```json
+      {"type":"command/done","seq":100,"time":1700000001000,"data":{"commandId":"command-1","kind":"success","text":"完成"}}
+      ```
+
+      commandId 与命令开始记录配对，kind 和 text 表示执行结果。
+
+   3. **`hook/invoked`**
+
+      ```json
+      {"type":"hook/invoked","seq":100,"time":1700000001000,"data":{"turn":1,"point":"PreToolUse","dialect":"claude-code","handlerId":"hook-1"}}
+      ```
+
+      在第 1 回合调用 Claude Code 方言的工具前钩子，handlerId 用于关联结果。
+
+   4. **`hook/result`**
+
+      ```json
+      {"type":"hook/result","seq":100,"time":1700000001000,"data":{"turn":1,"point":"PreToolUse","handlerId":"hook-1","decision":"pass","exitCode":0,"durationMs":12}}
+      ```
+
+      记录同一钩子的放行结果、退出码及耗时毫秒。
+
+   5. **`schedule/change`**
+
+      ```json
+      {"type":"schedule/change","seq":100,"time":1700000001000,"data":{"version":1,"operation":"delete","id":"schedule-1"}}
+      ```
+
+      历史版本 1 的会话内定时任务删除记录；id 为任务标识。新任务保存在 Host 存储，历史事件不会写入 Host 任务库。
+
+11. **内容、交付和反馈**
+
+   1. **`image/offload`**
+
+      ```json
+      {"type":"image/offload","seq":100,"time":1700000001000,"data":{"targets":[{"seq":3,"imageIndexes":[0]}]}}
+      ```
+
+      省略序号 3 的消息内第 0 张图片；消息及对应图片必须存在。
+
+   2. **`deliverables/presented`**
+
+      ```json
+      {"type":"deliverables/presented","seq":100,"time":1700000001000,"data":{"turn":1,"callId":"call-1","files":[{"path":"report.pdf","description":"报告"}]}}
+      ```
+
+      记录本回合工具调用呈交的文件路径和说明。
+
+   3. **`feedback/message-put`**
+
+      ```json
+      {"type":"feedback/message-put","seq":100,"time":1700000001000,"data":{"sessionId":"session-1","item":{"messageId":"message-1","rating":"positive","createdAt":1700000000000,"updatedAt":1700000000000,"version":"1"}}}
+      ```
+
+      item 记录消息标识、正面评分、创建和更新时间及版本。
+
+   4. **`feedback/message-delete`**
+
+      ```json
+      {"type":"feedback/message-delete","seq":100,"time":1700000001000,"data":{"sessionId":"session-1","messageId":"message-1"}}
+      ```
+
+      按会话和消息标识删除消息反馈。
+
+   5. **`feedback/record`**
+
+      ```json
+      {"type":"feedback/record","seq":100,"time":1700000001000,"data":{"text":"回答清晰"}}
+      ```
+
+      text 是用户提交的会话反馈文字。
+
+12. **特定服务请求与投递**
+
+   1. **`web/deepseek-search-llm-request`**
+
+      ```json
+      {"type":"web/deepseek-search-llm-request","seq":100,"time":1700000001000,"data":{"apiVersion":"v1","endpoint":"https://example.com","body":{"model":"example-model","max_tokens":1024,"messages":[{"role":"user","content":[{"type":"text","text":"查询资料"}]}],"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":1}]}}}
+      ```
+
+      无密钥的搜索模型请求示例；包含 API 版本、端点、模型、token 上限、单条用户消息和搜索工具配置；端点及模型仅为结构示例，实际服务可用性待确认。
+
+   2. **`session-log-deepseek/delivery-accepted`**
+
+      ```json
+      {"type":"session-log-deepseek/delivery-accepted","seq":100,"time":1700000001000,"data":{"sessionId":"session-1","sessionFormatVersion":4,"throughSeq":12}}
+      ```
+
+      sessionId 是已投递会话，sessionFormatVersion 为格式版本，throughSeq 为已接收的末尾事件序号。
+
+示例只列出便于理解的字段；可选字段和完整结构见下方官方目录。事件与后端实现可能随版本变化，历史事件不一定会在新会话中产生。
 
 完整事件字段及所有声明见 [v0.2.2-rc.3 持久化事件目录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/persistence-catalog.md)；实验性记录另见 [实验性持久化目录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/experimental-persistence-catalog.md)。第三方插件还可以扩展记录，不能把本表视为所有外部插件的穷尽清单。
 
-###### 1.5.2.3 写入、恢复与存储边界
+##### 1.5.4 写入、恢复与存储边界
 
-会话事件先写入内存，再由持久化后端保存。使用 JSONL 后端时，文件的创建、恢复和备份需要注意以下边界：
+假设你让 Agent 读取一个文件，之后关闭 DSH，再回来问“刚才读到什么？”要继续这个会话，之前的记录必须先保存下来，并在重新打开时恢复。
 
-1. **文件创建**：会话创建后，如果还没有写入事件，磁盘上可能尚无会话文件。首次追加事件时才创建文件；显式调用 `flush()` 也可以创建只包含文件头的文件。
-2. **写入与同步**：内存中的事件可以分批异步保存。需要确认待保存的数据已写入时，等待 `ctx.sessions.flush(session)` 完成；写入或同步失败会报告错误。同一 Session 同时只由一个活动写入者持有。
-3. **恢复与损坏**：恢复时读取文件中已保存的有效部分，并尝试处理可恢复的不完整尾部。如果完整记录的校验失败或结构损坏，恢复会拒绝该文件，并非所有损坏都能自动修复。中断与分叉的处理见 1.5.6。
-4. **格式兼容**：读取旧格式时，可以在内存中转换为当前逻辑格式；以写入方式打开时，系统可在校验后生成当前格式的文件并保留旧文件。支持哪些旧版本，以已安装的格式目录为准。
-5. **附件与后台任务**：会话记录可以包含附件引用和 Job 事件，但不一定包含附件原文件或后台任务的完整运行状态。默认本地附件后端将附件另存于 DSH home 的 `attachments/v1`；本地 Job 的运行状态和输出保存在进程内，见 1.7.4。备份会话时，还需考虑关联附件和部署使用的其他存储。
+使用 1.5.2 介绍的 JSONL 后端时，过程是：
 
-##### 1.5.3 DSH 如何记录一次会话
+1. **运行时记录**：用户消息、工具结果等事件先加入内存中的会话记录。内存是程序运行时使用的临时空间，进程结束后不会保留。
+2. **保存到文件**：持久化后端把事件分批写入会话文件。刚创建会话但还没有事件时，文件可能还不存在；首次写入事件或显式刷新后才会创建。
+3. **重新打开**：DSH 读取已经保存的文件，把其中的会话信息和事件重新载入内存，供后续对话使用。
 
-DSH 把会话中发生的事实作为有类型的**事件**追加到日志，再根据这些记录计算需要的状态，这种方式称为事件溯源。事件的结构和各类场景见 1.5.2；实际出现哪些事件取决于运行过程和装配的功能。
+保存和恢复还需要注意：
 
-事件日志用于记录和回放；运行时通知用于协调与界面更新，两者不能混为一谈。名称相近也不代表持久性相同：例如 `agent/inbox/spliced` 是可记录的 Session 事件，模型的实时输出片段则是瞬时通知。这里的 Session 事件与 1.2.1 的 Cordis 事件也不是同一个概念。
+| 情况 | 含义 |
+| --- | --- |
+| 事件已在内存中 | 不代表已经写入文件，因为保存可能在后台分批进行。代码需要等待保存完成时，可调用并等待 `ctx.sessions.flush(session)`；普通用户不需要手动调用这个 API。 |
+| 文件末尾不完整 | 例如写入途中进程异常退出，DSH 会尝试恢复已保存的有效部分；如果完整数据本身损坏，恢复可能失败。 |
+| 旧版本会话文件 | DSH 可以读取所支持的旧格式，并在需要写入时按规则生成新格式文件；支持范围取决于当前安装版本。 |
+| 附件与后台任务 | 会话日志可能只记录附件引用或任务事件。附件原文件可能另存；本地后台 Job 的运行状态和输出保存在进程内，重启后不能仅靠会话日志继续运行，见 1.7.4。 |
 
-##### 1.5.4 DSH 如何使用会话历史
+没有装配持久化后端，或事件尚未成功保存时，进程退出后就不能保证恢复。具体文件位置和结构分别见 1.5.2、1.5.3。
 
-DSH 使用 `session.deriveMessages()` 从事件日志派生**模型历史**：把适用的消息和工具结果组织成模型可读的内容，而不是把所有事件原样发送给模型。例如，用户追问刚才读取的文件时，Agent 可以利用历史中的工具结果；需要最新内容时，仍可选择重新读取。
+##### 1.5.5 会话历史、分叉与中断处理
 
-同一份事件还可以计算出供界面使用的消息、任务等状态，称为 **Session Projection（会话状态投影）**。模型历史和界面投影服务于不同用途。上下文压缩可能改变后续请求看到的历史视图，见 1.6.4。
+会话日志像一本按顺序记事的本子：用户提问、工具返回结果等事实被记成事件。DSH 之后可以根据这些记录重新整理出需要的信息。这种先记录事件、再根据事件计算状态的方式称为**事件溯源**。
 
-模型生成时，界面可以先展示实时输出片段；片段本身是瞬时通知，并不等同于已经保存的日志。输出结算后，相应消息或尝试结果才会作为事件记录。
+**继续对话时如何使用记录？**
 
-##### 1.5.5 DSH 如何保存和恢复会话
+例如，你先让 Agent 读取文件，随后问“刚才文件里写了什么？”DSH 会从会话事件中整理出适合发送给模型的历史消息，其中可以包含之前的工具结果。它不会把每条事件都发送给模型：像运行步骤的开始和结束记录，通常用于管理过程。Agent 如需确认文件当前内容，也可以再次读取。
 
-Session 事件先进入内存，装配的持久化后端再异步保存；文件格式、位置和 `flush` 边界见 1.5.2。
+界面和模型使用的是不同的整理结果：
 
-恢复时，DSH 从已保存的元数据与事件重建内存中的会话状态，再派生模型历史和界面视图。只有已成功持久化的数据才能用于进程退出后的恢复；关联附件或进程内 Job 状态有各自的存储边界，不能假定会随日志一起恢复。
+| 使用方 | 从事件中得到什么 |
+| --- | --- |
+| 模型 | 消息和工具结果等**模型历史**，用于理解后续问题；代码中可通过 `session.deriveMessages()` 生成。 |
+| 界面 | 对话内容、任务状态等展示数据。把事件整理成界面状态的结果称为 **Session Projection（会话状态投影）**。 |
 
-##### 1.5.6 分叉与中断处理
+模型正在生成回答时，界面可能先显示一部分文字。这些实时片段是临时通知；输出结算后才会记录相应的消息或尝试结果，因此看到文字不代表它已经保存到磁盘。
 
-**Fork（分叉）**从已有会话的某个历史位置创建新会话。两个会话继承相同的前段记录，之后各自追加事件，适合基于同一背景探索不同方向。
+**分叉和中断是什么意思？**
 
-运行异常退出后，DSH 可以用已保存事件恢复状态，并处理不完整文件尾部和未结束的运行。如果日志已有工具调用却没有结果，系统不能仅凭日志判断外部操作是否发生；恢复时会标记结果未知，后续应先核实外部状态，再决定是否重试。
+- **分叉（Fork）**：从已有会话的某个位置创建新会话。例如，在同一份文件分析结果之后，原会话继续研究性能，新会话研究安全；两边保留相同的前段历史，之后分别记录，不会同步改写对方。
+- **中断**：如果 DSH 在工具执行时退出，重新打开后只能依据已经保存的记录恢复。如果日志显示工具已经开始，却没有结果，DSH 无法仅凭日志知道操作是否完成。例如文件可能已经被修改；应先检查文件状态，再决定是否重试。
+
+Session 事件用于记录会话；1.2.1 中的 Cordis 事件用于运行时通知和扩展，两者的用途不同。
 
 资料来源：DSH v0.2.2-rc.3 的 [Session 子系统](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/session.md)、[会话持久化](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/persistence.md)、[JSONL 后端](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/session/session-persistence-jsonl/README.md)及本机安装包 `@deepseek-ai/dsh-session` 的格式版本定义。
 
 #### 1.6 Agent 执行机制
 
-##### 1.6.1 Agent Loop、Turn 与 Step
-
-###### 1.6.1.1 Agent Loop 执行机制
-
-**Agent Loop（代理循环）**是 DSH 驱动 Agent 处理输入的默认机制。它协调模型、工具和 Session：模型根据上下文生成答复或提出调用，Loop 负责将请求交给模型、将工具调用交给执行器，并根据结果决定后续步骤。
-
-| 阶段 | Loop 的职责 | 可能出现的情况 |
-| --- | --- | --- |
-| 等待输入 | 空闲时等待可唤醒的输入，领取后开启 Turn | 普通消息排队等待后续 Turn；中途引导可在下一 Step 边界处理 |
-| 准备 Step | 确定模型、可用工具和提示词，并让扩展决定是否接纳输入 | 输入可能被调整或拒绝；未接纳的首批输入不会产生模型 Step |
-| 发起模型请求 | 根据会话历史、上下文和工具声明构造请求，处理流式响应 | 模型可以直接答复、提出一个或多个工具调用；可恢复错误可能触发重试 |
-| 处理工具与结果 | 把调用交给执行器，等待本批处理并将结果纳入会话 | 调用可能成功、失败、被拒绝或被取消；可能需要核实已发生的外部操作 |
-| 决定继续或结束 | 根据模型结果、待处理输入和扩展的继续条件决定下一步 | 可进入下一 Step、结束 Turn，或因错误和取消停止当前运行 |
-
-这里的“循环”表示一次处理过程中可能多次请求模型，并在每步后判断是否继续；它不是按固定时间轮询模型。没有需要处理的输入时，Agent 可以空闲，直到可唤醒的输入到来。各阶段的实际时机和边界见 1.6.3。
-
-###### 1.6.1.2 Turn 与 Step
+##### 1.6.1 Turn 与 Step
 
 | 概念 | 含义 |
 | --- | --- |
@@ -3862,46 +4258,59 @@ Turn：分析项目
 - 符合条件的模型请求重试可能发生在同一个 Step 内，因此一个 Step 不一定只发出一次请求。
 - 如果首批输入在接纳前被拒绝等，Turn 可能不包含任何 Step。
 
-##### 1.6.2 Agent 生命周期与输入队列
+##### 1.6.2 Agent Loop 执行机制
 
-Agent 负责当前执行和输入投递；Session 记录可回放的会话事实。创建或恢复 Agent 后，调用方可以投递输入，也可以等待空闲、取消或释放 Agent。
+**Agent Loop（代理循环）**是 DSH 驱动 Agent 处理输入的默认机制。它协调模型、工具和 Session：模型根据上下文生成答复或提出工具调用；Loop 将调用交给工具执行器，并把结果纳入后续模型请求。这样，Agent 能根据新信息自动推进任务，无需用户逐次要求继续。实际工具操作由执行器完成，而不是由模型直接执行。
 
-DSH 为不同处理时机维护两类待处理输入：
+“循环”指 Loop 在处理过程中根据结果判断是否需要再次请求模型，而不是按固定时间间隔轮询模型。满足结束条件后，当前 Turn 结束；没有需要处理的输入时，Agent 可以空闲，直到可唤醒的输入到来。各阶段的处理过程和边界见 1.6.4。
+
+##### 1.6.3 Agent 生命周期与输入队列
+
+**Agent 生命周期**描述 Agent 从创建到停止的过程，关注的是 Agent 何时运行、空闲和释放。一个 Agent 可以在生命周期内处理多次输入，不需要每收到一条消息就重新创建。
+
+1. **创建或恢复**：创建新的 Agent，或基于已持久化的 Session 恢复 Agent。Agent 负责执行；Session 保存可回放的会话记录。
+2. **运行**：收到可唤醒的输入后，Agent 开始处理任务。运行中可以取消当前工作，但不能撤销已经发生的外部操作。
+3. **空闲**：当前工作结束且没有需要立即处理的输入时，Agent 进入空闲；之后仍可由新的输入唤醒。空闲不代表所有子代理或后台任务都已结束。
+4. **释放**：不再需要 Agent 时，由句柄持有方停止 Agent 并释放资源。
+
+调用方可使用以下 API 管理生命周期：
+
+| API | 作用 |
+| --- | --- |
+| `ctx.agents.create(options)` | 创建 Agent，返回包含 `agent` 和 `dispose()` 的句柄 |
+| `ctx.agents.resume(options)` | 基于已持久化的 Session 恢复 Agent，依赖相应持久化能力 |
+| `agent.cancel(cause, options?)` | 取消正在进行的工作，可选择保留待处理输入 |
+| `agent.whenIdle()` | 等待当前 Agent 空闲 |
+| `handle.dispose()` | 停止 Agent 并释放资源 |
+
+**输入队列**关注的是消息何时被处理：收到的消息可以先等待，Agent 在适当的 Turn 或 Step 边界领取它们。DSH 区分普通后续消息与下一 Step 输入；中途引导和补充上下文属于后者：
 
 | 输入 | 投递方式 | 何时处理 | 是否唤醒空闲 Agent |
 | --- | --- | --- | --- |
-| 普通后续消息 | `followup()` | 排队等待下一个 Turn；每次领取一条普通消息 | 是 |
+| 普通后续消息 | `followup()` | 等待下一个 Turn；每次领取一条普通消息 | 是 |
 | 中途引导 | `steer()` | 在下一个 Step 边界参与当前 Turn；空闲时可开启 Turn | 是 |
 | 补充上下文 | `inject()` | 在下一次可处理输入的 Step 边界接纳 | 否 |
 
-例如，Agent 正在读文件时，用户补充“只检查配置文件”可作为引导在后续 Step 生效；注入的环境通知本身不会启动空闲 Agent。输入进入队列不等于已送达模型：领取及准入过程见 1.6.3.1。
+例如，Agent 正在分析项目时，用户说“只检查配置文件”：通过 `steer()` 投递后，该引导可以在后续 Step 生效；通过 `followup()` 投递则等待后续 Turn。当前任务结束后 Agent 可以空闲，之后收到可唤醒的输入又能继续工作。消息进入队列不等于已经送达模型，领取和准入过程见 1.6.4.1。
 
-| API | 作用与边界 |
-| --- | --- |
-| `ctx.agents.create(options)` | 创建 Agent，返回包含 `agent` 和 `dispose()` 的句柄 |
-| `ctx.agents.resume(options)` | 基于已持久化 Session 恢复 Agent，依赖相应持久化能力 |
-| `agent.cancel(cause, options?)` | 取消在途工作，可选择保留队列；不会撤销已发生的外部操作 |
-| `agent.whenIdle()` | 等待当前 Agent 空闲，不代表整棵子代理树已完成 |
-| `handle.dispose()` | 由句柄持有方停止 Agent 并释放资源 |
+##### 1.6.4 Agent 执行流程
 
-##### 1.6.3 Agent 执行流程
+一个 Turn 从待处理输入开始，依次经过输入领取与准入、上下文组装、模型请求和结果处理。需要继续时，Loop 进入下一 Step；满足结束条件时，Turn 结束。以下按这个顺序说明各阶段。
 
-一个 Turn 从待处理输入开始，经过 Step 准入、上下文组装、模型请求和响应处理；需要继续时再次进入下一 Step。下面分别说明各阶段及其边界。
-
-###### 1.6.3.1 输入领取与 Step 准入
+###### 1.6.4.1 输入领取与 Step 准入
 
 **准入**是决定一批已领取的输入能否进入当前 Step 的过程。它与输入排队、请求发送是不同阶段：
 
-1. `followup()` 或 `steer()` 唤醒空闲 Agent 后，Loop 开始一个 Turn，领取待处理的下一 Step 输入，以及队列中**至多一条**普通后续消息。空闲时仅有引导消息也可以开启 Turn。
-2. 对拟议的每个 Step，Loop 固定本 Step 的模型选择，确定当前可用工具并组装提示词。相同 Step 内的重试沿用这份模型选择。
-3. 扩展通过 `agent/pre-step` 接纳、调整或拒绝已领取的消息。例如，工作区指令插件可补充指令，压缩组件可检查上下文压力。
-4. 准入通过后，Loop 记录 `step/start`，继续准备模型请求。若首批输入为空或被拒绝，Turn 可能没有 Step；已领取并被拒绝的消息不会自动留在队列中。
+1. **领取输入**：Turn 开始时，Loop 领取待处理的下一 Step 输入，以及队列中至多一条普通后续消息；后续 Step 边界只领取下一 Step 输入。
+2. **准备 Step**：Loop 确定本 Step 使用的模型和可用工具，并组装提示词。相同 Step 内的重试沿用这份模型选择。
+3. **检查准入**：扩展通过 `agent/pre-step` 接纳、调整或拒绝已领取的消息。例如，工作区指令插件可以补充指令，压缩组件可以检查上下文压力。
+4. **开始 Step**：准入通过后，Loop 记录 `step/start` 并继续准备请求。若首批输入为空或被拒绝，Turn 可能没有 Step；已领取并被拒绝的消息不会自动留在队列中。
 
-准入通过也不等于消息已写入历史：在后续请求准备的异步阶段被取消时，系统提示词和本批接纳的用户消息都不会提交。
+准入通过不等于消息已经写入历史：如果后续请求准备过程中被取消，本批接纳的用户消息和待提交的系统提示词可能尚未写入。
 
-###### 1.6.3.2 上下文来源与注入
+###### 1.6.4.2 上下文来源与注入
 
-**模型上下文**是本次请求提供给模型的内容，包括指令、消息历史和本次输入；请求还携带当前可用工具的声明。工具声明中的 Schema 是对工具参数及其格式的机器可读描述，不是工具实现。DSH 按各来源的条件组装这些内容；它们不会在创建 Session 时永久固定。
+**模型上下文**是本次请求提供给模型的内容，包括指令、消息历史和本次输入；请求还携带当前可用工具的声明。其中，Schema 是工具参数及其格式的机器可读描述，不是工具实现。DSH 根据各来源的条件组装请求内容，这些内容不会在创建 Session 时永久固定。
 
 下表以已安装的 v0.2.2-rc.3 为准。实际内容取决于 Agent 作用域、已装配插件、配置和文件是否存在；创建会话本身不等于立即将所有内容发送给模型。
 
@@ -3911,36 +4320,35 @@ DSH 为不同处理时机维护两类待处理输入：
 | 工作区指令 | 启用指令插件且发现适用文件时，首次请求前加载用户全局指令以及从项目根目录到当前工作目录的指令，作为带来源的消息进入历史 | 工作目录改变、会话恢复或受支持的文件操作发现变化时重新协调；不是持续监视所有外部编辑 |
 | 技能目录 | 启用相应技能工具且发现可用技能或发现不完整时，在适用的 Step 前提供名称和描述 | 目录变化时更新；技能正文按调用或用户显式选择需要加载，不随目录全部注入 |
 | 运行时上下文 | 已装配的提供方贡献工作目录等运行时事实，实际内容依赖组合和配置 | 请求准备期间按提供方规则刷新；变化时协调模型可见的上下文快照 |
-| 会话历史 | 从 Session 事件派生此前适用的消息和工具结果 | 随新事件和压缩形成新的历史视图，见 1.5.4 |
+| 会话历史 | 从 Session 事件派生此前适用的消息和工具结果 | 随新事件和压缩形成新的历史视图，见 1.5.5 |
 | 工具声明 | 本 Step 的作用域和准入规则决定可用工具，再将名称、描述和参数 Schema 提供给模型 | 每个 Step 重新解析；声明不包含宿主执行函数，见 1.4 |
 
 以默认指令配置为例，用户全局指令依次来自 `$DSH_HOME/AGENTS.md` 和共享 agents 根目录的 `AGENTS.md`；项目指令从项目根目录向当前工作目录逐层查找 `AGENTS.md`、`CLAUDE.md` 及其 `.local.md` 变体。实际加载取决于文件是否存在、配置和内容预算，并会对重复内容去重。
 
-例如，基于默认组合且相关文件存在时，首次请求可能包含系统提示词、适用的项目指令、技能名称和描述、当前工作目录、用户问题及可见工具声明。后续请求沿用适用历史，并在相关状态发生变化时协调更新；不应理解成每次都把所有来源作为新消息重复注入。
+首次请求可能包含系统提示词、适用指令、技能目录、当前工作目录、用户问题和可见工具声明。后续请求使用适用的历史，并在相关状态变化时更新；这些内容不会在每次请求时都作为新消息重复加入。
 
-###### 1.6.3.3 请求准备、发送与重试
+###### 1.6.4.3 请求准备、发送与重试
 
-1. Step 准入后，Loop 准备选定模型的调用，刷新已注册的运行时上下文，并按该模型路由的能力协调系统提示词。系统提示词和被接纳的用户消息会进入 Session 历史；调用配置与工具声明等请求状态也按需要记录。
-2. DSH 从记录中派生模型消息，结合本 Step 的工具声明和调用配置构造请求，再经模型服务发送。用户并非每次都重新输入完整历史；请求中可见的历史由 Session 当前视图提供，见 1.5.4。
-3. 模型响应可以流式返回。界面可先展示片段；成功结算的响应记录为 `assistant/message`，其中可能有文本、工具调用或两者。失败的尝试可能记录为 `assistant/attempt`；实时片段和已结算记录的区别见 1.5.4。
-4. 如果错误处理机制决定重试，Loop 在当前 Step 内重新准备调用；不会重新执行 Step 准入，也不会重复接纳同一批用户消息。错误未获重试或后续尝试仍失败且不再重试时，该次运行以相应错误结束。
+1. **准备请求**：准入后，Loop 准备模型调用、刷新运行时上下文，并按模型路由能力协调系统提示词。系统提示词和接纳的用户消息会进入 Session 历史；请求配置等状态按需要记录。
+2. **发送请求**：DSH 从 Session 派生模型可见的消息，结合本 Step 的工具声明和调用配置发送请求。历史来自当前会话视图，无需用户每次重新输入，见 1.5.5。
+3. **接收响应**：模型可以流式返回内容，界面能先展示片段。成功结算的响应记录为 `assistant/message`，可包含文本、工具调用或两者；失败的尝试可能记录为 `assistant/attempt`。实时片段与已结算记录的区别见 1.5.5。
+4. **处理请求错误**：错误处理机制可以决定在同一 Step 内重试。重试不会重新执行准入，也不会重复接纳同一批用户消息；没有可用重试时，当前运行以相应错误结束。
 
-例如，请求因可识别的上下文溢出失败时，若已装配的压缩组件成功推进历史视图，它可以触发当前 Step 内的恢复重试；压缩条件与限制见 1.6.4。重试不是新的用户 Turn，也不意味着所有类型的错误都会自动重试。
+例如，请求因可识别的上下文溢出失败时，若已装配的压缩组件成功推进历史视图，它可以触发当前 Step 内的恢复重试；压缩条件与限制见 1.6.5。重试不是新的用户 Turn，也不意味着所有类型的错误都会自动重试。
 
-###### 1.6.3.4 工具结果、继续与结束
+###### 1.6.4.4 工具结果、继续与结束
 
 | 情况 | DSH 如何处理 |
 | --- | --- |
 | 模型提出工具调用 | 将调用批次交给当前执行器；结果写入会话，后续 Step 可利用结果决定是否继续。多个调用的具体调度和权限处理见 1.4。 |
 | 工具返回错误或被拒绝 | 对产生了工具结果的情况，后续模型请求可以根据错误或拒绝内容调整行为；这不保证一定会自动重试工具。 |
 | 模型给出答复 | 满足自然停止条件时，Loop 检查是否有下一 Step 输入或扩展要求继续；没有时结束 Turn。若达到模型输出上限，答复可能被截断，不能视为完整结果。 |
-| 运行中收到引导或上下文 | `steer()` 或 `inject()` 的待处理消息在后续 Step 边界领取并准入；已发送的请求不会被改写。`followup()` 的普通消息等待后续 Turn。 |
-| 继续条件由扩展提出 | 自然停止前，扩展可以参与停止检查并促成后续工作；因此一次模型答复并不总是代表 Turn 已结束。 |
-| 请求失败或用户取消 | 无可用重试时结束当前运行；取消不撤销已完成的外部操作。已启动调用若结果未知，应先核实外部状态再决定是否重试，见 1.5.6。 |
+| 运行中收到引导或上下文 | 按 1.6.3 的输入规则在后续边界处理；已发送的模型请求不会被改写。 |
+| 请求失败或用户取消 | 无可用重试时结束当前运行；取消不撤销已完成的外部操作。已启动调用若结果未知，应先核实外部状态再决定是否重试，见 1.5.5。 |
 
 每个结束的 Step 释放本 Step 的工具集合；Turn 结束后 Agent 可以继续处理队列中的后续普通输入。是否空闲由当前 Agent 的运行与队列状态决定，不代表所有子代理或后台 Job 已经结束。
 
-##### 1.6.4 上下文计量与压缩
+##### 1.6.5 上下文计量与压缩
 
 **上下文窗口**是模型一次请求能够处理的内容容量，通常以 Token（模型处理文本等内容的计量单位）衡量。请求中的历史、指令和工具声明都会占用容量；内容过多时可能超出模型限制。
 
@@ -3952,7 +4360,7 @@ DSH 的 Token 计量用于估算上下文压力。符合复用条件时，它以
 2. 重新评估上下文压力；如仍有需要且存在适合压缩的历史范围，可生成摘要，并保留近期需要的上下文。只裁剪也可能已足够，不一定产生摘要。
 3. 后续请求使用调整后的历史视图；原始 Session 事件不会因此直接删除。系统提示词、工具声明和无法拆分的内容仍会占用窗口，压缩也可能无法完成。
 
-支持的交互环境可通过 `/compact` 为空闲会话发起压缩，但不保证一定生成摘要。**上下文压缩与 Zstandard 文件压缩是两件事**：前者调整模型后续看到的历史，后者减少会话文件的磁盘占用，见 1.5.2.1；执行 `/compact` 不会转换存储文件格式。
+支持的交互环境可通过 `/compact` 为空闲会话发起压缩，但不保证一定生成摘要。**上下文压缩与 Zstandard 文件压缩是两件事**：前者调整模型后续看到的历史，后者减少会话文件的磁盘占用，见 1.5.2；执行 `/compact` 不会转换存储文件格式。
 
 资料来源：DSH v0.2.2-rc.3 的 [Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/agent-lifecycle.md)、[系统提示词组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/system-prompt.md)、[技能子系统](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/skills.md)、[上下文压缩](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/compaction.md)，以及本机安装包 `@deepseek-ai/dsh-agent-instructions`、`@deepseek-ai/dsh-working-directory` 和 `@deepseek-ai/dsh-agent-loop` 的 README。
 
