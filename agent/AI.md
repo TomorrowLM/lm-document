@@ -3443,84 +3443,9 @@ Profile 的配置按以下顺序应用，越靠后的层优先级越高：
 dsh --profile web --dump-config
 ```
 
-#### 1.4 Agent 执行机制
+#### 1.4 工具
 
-##### 1.4.1 Agent Loop、Turn 与 Step
-
-| 概念 | 含义 |
-| --- | --- |
-| Agent Loop | 默认执行驱动，接收输入、请求模型、调度工具并管理继续和结束 |
-| Turn | 一轮输入处理的生命周期，包含零个或多个 Step |
-| Step | 一次模型请求及该次响应触发的工具调用 |
-
-例如，“读取依赖并分析技术栈”可能经过两个 Step：第一次模型请求文件工具，第二次模型读取工具结果后生成分析。如果输入在接纳前被拒绝，Turn 也可以没有 Step。
-
-##### 1.4.2 模型上下文与提示词组装
-
-模型上下文包含历史消息、指令、运行时信息及当前可用工具的定义。提示词组装服务负责组织提示词片段和工具 Schema，Session 日志则提供可还原的模型历史。
-
-本版本在组装提示词和进入 `agent/pre-step` 前固定本 Step 的模型选择；重试保留这份选择。`agent/request` 用于调整请求控制，不再负责切换 Provider、模型或推理强度。
-
-| 关键 API | 输入与作用 | 返回及约束 |
-| --- | --- | --- |
-| `ctx.systemPrompt.section(section)` | 注册有名称、顺序和内容来源的提示词片段 | 返回注销函数；按全局或 Agent 作用域参与组装 |
-| `ctx.systemPrompt.context(context)` | 注册动态运行时上下文 | 返回注销函数，运行时按接纳规则刷新对应事实 |
-| `ctx.systemPrompt.assemble(context)` | 提供 Agent、模型选择、Step 工具集合等组装环境 | 异步返回提示词和工具声明的组装结果 |
-| `agent.inject(message)` | 向代理输入队列补充模型可见上下文 | 本身不唤醒空闲代理，等待后续可唤醒输入 |
-
-`section()`/`context()` 是可复用的内容来源，`inject()` 是向一个具体 Agent 投递上下文。
-
-##### 1.4.3 Agent 创建、输入投递与运行控制
-
-创建和运行控制通过公共 Agent 接口完成，扩展不必直接依赖 Agent Loop 的具体实现。
-
-| 关键 API | 输入与作用 | 返回及约束 |
-| --- | --- | --- |
-| `ctx.agents.create(options)` | 指定新 Agent 的身份、会话元数据、选项等 | 异步返回 `AgentHandle`，包含 `agent` 和 `dispose()` |
-| `ctx.agents.resume(options)` | 指定已持久化的 Session，恢复对应 Agent | 异步返回持有生命周期的句柄，依赖持久化能力 |
-| `agent.followup(message)` | 投递下一 Turn 的普通消息 | 加入队列并唤醒；消息需符合 `UserMessage` 结构 |
-| `agent.steer(message)` | 向最近的 Step 边界投递引导 | 空闲时开启 Turn，运行时在后续边界处理 |
-| `agent.cancel(cause, options?)` | 取消在途工作；可选择保留输入队列 | 发出取消，不撤销已经完成的外部操作 |
-| `agent.whenIdle()` | 等待当前代理活动收敛为空闲 | 返回 Promise；不代表某条消息或整棵子代理树已完成 |
-| `handle.dispose()` | 由持有句柄的创建方关闭 Agent | 等待停止与清理后释放资源 |
-
-#### 1.5 工具
-
-##### 1.5.1 本地工具：文件、命令与终端
-
-本地工具把文件读写、命令运行和持久终端等能力开放给模型。工具负责参数与输出契约，具体操作由相应能力服务完成。
-
-| 能力入口 | 职责 | 与工具的关系 |
-| --- | --- | --- |
-| `ctx.fs` | 文件系统访问及相关策略扩展 | 文件工具调用该能力处理读取和修改 |
-| `ctx.shell` | 命令执行后端 | Shell 工具使用已装配后端执行命令 |
-| `ctx.terminals` | 持久终端会话 | 终端工具访问会话及其输入输出 |
-| `ctx.tools` | 工具注册与执行调度 | 把上述能力包装成模型可以请求的操作 |
-
-“本地工具”是按使用形态分类。底层文件系统或进程 Provider 可以替换，工具也可能运行在远程执行环境中；实际位置由当前配置决定。权限约束统一见 1.8。
-
-##### 1.5.2 MCP：外部工具接入与服务管理
-
-MCP（Model Context Protocol）让 DSH 接入外部服务提供的工具、资源和指令。一个 MCP Client 插件对应一个服务连接：
-
-1. 配置服务名称及传输方式：本地程序使用 `stdio`，HTTP 服务使用 `streamable-http`。
-2. Client 连接服务并发现工具，将工具适配到 DSH 工具注册表。
-3. 模型按当前作用域和 Step 准入看到工具声明；实际请求经 DSH 调用管线转发到 MCP 服务。
-4. 返回值适配成工具内容及程序可消费的数据，再进入后续处理与会话记录。
-
-`serverName` 参与工具命名，避免不同服务的同名工具冲突。MCP 也可以使用本机进程，不能简单等同于远程网络服务。
-
-| 关键入口或 API | 输入与作用 | 返回及约束 |
-| --- | --- | --- |
-| `@deepseek-ai/dsh-mcp-client` | 通过插件配置指定 `serverName`、传输、命令或 URL | 每项连接贡献自己的工具及资源能力 |
-| `ctx.mcpManager.register(name, entry)` | 插件动态登记一个服务配置 | 返回注销函数，服务贡献与插件生命周期绑定 |
-| `ctx.mcpManager.list()` | 查看已配置、已注册服务及保留状态 | 返回服务视图，不主动建立探测连接 |
-| `ctx.mcpManager.restart(name)` | 重建指定服务实例 | 异步完成关闭和重新装载 |
-| `ctx.mcpManager.probe(name, options?)` | 单独连接并发现工具以检查可用性 | 返回探测结果，不替换正在使用的实例 |
-
-Web/Desktop 的服务管理由 `ctx.mcpManager` 提供；Client 本身消费 `ctx.tools`，不发布统一的 `ctx.mcp` 服务。其他组合需要先装配所用服务，才能调用相应 API。
-
-##### 1.5.3 工具定义与注册：defineTool、ctx.tools
+##### 1.4.1 工具定义与注册：defineTool、ctx.tools
 
 `defineTool()` 将参数、输出契约和执行函数组织为工具定义；`ctx.tools.register()` 把定义加入当前注册作用域。
 
@@ -3563,7 +3488,7 @@ export function apply(ctx: Context) {
 
 `execute` 返回规范结果值，`output.render` 负责生成模型内容。注册的清理由插件作用域管理；注册时也会返回可主动注销的函数。通过 `when` 注册的条件工具，只有通过对应 Step 准入后才可执行。
 
-##### 1.5.4 工具声明、调用调度与结果返回
+##### 1.4.2 工具声明、调用调度与结果返回
 
 - **Tool Call**：模型提出的工具名称和参数等结构化调用意图。
 - **Tool Result**：运行时记录的调用结果，可能包含成功内容、拒绝或错误。
@@ -3578,7 +3503,7 @@ export function apply(ctx: Context) {
 
 模型 Step 中的执行由 Loop 提供日志位置，记录根 Tool Call/Result。程序在模型 Step 之外直接调用 `execute()` 且未提供 `log` 时，不会自动生成这些根调用事件，不能把它等同于完成了一次模型交互。
 
-##### 1.5.5 原生工具调用与 PTC 调用
+##### 1.4.3 原生工具调用与 PTC 调用
 
 | 方式 | 执行思路 |
 | --- | --- |
@@ -3587,53 +3512,475 @@ export function apply(ctx: Context) {
 
 两类执行器按 Agent 作用域组合，均由 `ctx.tools.setExecutor()` 提供具体执行策略。PTC 通过配置覆盖层启用，其 `run_code` 入口和内部工具调用仍经过内置工具执行管线。配置工具来源与选择原生/PTC 调用方式是两个不同维度，MCP 工具也可参与相应执行方式。
 
-#### 1.6 会话与事件机制
+##### 1.4.4 本地工具：文件、命令与终端
 
-##### 1.6.1 Session 与追加式事件日志
+本地工具把文件读写、命令运行和持久终端等能力开放给模型。工具负责参数与输出契约，具体操作由相应能力服务完成。
 
-Session 管理会话历史，日志以追加方式保存已提交事实。Turn、Step、用户消息、模型消息、工具调用及工具结果等，都有相应的持久事件。
-
-Session 日志同时是模型上下文的来源：模型可见输入需要能从日志重建。因此，日志写入与执行穿插进行，不能只在任务完成后保存一份最终回答。
-
-| 关键 API | 输入与作用 | 返回及约束 |
+| 能力入口 | 职责 | 与工具的关系 |
 | --- | --- | --- |
-| `ctx.sessions` | 管理当前内存中的活跃 Session | 普通 Agent 会话由 `ctx.agents.create()/resume()` 协调创建和恢复 |
-| `session.append(type, data, opts?)` | 追加一个类型化事件 | 返回带序号和时间的事件；消息类事件必须提供相应 surface 元数据 |
-| `session.append(inputs)` | 按顺序提交类型化事件数组 | 返回已提交事件数组，支持批量追加 |
-| `session.deriveMessages()` | 从日志推导当前模型历史 | 返回由不可变消息组成的新数组 |
+| `ctx.fs` | 文件系统访问及相关策略扩展 | 文件工具调用该能力处理读取和修改 |
+| `ctx.shell` | 命令执行后端 | Shell 工具使用已装配后端执行命令 |
+| `ctx.terminals` | 持久终端会话 | 终端工具访问会话及其输入输出 |
+| `ctx.tools` | 工具注册与执行调度 | 把上述能力包装成模型可以请求的操作 |
 
-`append()` 提交内存日志并通知观察者，持久化插件异步写入存储。需要落盘保证的业务还必须遵循持久化服务的完成契约。
+“本地工具”是按使用形态分类。底层文件系统或进程 Provider 可以替换，工具也可能运行在远程执行环境中；实际位置由当前配置决定。权限约束统一见 1.9。
 
-##### 1.6.2 模型历史、状态投影与实时输出
+##### 1.4.5 MCP：外部工具接入与服务管理
 
-同一份运行过程有不同的消费方式：
+MCP（Model Context Protocol）让 DSH 接入外部服务提供的工具、资源和指令。一个 MCP Client 插件对应一个服务连接：
 
-| 方式 | 用途 |
+1. 配置服务名称及传输方式：本地程序使用 `stdio`，HTTP 服务使用 `streamable-http`。
+2. Client 连接服务并发现工具，将工具适配到 DSH 工具注册表。
+3. 模型按当前作用域和 Step 准入看到工具声明；实际请求经 DSH 调用管线转发到 MCP 服务。
+4. 返回值适配成工具内容及程序可消费的数据，再进入后续处理与会话记录。
+
+`serverName` 参与工具命名，避免不同服务的同名工具冲突。MCP 也可以使用本机进程，不能简单等同于远程网络服务。
+
+| 关键入口或 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `@deepseek-ai/dsh-mcp-client` | 通过插件配置指定 `serverName`、传输、命令或 URL | 每项连接贡献自己的工具及资源能力 |
+| `ctx.mcpManager.register(name, entry)` | 插件动态登记一个服务配置 | 返回注销函数，服务贡献与插件生命周期绑定 |
+| `ctx.mcpManager.list()` | 查看已配置、已注册服务及保留状态 | 返回服务视图，不主动建立探测连接 |
+| `ctx.mcpManager.restart(name)` | 重建指定服务实例 | 异步完成关闭和重新装载 |
+| `ctx.mcpManager.probe(name, options?)` | 单独连接并发现工具以检查可用性 | 返回探测结果，不替换正在使用的实例 |
+
+Web/Desktop 的服务管理由 `ctx.mcpManager` 提供；Client 本身消费 `ctx.tools`，不发布统一的 `ctx.mcp` 服务。其他组合需要先装配所用服务，才能调用相应 API。
+
+#### 1.5 会话与事件机制
+
+> 1.5–1.7 依据本机安装的 DSH **v0.2.2-rc.3** 包文档核对；本章其他内容标注的 rc.5 细节不能直接推定适用于 rc.3，反之亦然。
+
+##### 1.5.1 Session 是什么
+
+Session（会话）是一段持续交互的记录。用户后续提问时，Agent 可以利用之前的消息和工具结果理解上下文，而不必从零开始。不同 Session 有各自的标识和记录。
+
+##### 1.5.2 Session 如何存储
+
+###### 1.5.2.1 存储后端与位置
+
+Session 在运行时先维护内存中的事件日志；是否保存到磁盘取决于是否装配持久化后端。DSH 的 `sessionPersistence` 是可替换的存储接口，随产品提供的 JSONL 后端以每个 Session 的文件保存；其他后端可以采用不同的存储方式。
+
+| 场景 | 存储方式和位置 |
 | --- | --- |
-| 模型历史投影 | 从日志推导下一次请求需要的历史消息 |
-| Session Projection | 将已提交事件计算成消息、工具、任务等状态视图 |
-| 实时流 | 在模型生成过程中传递临时输出片段，改善交互体验 |
+| 未装配持久化后端 | 会话仅在内存中，进程结束后不能依靠该内存恢复 |
+| JSONL 后端 | `root` 是必填的会话根目录；按工作目录和 Session ID 建目录，写入版本化日志文件 |
+| 发行版 `dsh-base` 组合 | 配置根目录为 `dshHomePath('sessions')`，通常是 `$DSH_HOME/sessions`，未设置 `DSH_HOME` 时通常为 `~/.dsh/sessions`；实际配置可以覆盖 |
+| `sdk-minimal` 组合 | 也配置 `dshHomePath('sessions')`，但显式选择不压缩；实际配置可以覆盖 |
+| 自定义持久化后端 | 存储位置、编码和文件形式由该后端决定，不能假定一定是 JSONL |
 
-实时片段与持久日志需要区分。模型输出结束或一次尝试结算时，完整紧凑流保存为模型消息或尝试记录；失败尝试可保留在日志中，而不进入模型历史。本版本的 Projection 注册为异步，业务服务应等待注册并持有相应句柄。
+例如 Windows 上未更改默认 DSH home 时，根目录通常位于 `%USERPROFILE%\.dsh\sessions`；容器或远程宿主使用的是运行 DSH 后端的机器上的目录，而不一定是浏览器所在机器的目录。`dshHomePath` 的显式配置优先于 `DSH_HOME` 和默认 home；以部署实际生效配置为准。
 
-| 关键 API | 输入与作用 | 返回及约束 |
+JSONL 后端的目录结构如下，目录名是示意，实际项目目录由工作目录规范化得到，Session ID 会被安全编码。没有工作目录时使用 `_no-cwd`。
+
+```text
+<root>/
+└─ <工作目录对应的目录>/
+   └─ <编码后的 Session ID>/
+      ├─ session.v4.jsonl.zstd   # 当前格式，默认压缩
+      └─ session.v4.jsonl        # 不压缩时的对应文件
+```
+
+Zstandard（Zstd）压缩用于减少会话日志占用的存储空间。
+
+###### 1.5.2.2 文件结构与各场景数据
+
+逻辑上，Session 元数据与事件是不同数据；在 JSONL 后端，二者保存在同一个日志文件中：首条记录是元数据头，后续每条记录是一个事件。默认 `.zstd` 使用 Zstandard 压缩帧，需通过后端或兼容解压工具读取；配置 `compression: 'none'` 时是 UTF-8 文本，每行一个 JSON 对象。
+
+| 数据 | 结构与作用 |
+| --- | --- |
+| 文件头 | `type: "session"`、格式 `version`、会话 `id`、创建时间 `createdAt`、是否有继承历史的 `isSeeded`、委派深度 `delegationDepth`；还可包含 `cwd`、`agentPreset`、`parentSession` 和 `origin` 等可选字段 |
+| 事件公共字段 | `type` 表示事件类型，`seq` 是会话内从 0 开始的连续序号，`time` 是 Unix 毫秒时间戳，`data` 是该事件类型对应的数据 |
+| 事件可选字段 | `ignorable` 标记未知时可安全跳过的事件；模型历史相关事件可带 `surfaceOp` 和 `sourceEventSeqs`，用于描述历史视图变化及来源关联 |
+
+例如，下面展示不压缩文件的首行和一个 Turn 开始事件。示例按本版本结构构造，ID 和时间为虚构值；每一行是一个独立 JSON 对象：
+
+```jsonl
+{"type":"session","version":4,"id":"example-session","createdAt":1700000000000,"isSeeded":false,"delegationDepth":0}
+{"type":"turn/start","seq":0,"time":1700000001000,"data":{"turn":1}}
+```
+
+| 示例字段 | 示例值的含义 |
+| --- | --- |
+| 第一行 `type` | `"session"` 表示这是文件头，不是事件 |
+| `version` | `4` 表示 JSONL 的 v4 格式 |
+| `id` | `"example-session"` 是这个会话的标识 |
+| `createdAt` | `1700000000000` 是会话创建时间，以 Unix 毫秒表示 |
+| `isSeeded` | `false` 表示没有从其他会话继承事件前缀 |
+| `delegationDepth` | `0` 表示顶层会话，不是委派产生的子级 |
+| 第二行 `type` | `"turn/start"` 表示开始一个 Turn |
+| `seq` | `0` 表示这是该 Session 的第一个事件；文件头不占事件序号 |
+| `time` | `1700000001000` 是事件发生时的 Unix 毫秒时间戳 |
+| `data` | `{"turn":1}` 是该类型的事件数据；`turn` 的值 `1` 标识本次 Turn |
+
+`cwd`、`agentPreset`、`parentSession`、`origin` 等字段按需出现在文件头中，示例未设置时省略。以下事件示例都沿用第二行的公共字段：`type` 标识事件类型，`seq` 是会话内事件序号，`time` 是发生时间，`data` 是具体内容。每段示例独立展示一种场景，序号和时间只用于解释，不代表这些事件都存在于同一个会话。
+
+一个事件只说明对应事实，不一定产生模型消息。`surfaceOp` 可表示追加或替换模型历史中的节点；`sourceEventSeqs` 在磁盘上可能使用无损区间编码，读取后恢复原序号。未知事件只有明确标记可忽略时才能跳过，否则读取方应拒绝恢复，避免丢失影响解释的数据。
+
+**各类场景保存什么**
+
+下表按本机 v0.2.2-rc.3 官方持久化事件目录归类。插件相关事件仅在相应功能装配并发生对应操作时出现；同一个 Session 不会必然包含全部事件。事件的 `data` 随类型不同，例如工具调用记录 `callId`、名称和参数，结果通过调用 ID 关联；具体字段以官方目录为准。
+
+| 场景 | 已声明的事件类型与作用 |
+| --- | --- |
+| 输入与消息 | `agent/inbox/spliced` 记录输入队列变化；`system/message`、`developer/message`、`user/message`、`assistant/message` 分别记录相应消息；`assistant/attempt` 记录未形成可见消息的已结算模型尝试 |
+| 执行生命周期 | `turn/start`、`turn/end` 和 `step/start`、`step/end` 记录回合与步骤边界 |
+| 模型与请求 | `agent-preset/selected`、`model/selection`、`request/header`、`request/context` 记录预设、模型选择与请求状态；`llm/retry`、`llm/retry-started` 记录重试 |
+| 工具与 PTC | `tool/call`、`tool/result` 记录根调用及结果；`tool/ptc-dispatch-start`、`tool/ptc-dispatch` 记录 PTC 内部派发 |
+| 权限与执行限制 | `approval/asked`、`approval/decided`、`approval/policy`、`permission/preset`、`sandbox/mode` 记录相应审批、权限或沙箱状态 |
+| 历史压缩 | `compaction/start`、`compaction/prune`、`compaction/summary`、`compaction/end` 记录压缩过程和结果；原始事件仍保留 |
+| 目标、清单、后台任务和计划 | `goal/change`、`todo/write`、`job/registered`、`job/settled`、`plan/mode` 分别记录目标、清单、Job 注册或结束，以及计划模式变化 |
+| 子代理、团队和工作流 | `subagent/catalog`、`subagent/descriptor`、`subagent/model-selection-policy`；`team/member`、`team/mode`、`team/task`、`team/message/queued`、`team/message/delivered`；`tool-workflow/agent-start`、`tool-workflow/agent-end`、`tool-workflow/run-start`、`tool-workflow/run-end` |
+| Session、工作目录与文件 | `session/end-seed` 标记继承或恢复边界；`session/title`、`session/title-llm-request` 记录标题及相关请求；`working-directory/change`、`workspace/changes` 记录工作目录和工作区变更 |
+| 命令、扩展钩子与定时 | `command/run`、`command/done`、`hook/invoked`、`hook/result`、`schedule/change` 记录相应操作；定时任务自身的存储不应由事件名推定 |
+| 内容、交付和反馈 | `image/offload`、`deliverables/presented`、`feedback/message-put`、`feedback/message-delete`、`feedback/record` 记录图片卸载、交付及反馈相关事实 |
+| 特定服务请求与投递 | `web/deepseek-search-llm-request`、`session-log-deepseek/delivery-accepted` 分别记录对应服务集成中的请求或投递事实 |
+
+**各场景的数据示例**
+
+下面每个示例都是独立的 JSONL 事件行，按本机 v0.2.2-rc.3 的事件类型构造，内容和标识均为虚构值。它们分别展示一个场景，不构成同一会话的完整事件序列；插件事件仅在相应功能装配并发生操作时出现。所有示例中的 `seq: 1` 都表示该事件在各自会话中的序号，`time: 1700000000000` 都表示一个示例 Unix 毫秒时间戳；实际序号在同一会话中连续增长。`type` 的值是事件类型，`data` 的对象保存该类型的数据。
+
+1. **输入与消息**：记录一条用户消息。
+
+   ```json
+   {"type":"user/message","seq":1,"time":1700000000000,"data":{"id":"msg-1","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"你好"}]},"surfaceOp":"append"}
+   ```
+
+   | 字段 | 示例值的作用 |
+   | --- | --- |
+   | `type` | `"user/message"`：事件是一条用户角色消息 |
+   | `data.id`、`data.role` | `"msg-1"` 是消息标识；`"user"` 是消息角色 |
+   | `data.source.kind` | `"user"` 表示消息来自用户 |
+   | `data.content` | 数组包含一个内容块；块中 `type: "text"` 表示文本，`text: "你好"` 是具体内容 |
+   | `surfaceOp` | `"append"` 表示向可派生的模型消息视图追加该消息 |
+
+2. **执行生命周期**：记录一个 Turn 开始。
+
+   ```json
+   {"type":"turn/start","seq":1,"time":1700000000000,"data":{"turn":1}}
+   ```
+
+   `type: "turn/start"` 标识 Turn 开始；`data.turn: 1` 是本次 Turn 的编号。
+
+3. **模型与请求**：记录请求配置快照。
+
+   ```json
+   {"type":"request/header","seq":1,"time":1700000000000,"data":{"header":{"config":{"provider":"example-provider","model":"example-model"}},"reason":"initial"}}
+   ```
+
+   | 字段 | 示例值的作用 |
+   | --- | --- |
+   | `type` | `"request/header"` 表示请求状态快照 |
+   | `data.header.config` | 调用配置；`provider: "example-provider"` 和 `model: "example-model"` 分别是示例提供方及模型标识，实际值取决于配置 |
+   | `data.reason` | `"initial"` 表示初始请求头快照 |
+
+4. **工具与 PTC**：记录一次 PTC 内部工具派发开始。
+
+   ```json
+   {"type":"tool/ptc-dispatch-start","seq":1,"time":1700000000000,"data":{"rootCallId":"call-1","parentCallId":"call-1","subCallId":"call-1:ptc:1","name":"example_tool","arguments":{}}}
+   ```
+
+   | 字段 | 示例值的作用 |
+   | --- | --- |
+   | `type` | `"tool/ptc-dispatch-start"` 表示内部调用开始派发 |
+   | `data.rootCallId`、`data.parentCallId` | 均为 `"call-1"`：示例的根调用和直接父调用是同一次调用 |
+   | `data.subCallId` | `"call-1:ptc:1"` 是此内部调用的标识 |
+   | `data.name`、`data.arguments` | `"example_tool"` 是内部工具名称；`{}` 表示此示例没有参数 |
+
+   此事件属于 PTC 执行过程；完整过程还会包含其他关联事件，根工具调用与结果机制见 1.4。
+
+5. **权限与执行限制**：记录权限预设选择。
+
+   ```json
+   {"type":"permission/preset","seq":1,"time":1700000000000,"data":{"preset":"example-preset"}}
+   ```
+
+   `type: "permission/preset"` 表示权限预设记录；`data.preset: "example-preset"` 是示例预设标识，实际可用值以部署配置为准。
+
+6. **历史压缩**：记录一次压缩开始。
+
+   ```json
+   {"type":"compaction/start","seq":1,"time":1700000000000,"data":{"compactionId":"compact-1","turn":null}}
+   ```
+
+   `type: "compaction/start"` 表示压缩开始；`data.compactionId: "compact-1"` 用来关联本次压缩的记录；`data.turn: null` 表示该压缩不属于某个正在运行的 Turn。完整压缩还会有对应的结束事件。
+
+7. **目标、清单、后台任务和计划**：记录计划模式状态。
+
+   ```json
+   {"type":"plan/mode","seq":1,"time":1700000000000,"data":{"active":true}}
+   ```
+
+   `type: "plan/mode"` 表示计划模式变化；`data.active: true` 表示计划模式已启用。目标、清单和 Job 有各自的事件，并非都存入此字段。
+
+8. **子代理、团队和工作流**：记录团队模式状态。
+
+   ```json
+   {"type":"team/mode","seq":1,"time":1700000000000,"data":{"enabled":true}}
+   ```
+
+   `type: "team/mode"` 表示团队模式状态记录；`data.enabled: true` 表示用户选择启用团队模式。子代理和工作流仍使用各自的记录。
+
+9. **Session、工作目录与文件**：记录工作目录变化。
+
+   ```json
+   {"type":"working-directory/change","seq":1,"time":1700000000000,"data":{"cwd":"D:\\example"}}
+   ```
+
+   `type: "working-directory/change"` 表示工作目录变更；`data.cwd` 的值表示 Windows 绝对路径 `D:\example`。JSON 中的 `\\` 表示路径中的一个反斜杠。
+
+10. **命令、扩展钩子与定时**：记录一条命令完成。
+
+    ```json
+    {"type":"command/done","seq":1,"time":1700000000000,"data":{"commandId":"cmd-1","kind":"success"}}
+    ```
+
+    `type: "command/done"` 表示命令处理结束；`data.commandId: "cmd-1"` 将结果与相同标识的 `command/run` 关联；`data.kind: "success"` 表示成功。
+
+11. **内容、交付和反馈**：记录一次文件交付。
+
+    ```json
+    {"type":"deliverables/presented","seq":1,"time":1700000000000,"data":{"turn":1,"callId":"call-1","files":[{"path":"report.pdf"}]}}
+    ```
+
+    | 字段 | 示例值的作用 |
+    | --- | --- |
+    | `type` | `"deliverables/presented"` 表示记录已交付的文件 |
+    | `data.turn`、`data.callId` | `1` 是所属 Turn；`"call-1"` 是产生交付的工具调用标识 |
+    | `data.files` | 文件数组；其中 `path: "report.pdf"` 是示例文件路径，可相对于 Session 工作目录 |
+
+12. **特定服务请求与投递**：记录服务端接收日志。
+
+    ```json
+    {"type":"session-log-deepseek/delivery-accepted","seq":1,"time":1700000000000,"data":{"sessionId":"session-1","throughSeq":0}}
+    ```
+
+    `type: "session-log-deepseek/delivery-accepted"` 表示对应服务接受了一次投递；`data.sessionId: "session-1"` 标识被投递的会话；`data.throughSeq: 0` 是该次投递覆盖的最后一个事件序号。此记录适用于装配对应集成的场景。
+
+以上只展示每类的代表性结构。一个事件是否进入模型历史取决于事件类型及其 surface 信息；同类其他事件的 `data` 结构可能不同，应查询下方目录，不能照搬示例字段。
+
+完整事件字段及所有声明见 [v0.2.2-rc.3 持久化事件目录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/persistence-catalog.md)；实验性记录另见 [实验性持久化目录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/experimental-persistence-catalog.md)。第三方插件还可以扩展记录，不能把本表视为所有外部插件的穷尽清单。
+
+###### 1.5.2.3 写入、恢复与存储边界
+
+- JSONL 会话延迟创建：创建后尚未写入事件时可能没有磁盘文件；首次追加会实体化文件，显式 `flush()` 也可只写入文件头。
+- 内存事件可以分批异步保存；等待 `ctx.sessions.flush(session)` 是需要明确持久化保证时的屏障。单个 Session 由一个活动写入者持有，写入和同步失败会报告错误。
+- 恢复会读取已保存的有效前缀并处理可恢复的不完整尾部；完整帧校验或结构损坏会被拒绝，不能把所有损坏都当成可自动修复。中断和分叉详见 1.5.6。
+- 旧格式读取可在内存中转换为当前逻辑格式；写方式打开时，可在校验后发布当前代文件并保留旧文件。版本支持范围以已安装的格式目录为准。
+- 会话记录可以包含附件引用和 Job 事件，但不保证包含附件原文件或后台任务的完整运行状态。默认本地附件后端将对象另存于 DSH home 的 `attachments/v1`；本地 Job 的运行状态和输出保存在进程内，详见 1.7.4。备份会话时应同时考虑关联的附件和部署所用的其他存储。
+
+##### 1.5.3 DSH 如何记录一次会话
+
+DSH 把会话中发生的事实作为有类型的**事件**追加到日志，再根据这些记录计算需要的状态，这种方式称为事件溯源。事件的结构和各类场景见 1.5.2；实际出现哪些事件取决于运行过程和装配的功能。
+
+事件日志用于记录和回放；运行时通知用于协调与界面更新，两者不能混为一谈。名称相近也不代表持久性相同：例如 `agent/inbox/spliced` 是可记录的 Session 事件，模型的实时输出片段则是瞬时通知。这里的 Session 事件与 1.2.1 的 Cordis 事件也不是同一个概念。
+
+##### 1.5.4 DSH 如何使用会话历史
+
+DSH 使用 `session.deriveMessages()` 从事件日志派生**模型历史**：把适用的消息和工具结果组织成模型可读的内容，而不是把所有事件原样发送给模型。例如，用户追问刚才读取的文件时，Agent 可以利用历史中的工具结果；需要最新内容时，仍可选择重新读取。
+
+同一份事件还可以计算出供界面使用的消息、任务等状态，称为 **Session Projection（会话状态投影）**。模型历史和界面投影服务于不同用途。上下文压缩可能改变后续请求看到的历史视图，见 1.6.4。
+
+模型生成时，界面可以先展示实时输出片段；片段本身是瞬时通知，并不等同于已经保存的日志。输出结算后，相应消息或尝试结果才会作为事件记录。
+
+##### 1.5.5 DSH 如何保存和恢复会话
+
+Session 事件先进入内存，装配的持久化后端再异步保存；文件格式、位置和 `flush` 边界见 1.5.2。
+
+恢复时，DSH 从已保存的元数据与事件重建内存中的会话状态，再派生模型历史和界面视图。只有已成功持久化的数据才能用于进程退出后的恢复；关联附件或进程内 Job 状态有各自的存储边界，不能假定会随日志一起恢复。
+
+##### 1.5.6 分叉与中断处理
+
+**Fork（分叉）**从已有会话的某个历史位置创建新会话。两个会话继承相同的前段记录，之后各自追加事件，适合基于同一背景探索不同方向。
+
+运行异常退出后，DSH 可以用已保存事件恢复状态，并处理不完整文件尾部和未结束的运行。如果日志已有工具调用却没有结果，系统不能仅凭日志判断外部操作是否发生；恢复时会标记结果未知，后续应先核实外部状态，再决定是否重试。
+
+资料来源：DSH v0.2.2-rc.3 的 [Session 子系统](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/session.md)、[会话持久化](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/persistence.md)、[JSONL 后端](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/session/session-persistence-jsonl/README.md)及本机安装包 `@deepseek-ai/dsh-session` 的格式版本定义。
+
+#### 1.6 Agent 执行机制
+
+##### 1.6.1 Agent Loop、Turn 与 Step
+
+###### 1.6.1.1 Agent Loop 执行机制
+
+**Agent Loop（代理循环）**是驱动 Agent 持续处理任务的运行机制。用户提交一次任务后，Loop 可以根据模型响应自动安排后续步骤，无需用户逐次要求调用工具或继续执行。
+
+1. **接收输入**：用户输入进入队列并唤醒 Loop，Loop 领取输入，开始处理一个 Turn。
+2. **请求模型**：Loop 将用户输入、适用的会话历史和可用工具声明组织成请求，发送给模型。
+3. **执行工具**：如果模型提出工具调用，Loop 将调用交给工具执行器；执行器按调度和权限规则处理，并将结果记录到会话。模型只提出调用请求，实际工具操作由运行时执行。
+4. **继续或结束**：Loop 将工具结果纳入后续请求的历史，再次请求模型；模型可以根据结果继续调用工具，也可以给出答复。满足结束条件时，Loop 结束当前 Turn，之后仍可处理队列中的新输入。
+
+这个“自执行”过程由 Loop 编排模型请求和工具执行，并不是模型自己在后台运行。这里的循环指每次响应和工具处理完成后判断是否继续，不必理解为按固定时间间隔轮询模型；没有可处理的输入时，Agent 可进入空闲状态，等待后续输入唤醒。模型请求失败、用户取消或扩展要求继续等情况也会影响流程，详见 1.6.3。
+
+###### 1.6.1.2 Turn 与 Step
+
+| 概念 | 含义 |
+| --- | --- |
+| Agent Loop | 默认执行驱动，接收输入、组织模型请求，并决定继续或结束 |
+| Turn | 一轮输入处理的生命周期，可以包含零个或多个 Step |
+| Step | 一次模型响应及其触发的工具处理所在的步骤 |
+
+例如，用户要求 Agent 分析项目，一个 Turn 可能连续执行四个 Step：
+
+```text
+Turn：分析项目
+├─ Step 1：模型决定查看目录 → DSH 执行文件列表工具
+├─ Step 2：模型决定读取配置 → DSH 执行文件读取工具
+├─ Step 3：模型决定搜索代码 → DSH 执行搜索工具
+└─ Step 4：模型根据已有结果给出分析
+```
+
+前一个 Step 的工具结果进入会话历史，供下一个 Step 的模型请求使用；模型因此可以根据刚获得的信息决定下一步。
+
+- 一个 Step 不一定只有一个工具调用：模型可以一次提出多个调用，DSH 按调度规则处理。
+- 最后一个 Step 可以直接回答而不调用工具；满足结束条件后，Turn 随之结束。
+- 符合条件的模型请求重试可能发生在同一个 Step 内，因此一个 Step 不一定只发出一次请求。
+- 如果首批输入在接纳前被拒绝等，Turn 可能不包含任何 Step。
+
+##### 1.6.2 Agent 生命周期与输入队列
+
+Agent 持有执行状态和输入队列；Session 保存可记录、可恢复的会话事实。应用通过 Agent 接口创建或恢复执行，再向其投递输入。
+
+| API | 作用与边界 |
+| --- | --- |
+| `ctx.agents.create(options)` | 创建 Agent，返回包含 `agent` 和 `dispose()` 的句柄 |
+| `ctx.agents.resume(options)` | 基于已持久化 Session 恢复 Agent，依赖相应持久化能力 |
+| `agent.followup(message)` | 将普通消息加入队列并唤醒 Agent，供后续 Turn 处理 |
+| `agent.steer(message)` | 投递中途引导；运行时在后续 Step 边界处理，空闲时可开启 Turn |
+| `agent.inject(message)` | 投递模型可见的补充上下文；自身不唤醒空闲 Agent |
+| `agent.cancel(cause, options?)` | 取消在途工作，可选择保留队列；不会撤销已发生的外部操作 |
+| `agent.whenIdle()` | 等待当前 Agent 空闲，不代表整棵子代理树已完成 |
+| `handle.dispose()` | 由句柄持有方停止 Agent 并释放资源 |
+
+##### 1.6.3 Agent 执行流程
+
+一个 Turn 从待处理输入开始，经过 Step 准入、上下文组装、模型请求和响应处理；需要继续时再次进入下一 Step。下面分别说明各阶段及其边界。
+
+###### 1.6.3.1 输入领取与 Step 准入
+
+1. 普通输入进入队列后唤醒 Agent Loop；Loop 开启 Turn，领取一个待处理普通输入及可在下一 Step 处理的补充输入。运行中的中途引导和注入内容也在后续 Step 边界领取。
+2. 对每个拟议 Step，Loop 捕获本 Step 的模型选择，解析当前可用工具，并据此组装提示词。模型选择在同一 Step 的重试期间保持不变。
+3. 扩展通过 `agent/pre-step` 参与准入，可以接纳、调整或拒绝本批消息。例如，工作区指令插件可在此阶段补充适用指令，压缩组件也可检查上下文压力。
+4. 接纳后才进入 Step 并记录 `step/start`；如果首批输入被拒绝或为空，Turn 可以不产生 Step。已领取并被拒绝的批次不会自动留在队列中。
+
+因此，消息进入队列、被领取和最终进入模型历史是不同阶段。`inject()` 本身不会唤醒空闲 Agent；它要等后续可唤醒的输入到来，才能参与处理。
+
+###### 1.6.3.2 上下文来源与注入
+
+一次请求需要当前有效的指令、输入和历史，还需要让模型知道本 Step 可以请求哪些工具。DSH 按各内容的来源和时机组装它们，而非在创建 Session 的瞬间固定一份永久上下文。
+
+下表以已安装的 v0.2.2-rc.3 为准。实际内容取决于 Agent 作用域、已装配插件、配置和文件是否存在；创建会话本身不等于立即将所有内容发送给模型。
+
+| 内容 | 来源及进入时机 | 后续变化 |
 | --- | --- | --- |
-| `await ctx.sessionProjections.register(definition)` | 注册初始状态、事件折叠函数、状态 Schema 和可选客户端视图 | 等待后得到 `ProjectionHandle`，业务服务保留句柄 |
-| `handle.stateOf(session)` | 读取该投影对一个 Session 计算出的当前状态 | 同步返回宿主状态，适合由所属领域服务封装 |
-| `ctx.sessionProjections.snapshot(session)` | 读取客户端可见投影 | 返回状态值及其反映到的日志位置 `asOfSeq` |
-| `handle.dispose()` | 释放该投影注册 | 异步清理；不是删除会话日志 |
+| 系统提示词 | 配置和插件向 `ctx.systemPrompt` 贡献提示词片段；Step 组装后，Loop 将渲染结果作为 `system/message` 纳入派生历史 | 内容变化时按模型路由能力更新历史中的系统消息 |
+| 工作区指令 | 启用指令插件且发现适用文件时，首次请求前加载用户全局指令以及从项目根目录到当前工作目录的指令，作为带来源的消息进入历史 | 工作目录改变、会话恢复或受支持的文件操作发现变化时重新协调；不是持续监视所有外部编辑 |
+| 技能目录 | 启用相应技能工具且发现可用技能或发现不完整时，在适用的 Step 前提供名称和描述 | 目录变化时更新；技能正文按调用或用户显式选择需要加载，不随目录全部注入 |
+| 运行时上下文 | 已装配的提供方贡献工作目录等运行时事实，实际内容依赖组合和配置 | 请求准备期间按提供方规则刷新；变化时协调模型可见的上下文快照 |
+| 会话历史 | 从 Session 事件派生此前适用的消息和工具结果 | 随新事件和压缩形成新的历史视图，见 1.5.4 |
+| 工具声明 | 本 Step 的作用域和准入规则决定可用工具，再将名称、描述和参数 Schema 提供给模型 | 每个 Step 重新解析；声明不包含宿主执行函数，见 1.4 |
 
-客户端快照与模型历史是不同投影，前者供 UI 消费，后者由 `deriveMessages()` 生成。
+以默认指令配置为例，用户全局指令依次来自 `$DSH_HOME/AGENTS.md` 和共享 agents 根目录的 `AGENTS.md`；项目指令从项目根目录向当前工作目录逐层查找 `AGENTS.md`、`CLAUDE.md` 及其 `.local.md` 变体。实际加载取决于文件是否存在、配置和内容预算，并会对重复内容去重。
 
-#### 1.7 子代理与团队协作机制
+例如，基于默认组合且相关文件存在时，首次请求可能包含系统提示词、适用的项目指令、技能名称和描述、当前工作目录、用户问题及可见工具声明。后续请求沿用适用历史，并在相关状态发生变化时协调更新；不应理解成每次都把所有来源作为新消息重复注入。
 
-##### 1.7.1 主代理、具名子代理与多层关系
+###### 1.6.3.3 请求准备、发送与重试
+
+1. Step 准入后，Loop 准备选定模型的调用，刷新已注册的运行时上下文，并按该模型路由的能力协调系统提示词。系统提示词和被接纳的用户消息会进入 Session 历史；调用配置与工具声明等请求状态也按需要记录。
+2. DSH 从记录中派生模型消息，结合本 Step 的工具声明和调用配置构造请求，再经模型服务发送。用户并非每次都重新输入完整历史；请求中可见的历史由 Session 当前视图提供，见 1.5.4。
+3. 模型响应可以流式返回。界面可先展示片段；成功结算的响应记录为 `assistant/message`，其中可能有文本、工具调用或两者。失败的尝试可能记录为 `assistant/attempt`；实时片段和已结算记录的区别见 1.5.4。
+4. 如果错误处理机制决定重试，Loop 在当前 Step 内重新准备调用；不会重新执行 Step 准入，也不会重复接纳同一批用户消息。错误未获重试或后续尝试仍失败且不再重试时，该次运行以相应错误结束。
+
+例如，请求因可识别的上下文溢出失败时，若已装配的压缩组件成功推进历史视图，它可以触发当前 Step 内的恢复重试；压缩条件与限制见 1.6.4。重试不是新的用户 Turn，也不意味着所有类型的错误都会自动重试。
+
+###### 1.6.3.4 工具结果、继续与结束
+
+| 情况 | DSH 如何处理 |
+| --- | --- |
+| 模型提出工具调用 | 将调用交给当前执行器；工具结果进入会话，供后续 Step 重新派生历史并判断下一步。一次响应可提出多个调用，具体调度和权限处理见 1.4。 |
+| 模型给出答复 | 如果满足自然停止条件，Loop 在结束前检查是否有下一 Step 输入或扩展要求继续；没有继续条件时结束 Turn。达到模型输出上限是另一种结束情况，不应把截断视为完整答复。 |
+| 运行中收到引导或上下文 | 待处理的 `steer()` 或 `inject()` 消息可在后续 Step 边界被领取并经过准入；普通 `followup()` 用于后续 Turn。 |
+| 请求失败或用户取消 | 按错误或取消原因结束相关运行；取消无法撤销已经完成的文件修改或其他外部操作。 |
+
+每个结束的 Step 释放本 Step 的工具集合；Turn 结束后 Agent 可以继续处理队列中的后续普通输入。是否空闲由当前 Agent 的运行与队列状态决定，不代表所有子代理或后台 Job 已经结束。
+
+##### 1.6.4 上下文计量与压缩
+
+模型的上下文窗口有限。Token 计量用于估算当前或下一次请求的上下文压力；可用时结合模型提供方返回的 usage，否则使用估算。估算不等同于精确计费，不同语言和结构化内容可能有误差。
+
+装配压缩组件后，达到配置阈值或遇到可识别的上下文溢出时，DSH 可以尝试先裁剪过大的工具结果，再对较早且适合压缩的历史生成摘要，并保留近期需要的上下文。压缩改变后续模型可见的历史视图，不直接删除原始 Session 事件。系统提示词、工具声明及不可分割的内容仍会占用窗口，压缩也不保证每次成功；支持的交互环境可通过 `/compact` 发起压缩。
+
+资料来源：DSH v0.2.2-rc.3 的 [Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/agent-lifecycle.md)、[系统提示词组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/system-prompt.md)、[技能子系统](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/skills.md)、[上下文压缩](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/compaction.md)，以及本机安装包 `@deepseek-ai/dsh-agent-instructions`、`@deepseek-ai/dsh-working-directory` 和 `@deepseek-ai/dsh-agent-loop` 的 README。
+
+#### 1.7 长任务管理：Goal、Todo 与 Job
+
+##### 1.7.1 三者的职责与协作关系
+
+长任务可能跨越多个 Agent 回合，并包含耗时的后台操作。DSH 使用三种机制分别记录目标、行动清单和后台执行；它们可以配合，但各自维护状态，并不自动组成任务树。
+
+| 机制 | 回答的问题 | 状态来源 |
+| --- | --- | --- |
+| Goal（目标） | 最终要完成什么，是否继续推进？ | 目标变更写入 Session 日志；续跑激活状态保存在进程中 |
+| Todo（待办） | 当前计划有哪些步骤？ | 清单快照写入当前 Agent 的 Session 日志 |
+| Job（后台作业） | 后台工作运行到哪里，产生了什么输出？ | 本地后端在进程内维护注册表和输出 |
+
+Goal 与 Todo 利用 1.5 的会话事件记录状态；Goal 驱动和 Job 完成通知可以促成后续 Agent 回合，其执行过程见 1.6。
+
+##### 1.7.2 Goal：状态、生命周期与自动续跑
+
+每个 Session 至多有一个当前 Goal，适合表示需要跨多轮完成的单一目标。`dsh-goal` 服务负责目标状态：创建、编辑、暂停、恢复、完成、阻塞和清除等变更写成 `goal/change` 事件，并可投影为客户端状态。目标包含标识、修订号、描述及回合上限；更新要匹配当前修订号，以防旧状态覆盖新状态。
+
+持久阶段包括 `active`、`paused`、`blocked` 和 `complete`。**阶段为 `active` 不代表此刻一定会自动续跑**：续跑是否已激活是独立的进程内状态。
+
+| 组件 | 职责 |
+| --- | --- |
+| `dsh-goal` | 保存和读取目标状态，不负责调度后续工作 |
+| `dsh-tool-goal` | 提供 `get_goal`、`create_goal`、`update_goal`，并检查模型操作权限 |
+| `dsh-command-goal` | 在支持命令的交互界面中提供用户侧 `/goal` 命令 |
+| `dsh-goal-round-driver` | 在条件满足时安排新的目标回合 |
+
+自动续跑需要装载驱动，并同时满足目标处于活动状态、续跑已激活、Agent 空闲及回合额度未耗尽等条件。驱动投递目标回合消息，只有实际进入模型历史的目标回合才计入上限；目标暂停、阻塞或完成后停止。默认回合上限为 256，可按部署或目标配置。Session 恢复或 Fork 后，活动目标的续跑默认不自动重新激活，需要用户明确要求恢复。回合数上限也不等于费用、时间或 Token 预算。
+
+##### 1.7.3 Todo：清单更新、状态投影与所有权
+
+Agent 通过 `todo_write` 提交**完整清单**，每次写入都替换上一份清单。每项包含描述和 `pending`、`in_progress`、`completed` 三种状态之一；空描述、重复内容或不符合约束的更新会被拒绝。
+
+工具将清单快照写为 `todo/write` Session 事件；装配 Session Projection 后，可从事件计算 `todos` 视图并提供给客户端。该清单属于调用它的 Agent Session，子代理各自维护自己的清单，不自动共享。当前投影视图在下一 Turn 开始时清空；历史事件仍在日志中，不能将其等同于永久显示的跨回合共享任务板。
+
+部署时必须为 `dsh-tool-todo` 显式设置 `allowParallelInProgress`：`true` 允许多项同时进行，`false` 时多项 `in_progress` 的更新会被拒绝。
+
+##### 1.7.4 Job：后台执行、输出与完成通知
+
+后台命令等生产方通过 `ctx.jobs` 注册 Job，Agent 可以继续处理其他工作。`dsh-jobs-local` 是进程内实现，负责保存作业状态、所有权和有限的输出；`dsh-tool-jobs` 提供面向模型的控制工具和完成通知。
+
+| 工具 | 作用和边界 |
+| --- | --- |
+| `job_list()` | 列出调用方可见作业及状态 |
+| `job_output(job_id, wait?, timeout_ms?)` | 读取输出；流式作业通常返回上次读取后的新增内容 |
+| `job_kill(job_id, reason?)` | 请求取消；工作实际停止后才进入终结状态 |
+
+等待超时或因用户引导提前返回，不会自动取消作业。作业完成时，通知机制可把未报告的结果送给所属 Agent：忙碌时交给后续 Step，空闲时默认可唤醒新 Turn；`completionDelivery: quiet` 可改为等待后续输入。已被读取的结果、主动取消或所属 Agent 正在销毁等情况有不同的通知处理，不能假定每次结束都会额外通知。
+
+本地注册表中的运行记录和输出不跨进程重启恢复；所属 Agent 被释放时，其作业会被取消。Session 中可能有作业注册与结束事件，但这些事件不是可继续运行的作业。具体并发额度和输出保留由后端配置；其他后端可有不同的持久化能力。
+
+##### 1.7.5 协作示例：从目标到后台验证
+
+以“升级依赖并通过构建”为例：
+
+1. 创建 Goal 记录最终目标；需要自动续跑时，确保相应服务和驱动已装配。
+2. 使用 Todo 列出检查依赖、升级和验证步骤，并按实际进度更新完整清单。
+3. 将耗时构建作为 Job 启动，Agent 可在等待期间继续处理其他工作。
+4. 获取 Job 结果并检查构建是否成功，再更新 Todo；失败时根据输出继续修复。
+5. 所有验收条件满足后，将 Goal 标记完成。Job 结束本身不代表目标已经完成。
+
+#### 1.8 子代理与团队协作机制
+
+##### 1.8.1 主代理、具名子代理与多层关系
 
 主代理可通过子代理服务把任务委派给具体 Provider，形成创建关系树。根代理的模型可见名称为 `lead`；具名后代可用 `reviewer`、`reviewer/checker` 等路径引用。
 
 名称便于模型识别成员，实际路由和授权仍以 Session ID 为依据。多层委派受深度和活动容量限制；支持多层关系不代表默认允许无限递归创建。
 
-##### 1.7.2 子代理的会话、上下文与能力边界
+##### 1.8.2 子代理的会话、上下文与能力边界
 
 | 子代理方式 | 上下文与能力特点 | 后续交互 |
 | --- | --- | --- |
@@ -3645,7 +3992,7 @@ Session 日志同时是模型上下文的来源：模型可见输入需要能从
 
 本地创建时会捕获父代理的模型选项、委派权限和组合；子代理保留相应权限根。选择另一个工作目录不会自动扩大授权范围。外部后端保留各自的权限体系，不能用本地子代理规则概括。
 
-##### 1.7.3 创建、消息通信与生命周期管理
+##### 1.8.3 创建、消息通信与生命周期管理
 
 1. 子代理服务管理创建、输入接纳、活动执行、结果交付和资源释放。
 2. 同一树内的根代理与可继续运行的本地成员，可以互发消息；运行中的目标接收后续引导，非活动目标可开始或恢复 Turn。
@@ -3664,7 +4011,7 @@ Session 日志同时是模型上下文的来源：模型可见输入需要能从
 
 这些是插件/宿主使用的服务 API。模型看到的 `send_message`、`wait_agent` 等工具由控制插件适配，不能把工具参数直接照搬为服务方法参数。
 
-##### 1.7.4 AgentTeam 与共享任务板
+##### 1.8.4 AgentTeam 与共享任务板
 
 AgentTeam 在普通子代理树上增加可选的任务协调能力，按根 Session 启用。成员身份、消息和中断仍由子代理机制负责。
 
@@ -3681,9 +4028,9 @@ AgentTeam 在普通子代理树上增加可选的任务协调能力，按根 Ses
 
 更新任务板后，需要处理任务的成员仍通过子代理消息接口接收通知。
 
-#### 1.8 权限边界
+#### 1.9 权限边界
 
-##### 1.8.1 权限策略与 Approval
+##### 1.9.1 权限策略与 Approval
 
 权限策略决定操作允许、拒绝或需要询问；Approval 服务收集并记录审批结果。内置工具管线在执行前应用这些决策，然后运行守卫和工具体。
 
@@ -3697,7 +4044,7 @@ AgentTeam 在普通子代理树上增加可选的任务协调能力，按根 Ses
 
 `ctx.approval.request()` 要求会话存在开启的 Turn，以便记录审批与结果。缺少可回答的审批机制时返回不可用并拒绝，不能默认放行。调用这些 API 的通常是策略插件，普通工具作者主要声明契约并遵循执行信号。
 
-##### 1.8.2 Sandbox、Host 与本地执行限制
+##### 1.9.2 Sandbox、Host 与本地执行限制
 
 | 机制 | 关注的问题 |
 | --- | --- |
@@ -3715,7 +4062,7 @@ AgentTeam 在普通子代理树上增加可选的任务协调能力，按根 Ses
 
 当前沙箱模式主要约束文件系统影响，网络和进程可见性不由这组模式统一保证。Windows 的额外目录授权由文件工具执行，不自动扩大终端或 PTC 的进程访问范围；应以具体后端报告的执行完整性为准。
 
-##### 1.8.3 MCP 服务的权限与执行边界
+##### 1.9.3 MCP 服务的权限与执行边界
 
 MCP 工具适配为 DSH 工具后，调用会经过对应工具策略和必要审批；外部操作则在 MCP Server 所在环境中执行。
 
@@ -3879,7 +4226,7 @@ flowchart TD
 
 若响应包含 Tool Call，所选执行器处理调用批次。管线先运行执行前扩展点和守卫，再执行工具体及执行后处理，最终记录模型可见的 Tool Result。批次可以包含多个调用，调度受并发限制和执行器语义约束。
 
-本地工具通过能力后端执行，MCP 工具通过 Client 转发到对应 Server；两者都由当前作用域的工具执行器调度。API 契约见 1.5，调用授权与执行环境约束见 1.8。
+本地工具通过能力后端执行，MCP 工具通过 Client 转发到对应 Server；两者都由当前作用域的工具执行器调度。API 契约见 1.4，调用授权与执行环境约束见 1.9。
 
 ##### 3.3.4 回填工具结果与继续 Step
 
@@ -3962,7 +4309,13 @@ sequenceDiagram
 3. 实时生成片段让客户端及时显示进度，持久事件则支撑恢复、回看和状态重建。
 4. 客户端展示的“生成中”“工具已完成”“子代理非活动”和“任务已完成”属于不同状态，不能互相替代。
 
-**资料来源（固定版本 v0.2.2-rc.5）：**
+**1.5–1.7 补充内容资料来源（本机核对版本 v0.2.2-rc.3）：**
+
+- [Session 事件与模型历史](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/session.md)、[会话持久化与恢复](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/persistence.md)
+- [Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/agent-lifecycle.md)、[上下文压缩](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/compaction.md)、[Goal 状态](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/goal.md)及[后台作业](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/subsystems/jobs.md)
+- 补充参考：[社区上下文系统](https://deepseekdocs.com/docs/learn/core/context)（页面标注 v0.1.5-alpha.1，具体机制以对应版本官方资料为准）。
+
+**其余资料来源（固定版本 v0.2.2-rc.5）：**
 
 - [官方架构总览](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/architecture.md)
 - [工具执行管线](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/tool-execution-pipeline.md)
