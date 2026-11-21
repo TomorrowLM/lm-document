@@ -3294,7 +3294,7 @@ repomix --skill-generate an-ui --compress --include "src/**" --ignore "**/_demo/
 
 > **skill-seekers** 帮你"读懂"内容后写一份摘要；**Repomix** 帮你把整本书装订好，让 AI 自己去读。对代码项目尤其是 TypeScript，Repomix 更可靠——它不猜、不丢、不虚报。
 
-# claw/code
+# agent
 
 ## claude code
 
@@ -3325,6 +3325,657 @@ OpenCode 和 Claude Code 的核心区别在于：**Claude Code 是一个追求�
 https://www.opencodecn.com/docs/best-practices/localization
 
 
+
+## DeepSeek Harness（DSH）
+
+> 适用版本：**DSH v0.2.2-rc.5**（候选版本）；资料核对日期：2026-11-20。本文依据该版本官方文档整理，社区架构文章和原有文档作为辅助材料。图示按职责归纳，表示主要关系与执行顺序。
+
+API 表保留主要参数，重点说明职责、调用时机和结果；完整类型及重载见文末对应的固定版本官方资料。
+
+### 1. 核心概念与机制
+
+#### 1.1 DSH 的定位与核心思想
+
+DSH 是用于编程和自动化任务的 AI Agent 运行框架。它将模型、工具、会话和执行环境组合成完整应用，让 Agent 能在多轮模型请求中完成任务。
+
+其核心思想是**通过插件组合应用，通过抽象能力替换实现，通过 Agent Loop 驱动执行，通过 Session 日志保留上下文与运行事实**。模型适配器、工具注册表、Session 日志和 Agent Loop 本身都可以由插件提供。
+
+#### 1.2 插件组合与能力抽象
+
+##### 1.2.1 Cordis Context：服务访问与事件机制
+
+Cordis 是 DSH 的插件运行时框架，负责组合和管理插件。插件通过 Context（`ctx`）访问运行时服务、订阅事件，例如用 `ctx.llm` 获取模型能力、用 `ctx.tools` 获取工具服务。
+
+这里的 Context 指插件的运行时入口；模型上下文则是提供给模型的消息、指令和工具定义。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.on(event, listener)` | 订阅具名事件，为请求、工具等机制增加扩展行为 | 返回可释放的监听注册；事件参数由其声明决定 |
+| `ctx.emit / ctx.serial / ctx.waterfall` | 按事件约定进行同步通知、串行等待或链式处理 | 分发方式由事件契约决定；Waterfall 监听器通过 `next()` 继续委托 |
+
+例如 `agent/pre-step` 用于输入接纳，`tools/pre-execute` 用于执行前策略。它们是运行时扩展点；是否需要持久记录，应由对应机制明确，而不是把所有 Cordis 事件都写入会话。
+
+##### 1.2.2 Seam：接口、实现与消费方
+
+Seam（能力边界）可以理解为提供方和消费方共同遵守的接口说明书（契约）：它规定消费方如何调用能力，以及提供方必须遵守的输入输出约定。Seam 描述的是接口边界；具体实现和数据转换由适配器等 Provider 完成。
+
+| 角色 | 职责 | 以模型能力为例 |
+| --- | --- | --- |
+| Service Definition | 定义接口和输入输出约定 | 模型消息、流式响应和适配器契约 |
+| Service Provider | 实现这项能力 | DeepSeek 或其他模型适配器 |
+| Consumer | 使用能力完成工作 | Agent Loop 发起模型请求 |
+
+消费方依赖契约，具体实现由配置装配。替换 Provider 时，遵守相同契约的消费方可以继续工作。
+
+以模型 Seam 为例：
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.llm.registerAdapter(providers, adapter)` | 为一组 Provider 路由注册适配器 | 返回注册句柄；同一路由重复注册会失败 |
+| `ctx.llm.prepareCall(config, signal?)` | 按路由与请求控制准备模型调用 | 异步返回绑定适配器的调用对象 |
+| `ctx.llm.stream(options)` | 发起完整模型请求 | 返回 `AsyncIterable<StreamChunk>`，消费方逐个处理响应片段 |
+
+普通扩展通常通过注册适配器接入模型，由 Agent Loop 负责会话、请求记录和重试等执行过程。
+
+##### 1.2.3 Plugin：能力注册与生命周期
+
+Plugin 是可装载的功能单元，可以提供服务、工具、事件处理或 UI。插件装载时注册能力，卸载时由 Cordis 撤销相应注册和受管理的副作用。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.plugin(plugin, config)` | 装载插件并传入配置 | 创建受 Cordis 管理的插件实例；应用通常由 Loader 根据配置调用 |
+| `ctx.inject(services, callback)` | 声明一组服务依赖，在可用时执行回调 | 依赖变化由 Cordis 管理，回调中注册的能力随作用域释放 |
+| `ctx.effect(effect)` | 登记需要清理的副作用 | 将清理职责绑定到当前插件生命周期 |
+
+这类 API 管理运行时组合；Bundle 与 Profile 的装配声明仍来自配置文件。
+
+“一切皆插件”描述的是产品的组合方式；Seam 是能力契约，Bundle/Profile 是配置组合，不能把它们都理解成模型可调用的工具。
+
+#### 1.3 配置与应用装配
+
+##### 1.3.1 Plugin、Bundle 与 Profile
+
+DSH 通过组合插件配置来形成不同的应用环境：
+
+| 概念 | 作用 |
+| --- | --- |
+| Plugin | 提供单项功能或服务 |
+| Bundle | 将一组相关插件及其配置打包，方便分发和复用 |
+| Profile | 选择并组合 Bundle，形成具体的应用环境 |
+
+可以把这几个概念的关系理解为：**Plugin 提供功能，Bundle 组织和分发插件，Profile 选择 Bundle 来组成应用。**
+
+例如，`dsh-base` 是供多个 Profile 复用的 Bundle：`web`、`headless`、`sdk` 和 `acp` 都共享它，再组合各自的应用入口。这样，通用插件配置可以集中复用，不必在每个 Profile 中重复声明。
+
+##### 1.3.2 Patch：配置变更规则
+
+Patch 是写在 YAML 等配置文件中的一组变更规则，用于调整最终的 Cordis 插件配置。它通常由用户手动编辑，再由 DSH 加载和应用；命令行 `--patch` 可以指定额外的 Patch 配置层，但不会自动改写配置文件。
+
+Patch 支持两种常见操作：
+
+- `insert`：插入新的插件配置条目。
+- 指定已有条目的 `id`：修改该条目的字段。若修改 `config`，需要提供完整的 `config` 内容；它不会与原配置递归合并。
+
+例如，以下 Patch 会插入一个插件条目：
+
+```yaml
+- insert:
+    - id: example-plugin
+      name: example-package
+      config:
+        enabled: true
+```
+
+Profile 的配置按以下顺序应用，越靠后的层优先级越高：
+
+1. Profile 声明的 Bundle，按列表顺序应用。
+2. Profile 自身的 `cordis.patch.yml`。
+3. Harness 用户目录中的 Patch。
+4. 命令行 `--patch` 指定的 Patch。
+
+最终应用后的插件配置决定了运行时装载哪些插件，以及它们使用什么配置。
+
+`sdk-minimal` 使用独立的完整配置树，不加载 `dsh-base`；它提供哪些能力，应以该 Profile 最终生成的配置为准。
+
+可用以下命令查看 `web` Profile 最终生成的插件配置：
+
+```sh
+dsh --profile web --dump-config
+```
+
+#### 1.4 Agent 执行机制
+
+##### 1.4.1 Agent Loop、Turn 与 Step
+
+| 概念 | 含义 |
+| --- | --- |
+| Agent Loop | 默认执行驱动，接收输入、请求模型、调度工具并管理继续和结束 |
+| Turn | 一轮输入处理的生命周期，包含零个或多个 Step |
+| Step | 一次模型请求及该次响应触发的工具调用 |
+
+例如，“读取依赖并分析技术栈”可能经过两个 Step：第一次模型请求文件工具，第二次模型读取工具结果后生成分析。如果输入在接纳前被拒绝，Turn 也可以没有 Step。
+
+##### 1.4.2 模型上下文与提示词组装
+
+模型上下文包含历史消息、指令、运行时信息及当前可用工具的定义。提示词组装服务负责组织提示词片段和工具 Schema，Session 日志则提供可还原的模型历史。
+
+本版本在组装提示词和进入 `agent/pre-step` 前固定本 Step 的模型选择；重试保留这份选择。`agent/request` 用于调整请求控制，不再负责切换 Provider、模型或推理强度。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.systemPrompt.section(section)` | 注册有名称、顺序和内容来源的提示词片段 | 返回注销函数；按全局或 Agent 作用域参与组装 |
+| `ctx.systemPrompt.context(context)` | 注册动态运行时上下文 | 返回注销函数，运行时按接纳规则刷新对应事实 |
+| `ctx.systemPrompt.assemble(context)` | 提供 Agent、模型选择、Step 工具集合等组装环境 | 异步返回提示词和工具声明的组装结果 |
+| `agent.inject(message)` | 向代理输入队列补充模型可见上下文 | 本身不唤醒空闲代理，等待后续可唤醒输入 |
+
+`section()`/`context()` 是可复用的内容来源，`inject()` 是向一个具体 Agent 投递上下文。
+
+##### 1.4.3 Agent 创建、输入投递与运行控制
+
+创建和运行控制通过公共 Agent 接口完成，扩展不必直接依赖 Agent Loop 的具体实现。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.agents.create(options)` | 指定新 Agent 的身份、会话元数据、选项等 | 异步返回 `AgentHandle`，包含 `agent` 和 `dispose()` |
+| `ctx.agents.resume(options)` | 指定已持久化的 Session，恢复对应 Agent | 异步返回持有生命周期的句柄，依赖持久化能力 |
+| `agent.followup(message)` | 投递下一 Turn 的普通消息 | 加入队列并唤醒；消息需符合 `UserMessage` 结构 |
+| `agent.steer(message)` | 向最近的 Step 边界投递引导 | 空闲时开启 Turn，运行时在后续边界处理 |
+| `agent.cancel(cause, options?)` | 取消在途工作；可选择保留输入队列 | 发出取消，不撤销已经完成的外部操作 |
+| `agent.whenIdle()` | 等待当前代理活动收敛为空闲 | 返回 Promise；不代表某条消息或整棵子代理树已完成 |
+| `handle.dispose()` | 由持有句柄的创建方关闭 Agent | 等待停止与清理后释放资源 |
+
+#### 1.5 工具
+
+##### 1.5.1 本地工具：文件、命令与终端
+
+本地工具把文件读写、命令运行和持久终端等能力开放给模型。工具负责参数与输出契约，具体操作由相应能力服务完成。
+
+| 能力入口 | 职责 | 与工具的关系 |
+| --- | --- | --- |
+| `ctx.fs` | 文件系统访问及相关策略扩展 | 文件工具调用该能力处理读取和修改 |
+| `ctx.shell` | 命令执行后端 | Shell 工具使用已装配后端执行命令 |
+| `ctx.terminals` | 持久终端会话 | 终端工具访问会话及其输入输出 |
+| `ctx.tools` | 工具注册与执行调度 | 把上述能力包装成模型可以请求的操作 |
+
+“本地工具”是按使用形态分类。底层文件系统或进程 Provider 可以替换，工具也可能运行在远程执行环境中；实际位置由当前配置决定。权限约束统一见 1.8。
+
+##### 1.5.2 MCP：外部工具接入与服务管理
+
+MCP（Model Context Protocol）让 DSH 接入外部服务提供的工具、资源和指令。一个 MCP Client 插件对应一个服务连接：
+
+1. 配置服务名称及传输方式：本地程序使用 `stdio`，HTTP 服务使用 `streamable-http`。
+2. Client 连接服务并发现工具，将工具适配到 DSH 工具注册表。
+3. 模型按当前作用域和 Step 准入看到工具声明；实际请求经 DSH 调用管线转发到 MCP 服务。
+4. 返回值适配成工具内容及程序可消费的数据，再进入后续处理与会话记录。
+
+`serverName` 参与工具命名，避免不同服务的同名工具冲突。MCP 也可以使用本机进程，不能简单等同于远程网络服务。
+
+| 关键入口或 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `@deepseek-ai/dsh-mcp-client` | 通过插件配置指定 `serverName`、传输、命令或 URL | 每项连接贡献自己的工具及资源能力 |
+| `ctx.mcpManager.register(name, entry)` | 插件动态登记一个服务配置 | 返回注销函数，服务贡献与插件生命周期绑定 |
+| `ctx.mcpManager.list()` | 查看已配置、已注册服务及保留状态 | 返回服务视图，不主动建立探测连接 |
+| `ctx.mcpManager.restart(name)` | 重建指定服务实例 | 异步完成关闭和重新装载 |
+| `ctx.mcpManager.probe(name, options?)` | 单独连接并发现工具以检查可用性 | 返回探测结果，不替换正在使用的实例 |
+
+Web/Desktop 的服务管理由 `ctx.mcpManager` 提供；Client 本身消费 `ctx.tools`，不发布统一的 `ctx.mcp` 服务。其他组合需要先装配所用服务，才能调用相应 API。
+
+##### 1.5.3 工具定义与注册：defineTool、ctx.tools
+
+`defineTool()` 将参数、输出契约和执行函数组织为工具定义；`ctx.tools.register()` 把定义加入当前注册作用域。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `defineTool(definition)` | 声明名称、描述、参数、输出和执行函数 | 生成带参数校验及类型推导的工具定义 |
+| `ctx.tools.register(definition, options?)` | 注册工具；`options.when` 可按 Step 决定是否启用 | 返回注销函数；同层重复名称会失败 |
+| `ctx.tools.get(name, scope?, toolSet?)` | 按作用域查询工具定义 | 返回定义或 `undefined`；查询定义不等于执行 |
+| `ctx.tools.resolve(context)` | 用 Agent、模型选择和取消信号判断本 Step 可用工具 | 返回 `ResolvedToolSet`；该 Step 批次结束后释放 |
+
+下面是插件中的最小注册示例，使用纯文本回显突出工具契约。前提是应用已装配 `tools` 服务及执行器；示例不依赖项目文件。
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+// 声明依赖，服务可用后才装载本插件
+export const inject = ['tools']
+
+export function apply(ctx: Context) {
+  ctx.tools.register(defineTool({
+    name: 'echo_text',
+    description: 'Return the supplied text.',
+    parameters: {
+      text: { type: 'string', required: true },
+    },
+    output: {
+      // 声明执行结果的类型，再投影为模型可读取的内容
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      exec.signal.throwIfAborted()
+      // 返回符合 output.schema 的 JSON 值
+      return args.text
+    },
+  }))
+}
+```
+
+`execute` 返回规范结果值，`output.render` 负责生成模型内容。注册的清理由插件作用域管理；注册时也会返回可主动注销的函数。通过 `when` 注册的条件工具，只有通过对应 Step 准入后才可执行。
+
+##### 1.5.4 工具声明、调用调度与结果返回
+
+- **Tool Call**：模型提出的工具名称和参数等结构化调用意图。
+- **Tool Result**：运行时记录的调用结果，可能包含成功内容、拒绝或错误。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.tools.schemas(scope?, toolSet?)` | 将可见工具投影成模型声明 | 返回 `ToolSchema[]`；不包含执行函数、输出回调等宿主实现 |
+| `ctx.tools.execute(input)` | 接收原始调用批次、`signal` 及可选 Agent、Step 准入和日志位置 | 返回 Promise，包含按调用顺序排列的结果、后续上下文等 |
+| `ctx.tools.setExecutor(executor)` | 为当前作用域选择调用批次执行器 | 返回清理函数，运行时使用最近作用域的执行器 |
+
+注册保存工具实现；请求组装让模型知道当前可调用什么；执行器再处理模型提出的调用。模型声明中的参数 Schema 与宿主执行函数分别承担描述和实际操作职责。
+
+模型 Step 中的执行由 Loop 提供日志位置，记录根 Tool Call/Result。程序在模型 Step 之外直接调用 `execute()` 且未提供 `log` 时，不会自动生成这些根调用事件，不能把它等同于完成了一次模型交互。
+
+##### 1.5.5 原生工具调用与 PTC 调用
+
+| 方式 | 执行思路 |
+| --- | --- |
+| 原生工具调用 | 模型直接返回工具调用，由选定执行器处理调用批次 |
+| PTC（Programmatic Tool Calling） | 模型通过代码调用已绑定工具，在代码中组织调用及结果处理 |
+
+两类执行器按 Agent 作用域组合，均由 `ctx.tools.setExecutor()` 提供具体执行策略。PTC 通过配置覆盖层启用，其 `run_code` 入口和内部工具调用仍经过内置工具执行管线。配置工具来源与选择原生/PTC 调用方式是两个不同维度，MCP 工具也可参与相应执行方式。
+
+#### 1.6 会话与事件机制
+
+##### 1.6.1 Session 与追加式事件日志
+
+Session 管理会话历史，日志以追加方式保存已提交事实。Turn、Step、用户消息、模型消息、工具调用及工具结果等，都有相应的持久事件。
+
+Session 日志同时是模型上下文的来源：模型可见输入需要能从日志重建。因此，日志写入与执行穿插进行，不能只在任务完成后保存一份最终回答。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.sessions` | 管理当前内存中的活跃 Session | 普通 Agent 会话由 `ctx.agents.create()/resume()` 协调创建和恢复 |
+| `session.append(type, data, opts?)` | 追加一个类型化事件 | 返回带序号和时间的事件；消息类事件必须提供相应 surface 元数据 |
+| `session.append(inputs)` | 按顺序提交类型化事件数组 | 返回已提交事件数组，支持批量追加 |
+| `session.deriveMessages()` | 从日志推导当前模型历史 | 返回由不可变消息组成的新数组 |
+
+`append()` 提交内存日志并通知观察者，持久化插件异步写入存储。需要落盘保证的业务还必须遵循持久化服务的完成契约。
+
+##### 1.6.2 模型历史、状态投影与实时输出
+
+同一份运行过程有不同的消费方式：
+
+| 方式 | 用途 |
+| --- | --- |
+| 模型历史投影 | 从日志推导下一次请求需要的历史消息 |
+| Session Projection | 将已提交事件计算成消息、工具、任务等状态视图 |
+| 实时流 | 在模型生成过程中传递临时输出片段，改善交互体验 |
+
+实时片段与持久日志需要区分。模型输出结束或一次尝试结算时，完整紧凑流保存为模型消息或尝试记录；失败尝试可保留在日志中，而不进入模型历史。本版本的 Projection 注册为异步，业务服务应等待注册并持有相应句柄。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `await ctx.sessionProjections.register(definition)` | 注册初始状态、事件折叠函数、状态 Schema 和可选客户端视图 | 等待后得到 `ProjectionHandle`，业务服务保留句柄 |
+| `handle.stateOf(session)` | 读取该投影对一个 Session 计算出的当前状态 | 同步返回宿主状态，适合由所属领域服务封装 |
+| `ctx.sessionProjections.snapshot(session)` | 读取客户端可见投影 | 返回状态值及其反映到的日志位置 `asOfSeq` |
+| `handle.dispose()` | 释放该投影注册 | 异步清理；不是删除会话日志 |
+
+客户端快照与模型历史是不同投影，前者供 UI 消费，后者由 `deriveMessages()` 生成。
+
+#### 1.7 子代理与团队协作机制
+
+##### 1.7.1 主代理、具名子代理与多层关系
+
+主代理可通过子代理服务把任务委派给具体 Provider，形成创建关系树。根代理的模型可见名称为 `lead`；具名后代可用 `reviewer`、`reviewer/checker` 等路径引用。
+
+名称便于模型识别成员，实际路由和授权仍以 Session ID 为依据。多层委派受深度和活动容量限制；支持多层关系不代表默认允许无限递归创建。
+
+##### 1.7.2 子代理的会话、上下文与能力边界
+
+| 子代理方式 | 上下文与能力特点 | 后续交互 |
+| --- | --- | --- |
+| 本地 Spawn | 新建会话；默认加入父代理当前组合，也可在支持时独立选择 Preset | 可继续对话或恢复 |
+| 本地 Fork | 用父代理已完成 Turn 的历史前缀初始化子会话，继承当前组合 | 可继续对话或恢复 |
+| 外部执行后端 | 将任务委派给外部运行时，其能力和权限由对应后端约定 | 按统一接口执行一次，不接受后续消息 |
+
+本地子代理有自己的 Session、输入队列和运行状态。Spawn/Fork 的差别首先是初始历史，不是是否具有独立会话。
+
+本地创建时会捕获父代理的模型选项、委派权限和组合；子代理保留相应权限根。选择另一个工作目录不会自动扩大授权范围。外部后端保留各自的权限体系，不能用本地子代理规则概括。
+
+##### 1.7.3 创建、消息通信与生命周期管理
+
+1. 子代理服务管理创建、输入接纳、活动执行、结果交付和资源释放。
+2. 同一树内的根代理与可继续运行的本地成员，可以互发消息；运行中的目标接收后续引导，非活动目标可开始或恢复 Turn。
+3. 发送成功表示目标接受了输入，不代表已经回复。结果和消息通过后续输入进入接收方。
+4. 普通模型工具委派使用父代理结果通知；程序调用方也可选择直接等待结果，不额外向父代理注入通知。
+5. 中断本地子代理只停止其当前 Turn，后代不会自动全部停止；外部执行被停止后不能继续对话。整棵树的停止与资源清理由宿主协调。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.subagents.startActivation(spec)` | 指定父 Agent、Provider、任务、信号及结果交付方式 | 异步返回活动执行对象；包含 `childId`、`result` 和 `dispose()` |
+| `activation.result` | 等待这次子代理执行结算 | Promise 提供输出及停止原因；结果在清理和通知后结算 |
+| `ctx.subagents.sendMessage(sender, targetId, content, options)` | 向同树本地成员发送内容，附调用方取消信号 | 返回消息接纳 ID；后续答复独立到达 |
+| `ctx.subagents.listDescendants(rootSessionId, signal?)` | 遍历可达子代理目录 | 返回后代及分支诊断，不因枚举而唤醒 Agent |
+| `ctx.subagents.interrupt(targetId, authority)` | 以用户或祖先权限中断指定执行 | 发出取消后返回，目标仍需协作停止 |
+| `ctx.subagents.drainDescendants(roots)` | 对指定根执行树停止接纳并清理后代 | 等待已接纳的启动和清理结束，供宿主关闭使用 |
+
+这些是插件/宿主使用的服务 API。模型看到的 `send_message`、`wait_agent` 等工具由控制插件适配，不能把工具参数直接照搬为服务方法参数。
+
+##### 1.7.4 AgentTeam 与共享任务板
+
+AgentTeam 在普通子代理树上增加可选的任务协调能力，按根 Session 启用。成员身份、消息和中断仍由子代理机制负责。
+
+共享任务板记录任务内容、负责人、状态和依赖。任务依赖构成有向无环图，即依赖关系不能绕回自身。声明的写入范围用于提示冲突，不是文件锁，也不自动隔离工作目录。
+
+**修改任务状态不会自动唤醒代理，也不会结束消息等待。**需要成员开始处理任务时，应显式发送消息。任务完成状态、代理当前活动状态和整次协作是否完成，需要分别判断。
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.agentTeams.setEnabled(agent, enabled, signal?)` | 保存整棵树共享的 Team 模式选择 | 只允许根 Agent 修改，异步等待持久化 |
+| `ctx.agentTeams.createTask(caller, request, signal?)` | 创建任务内容、前置依赖及建议写入范围 | 返回任务视图，初始任务无负责人且待处理 |
+| `ctx.agentTeams.listTasks(caller)` | 查看团队当前未删除任务 | 同步返回任务视图 |
+| `ctx.agentTeams.updateTask(caller, request, signal?)` | 按任务 ID、预期 revision 和操作更新状态等字段 | 异步返回新视图；通过版本比较避免覆盖并发修改 |
+
+更新任务板后，需要处理任务的成员仍通过子代理消息接口接收通知。
+
+#### 1.8 权限边界
+
+##### 1.8.1 权限策略与 Approval
+
+权限策略决定操作允许、拒绝或需要询问；Approval 服务收集并记录审批结果。内置工具管线在执行前应用这些决策，然后运行守卫和工具体。
+
+| 关键 API 或扩展点 | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `tools/pre-execute` | 执行前策略扩展点，可决定 allow、deny 或 ask 等 | Waterfall 通过 `next()` 委托后续处理 |
+| `ctx.approval.request(req)` | 提供 Agent、工具身份、原因和取消信号等 | 异步返回审批结果，只有 `allowed-once` 授予本次执行 |
+| `ctx.approval.setPolicy(agent, policy)` | 修改活跃 Agent 的审批策略 | 策略变化进入后续模型 Step 的运行时信息 |
+| `ctx.tools.guard(guard)` | 在当前作用域注册执行前的单调拒绝守卫 | 返回注销函数；守卫拒绝不能被后续监听器改成允许 |
+| `ctx.tools.restrict(filter)` | 用 allow/deny 收窄当前作用域继承的工具 | 返回解除限制的函数；本作用域自有注册仍可见，后端权限需单独执行 |
+
+`ctx.approval.request()` 要求会话存在开启的 Turn，以便记录审批与结果。缺少可回答的审批机制时返回不可用并拒绝，不能默认放行。调用这些 API 的通常是策略插件，普通工具作者主要声明契约并遵循执行信号。
+
+##### 1.8.2 Sandbox、Host 与本地执行限制
+
+| 机制 | 关注的问题 |
+| --- | --- |
+| Sandbox Policy | 本次操作适用何种文件系统影响限制及写入根 |
+| Sandbox Provider | 把进程启动参数转换成后端可执行的受限参数 |
+| Host 与能力后端 | 文件、进程和终端操作由哪个执行环境实际完成 |
+
+| 关键 API | 输入与作用 | 返回及约束 |
+| --- | --- | --- |
+| `ctx.sandboxPolicy.resolve(request?)` | 依据 Session、配置及已批准模式解析本次策略 | 同步返回模式、工作区根及额外写入根等信息 |
+| `ctx.sandbox.confine(argv, policy, signal?)` | 为待启动程序及参数应用受限策略 | 异步返回受限 argv 和后端执行完整性；由调用方启动进程 |
+| `ctx.sandboxPolicy.registerWritableRoot(session, directory)` | 为指定 Session 的后续操作登记额外写入目录 | 返回撤销函数；既有进程保留已解析权限 |
+
+不是所有工具都启动沙箱进程。`confine()` 负责包装参数，进程启动由消费方完成；完全访问模式下消费方按策略直接启动原始参数。
+
+当前沙箱模式主要约束文件系统影响，网络和进程可见性不由这组模式统一保证。Windows 的额外目录授权由文件工具执行，不自动扩大终端或 PTC 的进程访问范围；应以具体后端报告的执行完整性为准。
+
+##### 1.8.3 MCP 服务的权限与执行边界
+
+MCP 工具适配为 DSH 工具后，调用会经过对应工具策略和必要审批；外部操作则在 MCP Server 所在环境中执行。
+
+| 边界 | 由谁控制 |
+| --- | --- |
+| DSH 是否可发起这次调用 | 工具作用域、Step 准入、执行策略及审批 |
+| `stdio` 服务进程能访问什么 | 服务启动方式、操作系统身份及部署限制 |
+| HTTP 服务可操作哪些资源 | 服务端认证、凭据授权范围及服务自身策略 |
+| 调用取消与超时 | DSH 客户端和协议协作；不代表远端已完成操作自动撤销 |
+
+`ctx.mcpManager.register()` 登记的是服务连接，`ctx.tools.register()` 登记的是模型能力。接入一个 MCP 服务不会把其进程或远端服务自动纳入 DSH 的本地 Shell 沙箱。部署者需要分别配置服务凭据及运行环境边界。
+
+### 2. 整体架构
+
+#### 2.1 整体架构图
+
+下图将配置装配与执行路径分开表示。工具按自身能力调用后端，模型调用不经过本地 Shell 执行器。
+
+```mermaid
+flowchart TB
+    Config["Profile / Bundle / Patch"] --> Loader["启动器 + Cordis Loader"]
+    Loader --> Runtime["Cordis 插件树与服务环境"]
+    Runtime -.装配.-> Loop["主 Agent Loop"]
+    Runtime -.装配.-> LLM["ctx.llm / Provider"]
+    Runtime -.装配.-> Tools["ctx.tools / 注册表与执行器"]
+
+    Client["Web / Headless / Desktop / SDK"] --> Loop
+    Loop -->|模型请求| LLM
+    LLM -->|文本与 Tool Call| Loop
+    Loop -->|原生调用或 PTC| Tools
+    Tools --> Policy["工具执行管线 / 策略 / 必要审批"]
+    Policy -->|本地能力| Exec["文件 / 进程 / 终端等后端"]
+    Exec -->|操作结果| Tools
+    Tools -->|Tool Result| Loop
+
+    Policy -->|MCP 工具| MCP["MCP Client / 服务连接"]
+    MCP --> Server["外部 MCP Server"]
+    Server -->|协议结果| MCP
+    MCP -->|适配后的工具结果| Tools
+
+    Policy -->|任务委派| Sub["ctx.subagents / 子代理服务"]
+    Sub --> Child["本地子代理 Loop / 外部运行时"]
+    Child -->|消息与执行结算| Sub
+    Sub -->|结果通知| Loop
+    Team["可选 AgentTeam 共享任务板"] -.任务协调.-> Sub
+
+    Loop -.提交事实与读取历史.-> Log["Session 事件日志"]
+    Child -.本地子代理各有 Session.-> Log
+    Log --> Projection["模型历史 / 状态投影"]
+    Projection --> Client
+    Loop -.实时生成片段.-> Client
+```
+
+图中 Session 节点表示会话机制，不表示父子代理共用同一份日志。PTC、子代理及 AgentTeam 是否可用，取决于当前组合及该 Step 的能力准入。
+
+#### 2.2 核心模块职责与依赖关系
+
+| 模块 | 核心职责 | 主要协作对象 |
+| --- | --- | --- |
+| 启动与组合 | 应用配置层、装载插件、等待服务就绪 | Profile、Bundle、Cordis |
+| Agent 与 Agent Loop | 管理输入、Turn、Step 和执行状态 | 模型、工具、Session |
+| 提示词组装 | 生成提示词片段和当前工具定义 | 模型选择、上下文注入源、工具注册表 |
+| LLM 服务 | 适配请求、模型响应与流 | Agent Loop、具体 Provider |
+| 工具与能力服务 | 工具准入、执行调度、策略与后端调用 | 执行器、Approval、Sandbox、文件和进程能力 |
+| Session 与 Projection | 记录事实、推导历史和客户端状态 | Agent、工具、持久化后端 |
+| 子代理与 AgentTeam | 委派、成员通信，以及可选任务协调 | 父子 Session、具体子代理 Provider |
+| 客户端与应用入口 | 提交操作、接收状态和呈现输出 | 网关、控制器或 SDK 协议服务 |
+
+Seam 定义边界，插件提供实现；同一套执行机制可以由不同应用组合复用。
+
+#### 2.3 应用形态与接入方式
+
+##### 2.3.1 Web 与 Headless
+
+- **Web**：启动带服务端和浏览器客户端的交互工作台，通过网关及领域控制器处理操作、状态和实时流。
+- **Headless**：启动一次性任务执行器，不运行 Web 服务；任务及相关子代理工作完成后退出。
+
+##### 2.3.2 Desktop
+
+本版本桌面端由 Electron 承载，Desktop Host 通过共享 CLI Profile 运行器启动完整 Web 应用，窗口加载随包分发的客户端资源，并连接已认证的 Host。
+
+Desktop 默认使用系统分配的端口，可由配置覆盖；Node IPC 负责启动注入、就绪、错误和关闭等生命周期通信。桌面端与 npm CLI 可共享产品数据，但运行包、插件激活和锁文件分别管理。
+
+##### 2.3.3 SDK 与 sdk-minimal
+
+SDK 从另一个进程驱动 Harness，标准组合提供 JSON-RPC 服务。TypeScript 和 Python 客户端沿用 Profile 选择及有序 Patch 的应用装配方式。
+
+`sdk` 基于通用能力组合增加 SDK 入口；`sdk-minimal` 则独立声明最小配置树。接入方需要检查实际能力，不能假设最小组合与 Web 模式功能相同。
+
+### 3. 完整调用流程
+
+#### 3.1 启动初始化
+
+##### 3.1.1 选择 Profile 与合成配置
+
+启动器根据命令选择 Profile，按 Bundle、Profile Patch、用户目录 Patch、命令行覆盖层的顺序合成配置。这个阶段决定模型服务、工具、权限、持久化及应用入口等插件如何组合。
+
+##### 3.1.2 装载插件与初始化服务
+
+Loader 按配置装载插件，Cordis 处理服务依赖及注册生命周期。应用等待必需服务就绪后，才接收或执行任务；每条消息不需要重新启动整棵插件树。
+
+#### 3.2 Agent 请求流程图
+
+下图压缩了请求生命周期，虚线表示贯穿执行的日志与展示路径。策略拒绝、输入拒绝和用户中断在相应阶段分别处理。
+
+```mermaid
+flowchart TD
+    Input["接收用户输入"] --> Inbox["写入输入队列 / 开启 Turn"]
+    Inbox --> Select["认领输入并固定本 Step 模型选择"]
+    Select --> Assemble["组装提示词、历史与准入工具定义"]
+    Assemble --> Admit{"pre-step 是否接纳输入？"}
+    Admit -->|拒绝或首批输入为空| TurnEnd["结束 Turn"]
+    Admit -->|接纳| Prepare["开启 Step / 准备模型调用"]
+    Prepare --> Commit["提交接纳消息与请求记录 / 推导并固定模型历史"]
+    Commit --> Model["请求模型并处理流式输出"]
+    Model --> Settled["结算模型消息或本次尝试"]
+    Settled --> Calls{"是否有工具调用？"}
+    Calls -->|有| Pipeline["工具调用记录 / 策略与必要审批"]
+    Pipeline --> Permit{"是否允许执行？"}
+    Permit -->|允许| Execute["执行工具或启动子代理"]
+    Permit -->|拒绝| Denied["生成拒绝结果"]
+    Execute --> Result["记录工具结果"]
+    Denied --> Result
+    Result --> StepEnd["结束 Step"]
+    Calls -->|无| StepEnd
+    StepEnd --> More{"是否仍欠工具后续请求或有待处理输入？"}
+    More -->|是| Select
+    More -->|否| TurnEnd
+
+    Prepare -.取消或失败.-> Stop["按所在阶段结算 / 记录停止原因"]
+    Model -.取消或失败.-> Stop
+    Execute -.取消或失败.-> Stop
+    Stop --> TurnEnd
+
+    Commit -.持久事实.-> Log["Session 日志"]
+    Settled -.持久事实.-> Log
+    Result -.持久事实.-> Log
+    TurnEnd -.边界事件.-> Log
+    Log --> Views["历史与状态投影"]
+    Model -.实时片段.-> UI["客户端"]
+    Views --> UI
+```
+
+工具错误或审批拒绝通常可以形成 Tool Result，再由模型决定下一步；它们不必然结束 Turn。图中的取消或失败路径表示停止当前处理的情况，具体重试、清理和日志结算取决于发生阶段。
+
+#### 3.3 一个 Turn 如何执行
+
+##### 3.3.1 接收输入与组装上下文
+
+用户消息先进入输入队列。Loop 认领可用于下一 Step 的输入，组装指令、历史、运行时上下文和当前准入工具。单独注入上下文不会必然立即唤醒代理，需要与可唤醒输入区分。
+
+##### 3.3.2 固定模型选择与发起请求
+
+固定模型选择发生在提示词组装之前。输入通过 pre-step 接纳后，运行时准备具体模型调用，再提交已接纳消息及必要请求记录，最终从日志推导并固定本次模型历史。
+
+同一 Step 的重试沿用模型选择，不重复提示词组装和 pre-step 接纳。异步准备阶段取消时，不会把尚未提交的用户消息当作已进入模型历史。
+
+##### 3.3.3 工具路由、权限检查与执行
+
+模型输出过程中，实时片段供客户端显示；输出结算后，完整模型消息或尝试记录进入日志。
+
+若响应包含 Tool Call，所选执行器处理调用批次。管线先运行执行前扩展点和守卫，再执行工具体及执行后处理，最终记录模型可见的 Tool Result。批次可以包含多个调用，调度受并发限制和执行器语义约束。
+
+本地工具通过能力后端执行，MCP 工具通过 Client 转发到对应 Server；两者都由当前作用域的工具执行器调度。API 契约见 1.5，调用授权与执行环境约束见 1.8。
+
+##### 3.3.4 回填工具结果与继续 Step
+
+工具结果通过日志进入后续模型历史。只要仍欠工具调用之后的模型请求，或出现需要处理的新输入，就开始下一 Step。
+
+例如，读取文件后模型得到文件内容，再生成分析结论；委派子代理后，父代理可能先结束当前 Turn，等后续结果通知唤醒，再继续处理。
+
+##### 3.3.5 完成、拒绝、失败与中断
+
+| 情况 | 处理含义 |
+| --- | --- |
+| 正常完成 | 没有待履行的后续请求或输入，执行停止扩展点并关闭 Turn |
+| 输入被拒绝 | pre-step 不接纳本次输入；首次接纳前拒绝可产生零 Step 的 Turn |
+| 工具审批拒绝 | 跳过工具体，返回拒绝结果，供后续模型处理 |
+| 请求或工具失败 | 依策略重试或记录错误；失败尝试与成功模型消息分开保留 |
+| 用户中断 | 取消相关在途工作，按阶段结算并清理资源；不意味着撤销已经完成的外部操作 |
+
+#### 3.4 子代理协作流程
+
+下图表示使用本地子代理及普通父代理通知的典型协作。AgentTeam 为可选支路，外部一次性后端不包含图中的继续对话。
+
+```mermaid
+sequenceDiagram
+    participant P as 主代理 lead
+    participant S as 子代理服务
+    participant A as 子代理 A
+    participant B as 子代理 B
+    participant T as 可选共享任务板
+    opt 已启用 AgentTeam
+        P->>T: 记录任务、负责人和依赖
+    end
+    P->>S: 委派任务 A / B
+    S->>S: 校验能力、权限、深度和容量
+    S->>A: 创建会话并接纳任务 A
+    S->>B: 创建会话并接纳任务 B
+    par 独立执行
+        A->>A: 模型与工具循环
+    and
+        B->>B: 模型与工具循环
+    end
+    A-->>P: 通过子代理服务发消息或请求信息
+    P-->>A: 补充输入或调整任务
+    opt 已启用 AgentTeam
+        A->>T: 更新任务状态
+        Note over P,T: 任务变化不自动唤醒成员，需要显式消息
+    end
+    A-->>S: 执行结束并完成清理
+    S-->>P: A 的结果通知
+    B-->>S: 执行结束并完成清理
+    S-->>P: B 的结果通知
+    P->>P: 评估结果并汇总
+    opt 需要继续
+        P->>S: 向本地子代理发送后续任务
+        S->>A: 开始或恢复 Turn
+    end
+```
+
+##### 3.4.1 任务委派与子代理启动
+
+主代理明确任务、输入与预期结果，选择 Spawn、Fork 或外部后端。服务验证该后端支持的选项、委派深度和活动容量，再创建子代理执行。
+
+可以并行委派无依赖任务；有先后关系的工作，应等待前置结果或通过任务依赖组织。共享任务板本身不替代实际任务消息。
+
+##### 3.4.2 并行执行、通信与等待
+
+子代理分别推进自己的模型与工具循环。父子和同树成员可通过消息协调；发送消息返回的是接纳回执，答复会在之后到达。
+
+`wait_agent` 等待调用方自己的下一 Step 输入队列出现可用输入，消息和完成通知可结束等待；它不是等待某个指定成员状态变化。任务板变化不会结束等待。也可在只剩结果待返回时结束当前 Turn，由后续通知继续驱动。
+
+##### 3.4.3 结果汇总、后续委派与中断处理
+
+父代理收到结果后检查完成状态、实际产出与缺失内容，再决定汇总、补充任务或重新委派。子代理报告完成并不自动证明整体目标已经满足。
+
+本地子代理可接收后续任务并恢复；外部执行按单次结果处理。中断本地成员只影响其当前 Turn，停止整棵树需要显式协调后代及资源清理。AgentTeam 启用时，还应分别维护任务状态与代理活动状态。
+
+#### 3.5 运行中的事件记录与客户端展示
+
+1. Loop、工具和子代理管理过程在相应 Session 中追加消息、调用结果和生命周期事实。
+2. 模型历史投影提供下一次请求的输入；业务状态投影供 Web、Desktop 或 SDK 消费。
+3. 实时生成片段让客户端及时显示进度，持久事件则支撑恢复、回看和状态重建。
+4. 客户端展示的“生成中”“工具已完成”“子代理非活动”和“任务已完成”属于不同状态，不能互相替代。
+
+**资料来源（固定版本 v0.2.2-rc.5）：**
+
+- [官方架构总览](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/architecture.md)
+- [工具执行管线](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/tool-execution-pipeline.md)
+- [进程沙箱](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/sandbox.md)
+- [子代理机制](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/subagent.md)与[子代理服务](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/subagent/subagent/README.md)
+- [子代理通信与控制](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/subagent/tool-subagent-control/README.md)
+- [AgentTeam](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/agent-team.md)
+- [Cordis 通用 API](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/cordis-api/inherited.md)
+- [Agent 接口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/core.md)、[提示词组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/system-prompt.md)与[模型服务](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/llm-streaming.md)
+- [工具 API 与类型](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/tools.md)及[工具注册示例](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/core/tools/README.md)
+- [MCP 机制与管理 API](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/mcp.md)及[连接配置](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/mcp/mcp-client/README.md)
+- [Session API](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/session.md)、[Projection 注册与读取](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/session/session-projection/README.md)与[Approval API](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/docs/subsystems/approval.md)
+- 辅助参考：[社区架构总览](https://deepseekdocs.com/docs/learn/intro/architecture)。其中的包分组和概念解释需结合上述固定版本官方文档阅读。
 
 ## Hermes Agent
 
