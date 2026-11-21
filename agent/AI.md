@@ -3584,82 +3584,59 @@ Zstandard（Zstd）压缩用于减少会话日志占用的存储空间。
 
 ###### 1.5.2.2 文件结构与各场景数据
 
-逻辑上，Session 元数据与事件是不同数据；在 JSONL 后端，二者保存在同一个日志文件中：首条记录是元数据头，后续每条记录是一个事件。默认 `.zstd` 使用 Zstandard 压缩帧，需通过后端或兼容解压工具读取；配置 `compression: 'none'` 时是 UTF-8 文本，每行一个 JSON 对象。
+JSONL（JSON Lines）是一种逐行存放 JSON 对象的格式。在 DSH 的 JSONL 后端中，**第一行是会话头，后续每一行是一个事件**。会话头描述这是谁的会话；事件按顺序记录发生了什么。元数据与事件在逻辑上分开，但使用同一个日志文件。
 
-| 数据 | 结构与作用 |
-| --- | --- |
-| 文件头 | `type: "session"`、格式 `version`、会话 `id`、创建时间 `createdAt`、是否有继承历史的 `isSeeded`、委派深度 `delegationDepth`；还可包含 `cwd`、`agentPreset`、`parentSession` 和 `origin` 等可选字段 |
-| 事件公共字段 | `type` 表示事件类型，`seq` 是会话内从 0 开始的连续序号，`time` 是 Unix 毫秒时间戳，`data` 是该事件类型对应的数据 |
-| 事件可选字段 | `ignorable` 标记未知时可安全跳过的事件；模型历史相关事件可带 `surfaceOp` 和 `sourceEventSeqs`，用于描述历史视图变化及来源关联 |
-
-例如，下面展示不压缩文件的首行和一个 Turn 开始事件。示例按本版本结构构造，ID 和时间为虚构值；每一行是一个独立 JSON 对象：
+下面是一份会话日志的**开头片段**：一个会话开始处理用户说的“你好”。示例符合本机 DSH v0.2.2-rc.3 的数据结构，标识和时间为虚构值；实际日志还有请求配置、模型响应和结束事件等，内容由运行过程决定。
 
 ```jsonl
 {"type":"session","version":4,"id":"example-session","createdAt":1700000000000,"isSeeded":false,"delegationDepth":0}
 {"type":"turn/start","seq":0,"time":1700000001000,"data":{"turn":1}}
+{"type":"step/start","seq":1,"time":1700000001001,"data":{"turn":1,"step":1}}
+{"type":"user/message","seq":2,"time":1700000001002,"data":{"id":"msg-1","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"你好"}]},"surfaceOp":"append"}
 ```
 
-| 示例字段 | 示例值的含义 |
-| --- | --- |
-| 第一行 `type` | `"session"` 表示这是文件头，不是事件 |
-| `version` | `4` 表示 JSONL 的 v4 格式 |
-| `id` | `"example-session"` 是这个会话的标识 |
-| `createdAt` | `1700000000000` 是会话创建时间，以 Unix 毫秒表示 |
-| `isSeeded` | `false` 表示没有从其他会话继承事件前缀 |
-| `delegationDepth` | `0` 表示顶层会话，不是委派产生的子级 |
-| 第二行 `type` | `"turn/start"` 表示开始一个 Turn |
-| `seq` | `0` 表示这是该 Session 的第一个事件；文件头不占事件序号 |
-| `time` | `1700000001000` 是事件发生时的 Unix 毫秒时间戳 |
-| `data` | `{"turn":1}` 是该类型的事件数据；`turn` 的值 `1` 标识本次 Turn |
+按行阅读：
 
-`cwd`、`agentPreset`、`parentSession`、`origin` 等字段按需出现在文件头中，示例未设置时省略。以下事件示例都沿用第二行的公共字段：`type` 标识事件类型，`seq` 是会话内事件序号，`time` 是发生时间，`data` 是具体内容。每段示例独立展示一种场景，序号和时间只用于解释，不代表这些事件都存在于同一个会话。
+1. **会话头**：创建了 ID 为 `example-session` 的会话。
+2. **`turn/start`**：开始第 1 个 Turn，即一轮输入处理。
+3. **`step/start`**：开始该 Turn 的第 1 个 Step。
+4. **`user/message`**：将用户消息“你好”加入当前会话历史。它的顺序号是 `2`；会话头不占事件序号。
 
-一个事件只说明对应事实，不一定产生模型消息。`surfaceOp` 可表示追加或替换模型历史中的节点；`sourceEventSeqs` 在磁盘上可能使用无损区间编码，读取后恢复原序号。未知事件只有明确标记可忽略时才能跳过，否则读取方应拒绝恢复，避免丢失影响解释的数据。
+**第一行：会话头**
 
-**各类场景保存什么**
+| 字段 | 示例值 | 含义 |
+| --- | --- | --- |
+| `type` | `"session"` | 标识这是会话头，不是事件 |
+| `version` | `4` | 文件使用的 Session 存储格式版本 |
+| `id` | `"example-session"` | 当前会话的唯一标识 |
+| `createdAt` | `1700000000000` | 会话创建时间，使用从 Unix 纪元开始计算的毫秒数 |
+| `isSeeded` | `false` | 没有继承其他会话的事件前缀 |
+| `delegationDepth` | `0` | 顶层会话的委派深度为 0 |
 
-下表按本机 v0.2.2-rc.3 官方持久化事件目录归类。插件相关事件仅在相应功能装配并发生对应操作时出现；同一个 Session 不会必然包含全部事件。事件的 `data` 随类型不同，例如工具调用记录 `callId`、名称和参数，结果通过调用 ID 关联；具体字段以官方目录为准。
+会话头还可能包含 `cwd`（工作目录）、`agentPreset`（Agent 预设）、`parentSession`（子代理的创建方会话）和 `origin`（来源分类）；未设置时省略。
 
-| 场景 | 已声明的事件类型与作用 |
-| --- | --- |
-| 输入与消息 | `agent/inbox/spliced` 记录输入队列变化；`system/message`、`developer/message`、`user/message`、`assistant/message` 分别记录相应消息；`assistant/attempt` 记录未形成可见消息的已结算模型尝试 |
-| 执行生命周期 | `turn/start`、`turn/end` 和 `step/start`、`step/end` 记录回合与步骤边界 |
-| 模型与请求 | `agent-preset/selected`、`model/selection`、`request/header`、`request/context` 记录预设、模型选择与请求状态；`llm/retry`、`llm/retry-started` 记录重试 |
-| 工具与 PTC | `tool/call`、`tool/result` 记录根调用及结果；`tool/ptc-dispatch-start`、`tool/ptc-dispatch` 记录 PTC 内部派发 |
-| 权限与执行限制 | `approval/asked`、`approval/decided`、`approval/policy`、`permission/preset`、`sandbox/mode` 记录相应审批、权限或沙箱状态 |
-| 历史压缩 | `compaction/start`、`compaction/prune`、`compaction/summary`、`compaction/end` 记录压缩过程和结果；原始事件仍保留 |
-| 目标、清单、后台任务和计划 | `goal/change`、`todo/write`、`job/registered`、`job/settled`、`plan/mode` 分别记录目标、清单、Job 注册或结束，以及计划模式变化 |
-| 子代理、团队和工作流 | `subagent/catalog`、`subagent/descriptor`、`subagent/model-selection-policy`；`team/member`、`team/mode`、`team/task`、`team/message/queued`、`team/message/delivered`；`tool-workflow/agent-start`、`tool-workflow/agent-end`、`tool-workflow/run-start`、`tool-workflow/run-end` |
-| Session、工作目录与文件 | `session/end-seed` 标记继承或恢复边界；`session/title`、`session/title-llm-request` 记录标题及相关请求；`working-directory/change`、`workspace/changes` 记录工作目录和工作区变更 |
-| 命令、扩展钩子与定时 | `command/run`、`command/done`、`hook/invoked`、`hook/result`、`schedule/change` 记录相应操作；定时任务自身的存储不应由事件名推定 |
-| 内容、交付和反馈 | `image/offload`、`deliverables/presented`、`feedback/message-put`、`feedback/message-delete`、`feedback/record` 记录图片卸载、交付及反馈相关事实 |
-| 特定服务请求与投递 | `web/deepseek-search-llm-request`、`session-log-deepseek/delivery-accepted` 分别记录对应服务集成中的请求或投递事实 |
+**后续行：事件**
+
+| 字段 | 以上示例中的值 | 含义 |
+| --- | --- | --- |
+| `type` | `"turn/start"`、`"step/start"`、`"user/message"` | 事件类型，决定 `data` 如何解释 |
+| `seq` | `0`、`1`、`2` | 同一会话内的事件序号，从 0 连续递增 |
+| `time` | 如 `1700000001002` | 事件发生的 Unix 毫秒时间戳 |
+| `data` | 如 `{"turn":1,"step":1}` | 当前事件的数据；这里表示第 1 个 Turn 的第 1 个 Step |
+| `surfaceOp` | `"append"` | 对模型可见的消息事件，表示将消息追加到模型历史视图；不是每种事件都有此字段 |
+
+第 4 行 `data` 中，`id: "msg-1"` 是消息标识，`role: "user"` 是消息角色，`source.kind: "user"` 表示来源是用户；`content` 是内容块数组，其中 `type: "text"` 表示文本块，`text: "你好"` 是文本内容。`data` 的结构随事件类型变化，不能把消息字段套用于所有事件。
+
+除了 `append`，`surfaceOp` 也可描述对模型历史视图的替换；部分消息事件可用 `sourceEventSeqs` 关联来源事件。事件不一定进入模型历史，详见 1.5.4。未知事件仅在明确标记 `ignorable` 时可跳过，否则读取方需要拒绝恢复。
+
+默认 `.zstd` 文件须由后端或兼容工具解压后才能按行查看；`compression: 'none'` 才能直接作为 UTF-8 文本读取。
 
 **各场景的数据示例**
 
-下面每个示例都是独立的 JSONL 事件行，按本机 v0.2.2-rc.3 的事件类型构造，内容和标识均为虚构值。它们分别展示一个场景，不构成同一会话的完整事件序列；插件事件仅在相应功能装配并发生操作时出现。所有示例中的 `seq: 1` 都表示该事件在各自会话中的序号，`time: 1700000000000` 都表示一个示例 Unix 毫秒时间戳；实际序号在同一会话中连续增长。`type` 的值是事件类型，`data` 的对象保存该类型的数据。
+前两类场景使用上面的日志片段；从第 3 类开始，每个代码块都是独立的 JSONL 事件行，按本机 v0.2.2-rc.3 的事件类型构造，内容和标识均为虚构值。它们不构成同一会话的完整事件序列；插件事件仅在相应功能装配并发生操作时出现。第 3 类起各行的 `seq: 1` 是所在会话中的示例序号，`time: 1700000000000` 是示例 Unix 毫秒时间戳；实际序号在同一会话中连续增长。
 
-1. **输入与消息**：记录一条用户消息。
-
-   ```json
-   {"type":"user/message","seq":1,"time":1700000000000,"data":{"id":"msg-1","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"你好"}]},"surfaceOp":"append"}
-   ```
-
-   | 字段 | 示例值的作用 |
-   | --- | --- |
-   | `type` | `"user/message"`：事件是一条用户角色消息 |
-   | `data.id`、`data.role` | `"msg-1"` 是消息标识；`"user"` 是消息角色 |
-   | `data.source.kind` | `"user"` 表示消息来自用户 |
-   | `data.content` | 数组包含一个内容块；块中 `type: "text"` 表示文本，`text: "你好"` 是具体内容 |
-   | `surfaceOp` | `"append"` 表示向可派生的模型消息视图追加该消息 |
-
-2. **执行生命周期**：记录一个 Turn 开始。
-
-   ```json
-   {"type":"turn/start","seq":1,"time":1700000000000,"data":{"turn":1}}
-   ```
-
-   `type: "turn/start"` 标识 Turn 开始；`data.turn: 1` 是本次 Turn 的编号。
+1. **输入与消息**：上方日志片段中的 `user/message` 记录了用户说的“你好”；消息字段和 `surfaceOp` 已在片段后说明。
+2. **执行生命周期**：上方片段中的 `turn/start` 和 `step/start` 分别记录了一个 Turn 和其中一个 Step 的开始。
 
 3. **模型与请求**：记录请求配置快照。
 
@@ -3757,6 +3734,25 @@ Zstandard（Zstd）压缩用于减少会话日志占用的存储空间。
     `type: "session-log-deepseek/delivery-accepted"` 表示对应服务接受了一次投递；`data.sessionId: "session-1"` 标识被投递的会话；`data.throughSeq: 0` 是该次投递覆盖的最后一个事件序号。此记录适用于装配对应集成的场景。
 
 以上只展示每类的代表性结构。一个事件是否进入模型历史取决于事件类型及其 surface 信息；同类其他事件的 `data` 结构可能不同，应查询下方目录，不能照搬示例字段。
+
+**各类场景保存什么**
+
+下表按本机 v0.2.2-rc.3 官方持久化事件目录归类。插件相关事件仅在相应功能装配并发生对应操作时出现；同一个 Session 不会必然包含全部事件。事件的 `data` 随类型不同，例如工具调用记录 `callId`、名称和参数，结果通过调用 ID 关联；具体字段以官方目录为准。
+
+| 场景 | 已声明的事件类型与作用 |
+| --- | --- |
+| 输入与消息 | `agent/inbox/spliced` 记录输入队列变化；`system/message`、`developer/message`、`user/message`、`assistant/message` 分别记录相应消息；`assistant/attempt` 记录未形成可见消息的已结算模型尝试 |
+| 执行生命周期 | `turn/start`、`turn/end` 和 `step/start`、`step/end` 记录回合与步骤边界 |
+| 模型与请求 | `agent-preset/selected`、`model/selection`、`request/header`、`request/context` 记录预设、模型选择与请求状态；`llm/retry`、`llm/retry-started` 记录重试 |
+| 工具与 PTC | `tool/call`、`tool/result` 记录根调用及结果；`tool/ptc-dispatch-start`、`tool/ptc-dispatch` 记录 PTC 内部派发 |
+| 权限与执行限制 | `approval/asked`、`approval/decided`、`approval/policy`、`permission/preset`、`sandbox/mode` 记录相应审批、权限或沙箱状态 |
+| 历史压缩 | `compaction/start`、`compaction/prune`、`compaction/summary`、`compaction/end` 记录压缩过程和结果；原始事件仍保留 |
+| 目标、清单、后台任务和计划 | `goal/change`、`todo/write`、`job/registered`、`job/settled`、`plan/mode` 分别记录目标、清单、Job 注册或结束，以及计划模式变化 |
+| 子代理、团队和工作流 | `subagent/catalog`、`subagent/descriptor`、`subagent/model-selection-policy`；`team/member`、`team/mode`、`team/task`、`team/message/queued`、`team/message/delivered`；`tool-workflow/agent-start`、`tool-workflow/agent-end`、`tool-workflow/run-start`、`tool-workflow/run-end` |
+| Session、工作目录与文件 | `session/end-seed` 标记继承或恢复边界；`session/title`、`session/title-llm-request` 记录标题及相关请求；`working-directory/change`、`workspace/changes` 记录工作目录和工作区变更 |
+| 命令、扩展钩子与定时 | `command/run`、`command/done`、`hook/invoked`、`hook/result`、`schedule/change` 记录相应操作；定时任务自身的存储不应由事件名推定 |
+| 内容、交付和反馈 | `image/offload`、`deliverables/presented`、`feedback/message-put`、`feedback/message-delete`、`feedback/record` 记录图片卸载、交付及反馈相关事实 |
+| 特定服务请求与投递 | `web/deepseek-search-llm-request`、`session-log-deepseek/delivery-accepted` 分别记录对应服务集成中的请求或投递事实 |
 
 完整事件字段及所有声明见 [v0.2.2-rc.3 持久化事件目录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/persistence-catalog.md)；实验性记录另见 [实验性持久化目录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/experimental-persistence-catalog.md)。第三方插件还可以扩展记录，不能把本表视为所有外部插件的穷尽清单。
 
