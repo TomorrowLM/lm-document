@@ -3105,7 +3105,7 @@ print(result)
 | `input` | 是 | 包含 JSON 内容的字符串或模型消息；解析后得到 Python 数据，常见为 `dict` 或 `list`。 |
 | `config` | 否 | 可选的 `RunnableConfig` 运行配置，可用于传入标签、元数据或回调等跟踪信息。 |
 
-**`get_format_instructions()`** 不接收参数，返回供模型参考的 JSON 格式说明；实例创建时传入 `pydantic_object` 后，说明中会包含对应的字段结构。
+**`get_format_instructions()`** 不接收参数，返回供模型参考的 JSON 格式说明；
 
 ```python
 from langchain_core.messages import AIMessage
@@ -3126,58 +3126,44 @@ print(result)
 
 ##### 使用 Pydantic 模型定制 JSON 输出
 
-用 Pydantic 模型去定制模型的 JSON 输出。下面沿用前面定义的 `ArticleSummary`：
+将 Pydantic 模型传入 `JsonOutputParser`，可生成 JSON 格式说明并放入提示模板；再用 `prompt | model | parser` 串联模型调用和解析。
 
-1. 将 `ArticleSummary` 传给 `JsonOutputParser`，生成包含字段结构和说明的格式指令。
-2. 将格式指令放入提示模板，作为模型生成 JSON 的参考。
-3. `JsonOutputParser` 会把返回的 JSON 解析成普通 Python 数据（本例为 `dict`），不会创建 `ArticleSummary` 实例或校验字段；提示指令也不能保证模型一定遵守格式。
+解析结果是普通 Python 数据，不会自动创建 Pydantic 实例或校验字段。格式说明也不能保证模型遵守要求；需要时应另行校验。
 
-下面用预构造的 `AIMessage` 演示，不会调用模型：
+下面用 `Joke` 定义笑话的问题和答案。
 
 ```python
-from langchain_core.messages import AIMessage
+import os
+
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
 
-parser = JsonOutputParser(pydantic_object=ArticleSummary)
+
+class Joke(BaseModel):
+    setup: str = Field(description="笑话的问题")
+    punchline: str = Field(description="笑话的答案")
+
+
+model = ChatOpenAI(
+    model="deepseek-chat",
+    base_url=os.environ["DEEPSEEK_BASE_URL"],
+    api_key=os.environ["DEEPSEEK_API_KEY"],
+)
+parser = JsonOutputParser(pydantic_object=Joke)
 prompt = PromptTemplate(
-    template="根据要求回答问题。\n{format_instructions}\n{query}",
+    template="回答用户的查询。\n{format_instructions}\n{query}\n",
     input_variables=["query"],
     partial_variables={"format_instructions": parser.get_format_instructions()},
 )
 
-prompt_value = prompt.invoke({"query": "用一段话介绍 Agent。"})
-print(prompt_value.to_string())  # 可检查提示词中的 JSON 格式要求
-
-model_response = AIMessage(
-    content='{"title": "Agent 入门", "summary": "Agent 可结合模型与工具完成任务。"}'
-)
-result = parser.invoke(model_response)
+chain = prompt | model | parser  # 格式化提示、调用模型、解析 JSON
+result = chain.invoke({"query": "告诉我一个笑话。"})
 print(result)
-# {'title': 'Agent 入门', 'summary': 'Agent 可结合模型与工具完成任务。'}
 ```
 
-`parser.get_format_instructions()` 返回的内容较长，其中与 `ArticleSummary` 对应的 Schema 片段如下：
-
-```json
-{
-    "properties": {
-        "title": {
-            "description": "文章标题",
-            "title": "Title",
-            "type": "string"
-        },
-        "summary": {
-            "description": "文章摘要",
-            "title": "Summary",
-            "type": "string"
-        }
-    },
-    "required": ["title", "summary"]
-}
-```
-
-- `properties` 描述字段及类型；`required` 列出必填字段。
+模型返回有效 JSON 时，结果通常是包含 `setup` 和 `punchline` 的字典，具体内容由模型生成；若输出无法解析，解析器会报错。格式说明中的 JSON Schema 使用 `properties` 描述字段、使用 `required` 列出必填字段，但这些要求仍需在解析后校验。参考：[LangChain DeepSeek 集成文档](https://docs.langchain.com/oss/python/integrations/chat/deepseek)；本示例中 `ChatOpenAI` 的 DeepSeek 兼容配置及依赖版本尚待核实。
 
 #### XMLOutputParser
 
@@ -3495,13 +3481,31 @@ print(chain.invoke(" hello "))
 
 包装后可使用 `invoke(input)` 调用一次、`batch(inputs)` 处理多份输入，或使用 `ainvoke(input)` 异步调用。函数接收的输入和返回值由自身逻辑决定，组合时应与相邻组件匹配。若函数返回另一个 Runnable，执行时会继续调用或流式运行该 Runnable。
 
+**方式一：包装普通函数。** 使用 `def` 定义有名称的函数，适合需要多步处理或复用的逻辑：
+
 ```python
 from langchain_core.runnables import RunnableLambda
 
 def normalize_text(text):
     return text.strip().lower()
 
-chain = RunnableLambda(normalize_text) | RunnableLambda(
+normalizer = RunnableLambda(normalize_text)
+print(normalizer.invoke(" HELLO "))  # hello
+```
+
+**方式二：包装 `lambda`。** `lambda` 是用于编写单个表达式的匿名函数，适合简短、无需单独命名的逻辑：
+
+```python
+from langchain_core.runnables import RunnableLambda
+
+normalizer = RunnableLambda(lambda text: text.strip().lower())
+print(normalizer.invoke(" HELLO "))  # hello
+```
+
+两种方式都将输入字符串转换为去除首尾空白的小写字符串。Runnable 还可以用 `|` 组合：
+
+```python
+chain = normalizer | RunnableLambda(
     lambda text: {"text": text, "length": len(text)}
 )
 
@@ -3509,7 +3513,7 @@ print(chain.invoke(" HELLO "))
 # {'text': 'hello', 'length': 5}
 ```
 
-两个函数依次处理输入：先清洗文本，再生成包含文本和长度的字典。`RunnableLambda` 主要适合不需要逐块处理输入和输出的逻辑；它可能等待上游输出收集完成后再执行。如果需要逐块处理输入并产出输出，可参考 [RunnableGenerator API](https://reference.langchain.com/python/langchain-core/runnables/base/RunnableGenerator)。
+这里先清洗文本，再生成包含文本和长度的字典。`RunnableLambda` 主要适合不需要逐块处理输入和输出的逻辑；它可能等待上游输出收集完成后再执行。如果需要逐块处理输入并产出输出，可参考 [RunnableGenerator API](https://reference.langchain.com/python/langchain-core/runnables/base/RunnableGenerator)。
 
 以上参数和行为参考 [RunnableLambda 官方 API](https://reference.langchain.com/python/langchain-core/runnables/base/RunnableLambda)（`langchain-core 1.8.4`）。
 
@@ -3768,11 +3772,20 @@ flowchart TD
     G --> B
 ```
 
-`tool_calls` 是模型提出的工具请求，`ToolMessage` 是应用返回的工具结果。第 5 节展示手动调用，后续 [agent](#agent) 章节介绍自动循环。
+`tool_calls` 是模型提出的工具请求，`ToolMessage` 是应用返回的工具结果。第 4 节展示手动调用，后续 [agent](#agent) 章节介绍自动循环。
 
-### 2. 创建自定义工具
+### 2. 创建与配置自定义工具
 
-#### 2.1 使用 `@tool` 装饰函数
+#### 2.1 创建方式概览与选择
+
+| 方式 | 适合的场景 |
+| --- | --- |
+| `@tool` | 在函数上直接声明工具，也支持自定义名称和参数结构 |
+| `StructuredTool.from_function()` | 包装已有函数，或为同一个工具分别提供同步函数和异步函数 |
+
+两种方式都支持配置参数、直接调用或提供给模型。
+
+#### 2.2 使用 `@tool` 创建工具
 
 先定义一个计算乘法的函数，再用 `@tool` 把它包装成 LangChain 工具。包装后除了计算功能，还可以查看名称、描述和输入参数：
 
@@ -3796,9 +3809,15 @@ print(multiply.invoke({"a": 2, "b": 3}))  # 6
 
 `multiply` 已经是工具对象。`invoke()` 将字典中的参数传给函数，返回 `6`；这里由代码直接调用，没有调用模型。`args` 的输出格式可能因版本而异。
 
-#### 2.2 使用 `StructuredTool` 包装已有函数
+#### 2.3 使用 `StructuredTool` 包装已有函数
 
-对于已经定义好的函数，可以使用 `StructuredTool.from_function()` 将其包装为工具，并指定工具名称和描述：
+`StructuredTool.from_function()` 将已有函数包装为工具对象，适合将已有函数接入工具调用。常用参数包括：
+
+- `func`：要包装的函数。
+- `name`：工具名称。
+- `description`：工具功能说明，可帮助模型理解何时使用该工具。
+
+调用工具的 `invoke()` 时，传入以函数参数名为键的字典；工具执行函数并返回结果。下面的示例直接调用工具，没有调用模型：
 
 ```python
 from langchain_core.tools import StructuredTool
@@ -3815,26 +3834,17 @@ calculator = StructuredTool.from_function(
 print(calculator.invoke({"a": 2, "b": 3}))  # 6
 ```
 
-`func` 指向已有函数，`name` 和 `description` 指定工具名称与说明；输出为 `6`。
+示例传入 `a=2`、`b=3`，返回 `6`。
 
-#### 2.3 两种创建方式如何选择
+API 参考：[LangChain 官方 `StructuredTool` 文档](https://reference.langchain.com/python/langchain-core/tools/structured/StructuredTool)。具体版本及参数兼容性待核实。
 
-| 方式 | 适合的场景 |
-| --- | --- |
-| `@tool` | 新定义一个工具，喜欢在函数上直接声明；也支持自定义名称和参数结构 |
-| `StructuredTool.from_function()` | 包装已有函数，或为同一个工具分别提供同步函数和异步函数 |
-
-两种方式都支持配置参数、直接调用或提供给模型。
-
-### 3. 配置工具
-
-#### 3.1 自定义工具名称和描述
+#### 2.4 定义工具名称与描述
 
 同一组工具的名称应保持唯一，描述应说明用途。`@tool("名称", ...)` 可以覆盖默认名称；`StructuredTool.from_function()` 可以传入 `name` 和 `description`。
 
-#### 3.2 使用 `args_schema` 定义参数
+#### 2.5 定义和校验输入参数
 
-需要补充参数说明或限制取值时，可以用 Pydantic 模型定义 `args_schema`：
+需要补充参数说明或限制取值时，可以使用 `args_schema` 指定 Pydantic 模型作为工具的输入结构。模型中的 `Field` 用于设置字段说明和约束，例如 `ge=0` 要求数值不小于 0；字段名应与函数参数匹配。`StructuredTool.from_function()` 同样支持 `args_schema`。
 
 ```python
 from langchain_core.tools import tool
@@ -3853,10 +3863,6 @@ print(multiply.args)  # 查看包含字段描述的输入结构
 print(multiply.invoke({"a": 2, "b": 3}))  # 6
 ```
 
-`Field` 设置字段说明和约束，`ge=0` 表示不小于 0；字段名应与函数参数匹配。`StructuredTool.from_function()` 同样支持 `args_schema`。
-
-#### 3.3 参数描述与参数校验
-
 `Field(description="...")` 是对字段用途的说明，有助于模型填写参数；它本身不会执行文字中描述的业务规则。上一例中的 `ge=0` 才是真正的校验规则。接在上一段代码后尝试：
 
 ```python
@@ -3870,17 +3876,17 @@ except ValidationError as error:
 
 输出包含 `greater_than_equal`：`a=-1` 不满足 `ge=0`，工具在执行函数前报告校验错误。
 
-#### 3.4 `return_direct`：工具结果直接返回
+#### 2.6 控制工具结果返回
 
 设置 `return_direct=True` 后，支持此选项的 Agent 会在工具执行后结束循环并直接返回结果；默认情况下，结果通常会交回模型继续处理。直接使用 `tool.invoke()` 时，调用者本来就直接得到工具结果。
 
-### 4. 同步与异步工具
+### 3. 同步与异步工具
 
-#### 4.1 `invoke()` 与 `ainvoke()`
+#### 3.1 同步与异步调用
 
 `invoke()` 是同步调用；`ainvoke()` 是异步调用，需要在异步函数中 `await`。异步适合网络请求等 I/O 等待，不会自动加速同步计算。下一例用延时模拟等待。
 
-#### 4.2 使用 `@tool` 定义异步工具
+#### 3.2 使用 `@tool` 定义异步工具
 
 ```python
 import asyncio
@@ -3900,7 +3906,9 @@ asyncio.run(main())
 
 输出为 `6`。普通脚本使用 `asyncio.run()` 启动；已有事件循环中应直接 `await`，不要再次调用 `asyncio.run()`。
 
-#### 4.3 使用 `StructuredTool` 提供同步和异步实现
+#### 3.3 为 `StructuredTool` 提供同步和异步实现
+
+`StructuredTool.from_function()` 的 `func` 指定同步函数，`coroutine` 指定异步函数，适合为同一个工具提供两种调用方式。两种实现应具有一致的业务语义：
 
 ```python
 import asyncio
@@ -3924,15 +3932,15 @@ async def main():
 asyncio.run(main())
 ```
 
-`func` 指定同步实现，`coroutine` 指定异步实现；输出依次为 `6` 和 `10`。两种实现应具有一致的业务语义。
+输出依次为 `6` 和 `10`。
 
-### 5. 将工具提供给模型
+### 4. 将工具提供给模型
 
-#### 5.1 使用 `bind_tools()` 绑定工具
+#### 4.1 使用 `bind_tools()` 绑定工具
 
 `model.bind_tools([...])` 将工具的名称、描述和参数结构提供给聊天模型。模型可以据此提出调用请求，但绑定本身不会执行工具。
 
-#### 5.2 读取模型返回的 `tool_calls`
+#### 4.2 读取模型返回的 `tool_calls`
 
 模型响应的 `tool_calls` 包含工具名、参数和调用 ID；列表为空时，模型没有在本次响应中请求工具。请求不等于工具执行结果，模型也不一定每次都会选择调用工具。
 
@@ -3944,7 +3952,7 @@ asyncio.run(main())
 
 这表示请求查询北京天气，尚未得到天气结果。
 
-#### 5.3 按工具名称执行并回传 `ToolMessage`
+#### 4.3 按工具名称执行并回传 `ToolMessage`
 
 下面使用固定天气数据演示一轮手动调用；天气来自函数里的示例文本，不是真实天气。
 
@@ -3993,52 +4001,89 @@ else:
 
 应用通过 `tools_by_name` 按名称找到工具，使用 `call["args"]` 执行，再通过 `ToolMessage` 返回结果。`tool_call_id` 将结果与原请求关联；原问题、请求和结果一起交回模型生成回答。
 
-#### 5.4 手动调用与 Agent 自动循环的区别
+#### 4.4 手动调用与 Agent 自动循环的区别
 
 上例只处理一轮工具请求；第二次响应仍可能请求工具，但示例不会继续执行。多轮调度可以自行实现，也可以交给后文的 Agent。
 
-### 6. 处理工具错误
+### 5. 处理工具错误
 
-#### 6.1 `ToolException` 与 `handle_tool_error`
+#### 5.1 工具业务错误
 
-对于可预期的工具业务错误，可以抛出 `ToolException`，并配置 `handle_tool_error` 将错误转换为工具输出：
+`ToolException` 用于表示工具执行时可预期的业务错误，例如查询不到城市。创建工具时，可通过 `handle_tool_error` 指定如何处理这类异常：
+
+| `handle_tool_error` | 处理方式 |
+| --- | --- |
+| 未设置或 `False` | 继续抛出 `ToolException` |
+| `True` | 将异常消息作为工具输出 |
+| 字符串 | 将指定文本作为工具输出 |
+| 函数 | 接收 `ToolException`，返回自定义工具输出 |
+
+下面使用同一个模拟查询函数，比较三种处理方式；示例不调用天气服务：
 
 ```python
 from langchain_core.tools import StructuredTool, ToolException
 
+
 def get_weather(city: str) -> str:
     """查询指定城市的示例天气。"""
-    raise ToolException(f"没有找到城市：{city}")
+    raise ToolException(f"错误：没有名为{city}的城市。")
 
-weather_tool = StructuredTool.from_function(
-    func=get_weather,
-    handle_tool_error=True,
-)
-print(weather_tool.invoke({"city": "foobar"}))  # 没有找到城市：foobar
+
+def handle_error(error: ToolException) -> str:
+    return f"工具执行期间发生以下错误：{error}"
+
+
+# 分别返回异常消息、固定文本和处理函数生成的文本。
+for handler in (True, "没找到这个城市", handle_error):
+    weather_tool = StructuredTool.from_function(
+        func=get_weather,
+        handle_tool_error=handler,
+    )
+    print(weather_tool.invoke({"city": "foobar"}))
 ```
 
-示例始终抛出异常；`handle_tool_error=True` 将异常消息作为输出。实际工具应只在对应业务错误发生时抛出。
+输出：
 
-#### 6.2 返回异常信息、自定义文本或处理函数
+```text
+错误：没有名为foobar的城市。
+没找到这个城市
+工具执行期间发生以下错误：错误：没有名为foobar的城市。
+```
 
-| `handle_tool_error` | 处理方式 |
-| --- | --- |
-| 未设置或 `False` | 重新抛出 `ToolException` |
-| `True` | 将异常消息作为工具输出 |
-| 字符串 | 将该字符串作为工具输出 |
-| 函数 | 接收 `ToolException`，返回自定义工具输出 |
+示例为了展示错误处理而始终抛出异常；实际工具应只在对应业务错误发生时抛出。错误输出应避免泄露密钥、堆栈或内部服务细节。
 
-错误输出应避免泄露密钥、堆栈或内部服务细节。
+#### 5.2 输入校验错误
 
-#### 6.3 参数校验错误和其他运行异常
+`handle_validation_error` 用于处理工具输入的 Pydantic 校验错误，与处理 `ToolException` 的 `handle_tool_error` 分别配置。未启用时，校验异常会继续抛出；可设置为 `True` 使用默认提示、设置字符串返回固定提示，或传入接收校验异常并返回提示的函数。
 
-`handle_tool_error` 针对 `ToolException`，不会自动处理任意异常或输入校验错误。参数校验失败可以根据工具的 `handle_validation_error` 配置处理；网络异常、超时等其他错误则需要在工具或上层调用逻辑中有针对性地处理。不要把所有异常都伪装成成功结果。
+#### 5.3 其他运行异常
 
-### 7. 使用第三方工具与工具包
+`handle_tool_error` 不会自动处理任意异常。网络异常、超时等需要在工具或上层调用逻辑中按具体情况处理；不要把所有异常都当作成功结果。
 
-#### 7.1 使用 Wikipedia 工具
+参考：[handle_tool_error](https://reference.langchain.com/python/langchain-core/tools/base/BaseTool/handle_tool_error)、[handle_validation_error](https://reference.langchain.com/python/langchain-core/tools/base/BaseTool/handle_validation_error)。示例行为按 `langchain-core 1.6.1` 的实现核对，其他版本请查阅对应 API 文档。
 
-集成工具将已有服务包装为工具对象。下面使用 Wikipedia 查询，不需要先创建 Agent：
+### 6. 使用第三方工具与工具包
+
+#### 6.1 集成工具与工具包
+
+集成工具和工具包的区别，可以理解为**一个工具**和**一组工具**：
+
+| 类型 | 作用 | 示例 |
+| --- | --- | --- |
+| 集成工具 | 提供一项具体能力 | `TavilySearch` 用于搜索网页 |
+| 工具包 | 提供完成一类任务所需的多个工具 | `SQLDatabaseToolkit` 提供一组数据库工具 |
+
+例如，回答“LangChain 是什么”时，可以调用 `TavilySearch` 搜索网页；回答“销售额最高的商品是什么”时，Agent 可能需要先查看有哪些数据库表、再了解表结构，最后执行查询。SQL 工具包可以提供分别完成这些操作的工具，Agent 按需选择调用。
+
+工具包用于组织和提供工具；例如 `get_tools()` 返回工具列表，创建工具包本身不会自动查询数据库。工具和工具包中的工具都可以由代码直接调用，或提供给模型及 Agent 使用。
+
+#### 6.2 使用集成工具
+
+集成工具通常需要安装对应的集成包，并按服务要求配置网络或凭据。工具的输入字段取决于具体实现；配置名称、描述或 `args_schema` 时，也应保证参数与底层工具兼容。
+
+##### Wikipedia 查询
+
+`WikipediaAPIWrapper` 负责查询 Wikipedia，`WikipediaQueryRun` 将查询能力包装为工具，适合获取百科条目内容。`top_k_results` 限制结果数量，`doc_content_chars_max` 限制内容长度；工具通过 `invoke()` 接收包含 `query` 的字典。下面的示例不需要先创建 Agent：
 
 准备：运行 `python -m pip install langchain-community wikipedia` 安装依赖，并确认能够访问 Wikipedia。此示例需要网络，不需要模型或模型 API 密钥。
 
@@ -4052,15 +4097,11 @@ print(wiki_tool.invoke({"query": "LangChain"}))
 print(wiki_tool.name, wiki_tool.description, wiki_tool.args)
 ```
 
-`WikipediaAPIWrapper` 负责查询，`WikipediaQueryRun` 将其包装为工具；`top_k_results` 限制结果数量，`doc_content_chars_max` 限制内容长度。结果会随百科内容和版本变化。
+查询结果会随百科内容和版本变化。
 
-#### 7.2 配置第三方工具的名称和参数
+##### Tavily 搜索
 
-集成工具也可以自定义 `name`、`description` 和 `args_schema`。参数字段需要与底层工具兼容，例如 Wikipedia 工具使用 `query`。
-
-#### 7.3 使用 Tavily 搜索工具
-
-`TavilySearch` 接收查询并返回搜索结果。
+`TavilySearch` 适合搜索网页：通过 `invoke()` 传入包含 `query` 的字典，返回搜索结果；`max_results` 用于限制结果数量。
 
 准备：安装 `langchain-tavily` 并配置 `TAVILY_API_KEY`。运行需要联网，可能产生服务费用。
 
@@ -4072,11 +4113,13 @@ result = search_tool.invoke({"query": "LangChain 是什么"})
 print(result)
 ```
 
-`max_results=1` 限制结果数量；返回内容取决于服务和版本。旧版 `TavilySearchResults` 已弃用。
+返回内容取决于服务和版本。旧版 `TavilySearchResults` 已弃用。参考：[Tavily 搜索集成指南](https://docs.langchain.com/oss/python/integrations/tools/tavily_search)；具体适用版本待核实。
 
-#### 7.4 工具包：`SQLDatabaseToolkit` 与 `get_tools()`
+#### 6.3 使用工具包
 
-工具包是一组围绕某项任务协作的工具。例如 SQL 工具包可以提供列出表、查看表结构、查询和检查 SQL 等工具，具体列表以安装版本返回值为准：
+##### SQL 数据库工具包
+
+`SQLDatabaseToolkit` 适合围绕数据库任务获取一组工具，例如列出表、查看表结构、查询和检查 SQL。构造时传入数据库对象 `db` 和模型 `llm`；`get_tools()` 返回工具列表，不会自动让模型查询数据库。具体工具列表以安装版本返回值为准：
 
 准备：安装 `langchain-community` 和 `langchain-openai`，配置模型 API 密钥，并将数据库路径替换为实际路径。
 
@@ -4094,19 +4137,19 @@ for item in sql_tools:
     print(item.name, item.description)
 ```
 
-`get_tools()` 返回工具列表，不会自动让模型查询数据库。SQLite 相对路径以运行时的工作目录为准；路径错误时可能创建空数据库。数据库应使用受限权限，按需配置只读访问。
+SQLite 相对路径以运行时的工作目录为准；路径错误时可能创建空数据库。数据库应使用受限权限，按需配置只读访问。Wikipedia 和 SQL 工具包示例的适用版本及兼容性待核实。
 
-### 8. 工具设计与安全
+### 7. 工具设计与安全
 
-#### 8.1 编写清晰的名称、描述和参数
+#### 7.1 编写清晰的名称、描述和参数
 
 工具职责尽量明确；用名称和描述说明它做什么、何时使用，并为参数补充有意义的字段描述。需要强制满足的规则应写成实际校验，而不只写在描述里。
 
-#### 8.2 校验工具调用与控制操作权限
+#### 7.2 校验工具调用与控制操作权限
 
 模型生成的工具名和参数应视为待校验输入。执行前检查工具是否允许使用、参数是否合法、当前用户是否有权限以及操作范围是否正确。模型提出调用不代表用户已授权；写入、删除等有副作用的操作应根据风险执行权限检查或人工确认。
 
-#### 8.3 处理第三方内容和有副作用的操作
+#### 7.3 处理第三方内容和有副作用的操作
 
 第三方搜索结果和数据库内容属于外部数据，不应默认视为可信事实或可直接执行的指令。工具输出和日志也应避免暴露敏感数据；错误处理需要保留足够的排查信息，但不要把内部细节直接返回给模型或用户。
 
