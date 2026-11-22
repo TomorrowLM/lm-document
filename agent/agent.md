@@ -3483,7 +3483,17 @@ print(chain.invoke(" hello "))
 
 #### 使用 RunnableLambda 包装函数
 
-`RunnableLambda` 将普通函数包装成 Runnable，适合字段提取、格式转换和轻量清洗，不必为每个简单函数编写 Runnable 子类。
+`RunnableLambda` 将 Python 可调用对象（如普通函数或 `lambda`）包装成 Runnable，使其可以单独调用，也可以接入 LCEL 链。它适合字段提取、格式转换和轻量清洗，不必为简单逻辑编写 Runnable 子类。
+
+常用构造形式为 `RunnableLambda(func, afunc=None, name=None)`：
+
+| 参数 | 作用 |
+| --- | --- |
+| `func` | 必填，接收输入并返回结果的同步或异步可调用对象。 |
+| `afunc` | 可选，提供单独的异步实现，供异步调用使用。 |
+| `name` | 可选，设置 Runnable 名称，便于识别和追踪。 |
+
+包装后可使用 `invoke(input)` 调用一次、`batch(inputs)` 处理多份输入，或使用 `ainvoke(input)` 异步调用。函数接收的输入和返回值由自身逻辑决定，组合时应与相邻组件匹配。若函数返回另一个 Runnable，执行时会继续调用或流式运行该 Runnable。
 
 ```python
 from langchain_core.runnables import RunnableLambda
@@ -3499,7 +3509,9 @@ print(chain.invoke(" HELLO "))
 # {'text': 'hello', 'length': 5}
 ```
 
-两个函数依次处理输入：先清洗文本，再生成包含文本和长度的字典。普通 `RunnableLambda` 不会自动将函数结果拆成增量流；在流式链路中，需要注意转换节点是否会等待上游输出收集完成。
+两个函数依次处理输入：先清洗文本，再生成包含文本和长度的字典。`RunnableLambda` 主要适合不需要逐块处理输入和输出的逻辑；它可能等待上游输出收集完成后再执行。如果需要逐块处理输入并产出输出，可参考 [RunnableGenerator API](https://reference.langchain.com/python/langchain-core/runnables/base/RunnableGenerator)。
+
+以上参数和行为参考 [RunnableLambda 官方 API](https://reference.langchain.com/python/langchain-core/runnables/base/RunnableLambda)（`langchain-core 1.8.4`）。
 
 #### 继承 Runnable 创建类
 
@@ -3784,9 +3796,9 @@ print(multiply.invoke({"a": 2, "b": 3}))  # 6
 
 `multiply` 已经是工具对象。`invoke()` 将字典中的参数传给函数，返回 `6`；这里由代码直接调用，没有调用模型。`args` 的输出格式可能因版本而异。
 
-#### 2.2 使用 `StructuredTool` 包装函数
+#### 2.2 使用 `StructuredTool` 包装已有函数
 
-`StructuredTool.from_function()` 可以将已有的普通函数包装为工具：
+对于已经定义好的函数，可以使用 `StructuredTool.from_function()` 将其包装为工具，并指定工具名称和描述：
 
 ```python
 from langchain_core.tools import StructuredTool
