@@ -1352,414 +1352,269 @@ Python 的内存管理由引用计数和循环垃圾回收协同完成：引用�
 
 ## 异步与事件循环
 
-### 1. 为什么需要异步？
+本节使用 Python 3.11 的 `asyncio` 介绍异步编程，并以 SSE 说明流式数据如何发送给客户端。
 
-如果你写过 JavaScript，其实已经天天在用异步：`fetch()` 请求接口时不会卡住页面，`setTimeout` 到点才执行回调。Python 的异步解决的是同样的问题——I/O 等待期间不让程序干等，只是语法和运行方式不同。
+### 1. 为什么需要异步
 
-#### 同步与异步
+程序访问网络、等待数据库或读取文件时，可能需要等待输入输出（I/O）完成。同步代码通常在当前操作返回后才继续；异步代码在等待支持异步的操作时，可以暂停当前任务，让其他已安排的任务运行。
 
-同步执行时，当前任务必须完成后，程序才能继续执行后面的任务。异步执行时，任务遇到网络请求、文件读写等 I/O 等待，可以暂时让出执行权，由事件循环执行其他任务。
+例如，两个网络请求各需等待一段时间：顺序执行时，第二个请求通常要等第一个结束才开始；并发执行时，一个请求等待响应的期间，另一个请求可以继续进行。并发指多个任务在一段时间内交替推进，不一定在同一时刻同时运行。
 
-异步主要解决的是 I/O 等待期间的并发问题，并不等于创建多个线程。
+异步尤其适合有大量 I/O 等待的场景。它不等于多线程，也不会自动加快 CPU 密集型计算；普通阻塞文件操作或同步网络调用也不会因为写在异步函数中就变成异步操作。
 
-### 2. 异步核心概念地图
+### 2. 协程与 `async` / `await`
 
-在深入细节之前，先用一张表建立全局认知。异步体系有 5 个核心角色，后续章节会逐一展开：
+#### 协程函数和协程对象
 
-| 概念 | 一句话定义 | 角色 | 详细章节 |
-| --- | --- | --- | --- |
-| 事件循环 | 调度异步任务的"发动机"，不断检查哪个任务可以继续执行 | 驱动者 | 第 3 节 |
-| 协程对象 | 调用 `async def` 函数返回的"待执行任务"包裹，自己不会跑 | 被调度的任务 | 第 4 节 |
-| `await` | 等待一个异步操作完成，等待期间让出执行权 | 让出/恢复的开关 | 第 6 节 |
-| 异步生成器 | 用 `async def` + `yield` 定义的函数，逐个**产生**数据 | 生产者 | 第 7 节 |
-| 异步迭代器 | "取下一个元素"这个动作需要 `await` 的数据源 | 消费者面对的接口 | 第 5、7 节 |
-
-它们的关系可以概括为：
-
-```text
-事件循环（驱动）
-	↓ 调度
-协程 / 异步生成器（生产数据）
-	↓ 逐个产出
-异步迭代器（消费接口）
-	↓ async for 逐个接收
-业务代码（消费数据）
-```
-
-一个最直观的例子——流式对话中，模型一边生成、你一边接收：
-
-```python
-async for chunk in model.astream("天空是什么颜色？"):
-    print(chunk.content, end="", flush=True)
-```
-
-这行代码背后：`astream()` 返回异步迭代器（第 5 节讲它的底层协议），`async for` 逐个等待并接收数据（第 7 节讲怎么用好它），等待期间事件循环可以去处理其他请求（第 3 节讲它怎么调度）。
-
-### 3. 事件循环：异步的"发动机"
-
-#### 什么是事件循环
-
-事件循环负责管理和调度异步任务。它会不断检查任务是否可以继续执行：
-
-```text
-执行任务
-	↓
-遇到 await，等待 I/O
-	↓
-切换到其他任务
-	↓
-I/O 完成后恢复原任务
-```
-
-#### 事件循环与线程的关系
-
-常见关系如下：
-
-```text
-线程
-	└── 事件循环
-				└── 异步任务
-							└── async 函数
-```
-
-事件循环通常运行在线程中，一个线程可以通过协作式调度运行多个异步任务。异步任务之间通过 `await` 主动让出执行权。
-
-#### 异步任务的暂停与恢复
-
-当异步任务执行到 `await` 或等待异步迭代器数据时，事件循环可以暂停它；条件满足后，再从暂停位置继续执行。
-
-这种切换通常发生在同一个线程中，不等于创建新的线程。
-
-### 4. 协程对象：懒执行的任务包裹
-
-协程对象（coroutine object）是调用 `async def` 函数后得到的可等待对象，代表这一次函数调用。它不会自动运行，也不等同于已经调度的 `asyncio.Task`。
-
-#### 创建协程对象
-
-调用 `call()` 会创建协程对象；此时函数体尚未执行。
-
-#### 驱动协程对象
-
-`await coro` 在异步函数中等待指定的协程对象；`asyncio.run(coro)` 在普通脚本入口驱动传入的协程。`asyncio.run(main())` 驱动 `main()`，而 `main()` 内的 `await call()` 等待 `call()` 新创建的另一个协程。
-
-示例中，A 由 `asyncio.run(coro_a)` 驱动（当前注释掉以演示警告）；B 由 `await coro_b` 驱动：
+使用 `async def` 定义且函数体不含 `yield` 的函数称为协程函数。调用它会创建一个**协程对象**，代表这次调用；此时函数体尚未执行，也不会自动安排运行。
 
 ```python
 import asyncio
 
+async def get_answer():
+    print("开始获取回答")
+    await asyncio.sleep(0.1)  # 模拟需要等待的异步操作
+    return "天空通常呈蓝色"
 
-async def call():
-    return "天空是蓝色的"
-
-
-# 1. 调用 async 函数不会执行函数体，只返回协程对象（懒执行）
-coro = call()
-print(coro)  # <coroutine object call at 0x...>
-
-# 2. 普通脚本没有正在运行的事件循环，必须用 asyncio.run() 启动
-#    （等价于 JS 中事件循环自动 await；Python 需要显式驱动）
-#    注意：如果注释掉下面这行，coro 从未被驱动，GC 回收时会警告
-#    RuntimeWarning: coroutine 'call' was never awaited
-print(asyncio.run(coro))  # 天空是蓝色的
-
-# 3. 如果已经在 async 函数内部（事件循环中），才可以直接 await：
 async def main():
-    print('在 main 函数内部调用 call()')
-    print(await call())
+    coro = get_answer()       # 创建协程对象，尚未执行函数体
+    answer = await coro       # 驱动并等待这个协程
+    print(answer)
 
-asyncio.run(main())
+main_coro = main()            # 创建 main 的协程对象
+asyncio.run(main_coro)        # 启动事件循环，运行 main
 ```
+
+执行过程：
+
+1. `main()` 创建 `main_coro`；`asyncio.run()` 创建事件循环并运行它。
+2. `main` 调用 `get_answer()`，创建新的协程对象 `coro`。
+3. `await coro` 驱动并等待该协程；结果返回后，`main` 继续执行并打印结果。
+4. `main` 结束后，`asyncio.run()` 关闭事件循环。
+
+`answer = await get_answer()` 是创建协程对象后立即等待它的常见写法。这里的“驱动”指推进协程执行，直到它完成或需要等待。直接 `await` 子协程通常在当前任务中执行，并不会自动创建独立的 `Task`。
+
+#### `await` 等待什么
+
+`await` 等待一个**可等待对象**完成，并取得其结果。协程对象、`asyncio.Task` 和 `Future` 都是可等待对象。
+
+当等待的操作尚未完成、当前任务实际暂停时，事件循环可以运行其他已安排的任务；若结果已就绪，`await` 也可能立即返回。单独使用 `await` 不会自动创建其他任务。
 
 #### 未等待警告
 
-上例未驱动的 A 会触发 `RuntimeWarning: coroutine 'call' was never awaited`；`await coro_b` 只运行 B，不能代替 A。要消除警告，可取消注释 `asyncio.run(coro_a)`。警告出现时机和 `sys:1:` 前缀会因对象释放时机而异。
+如果协程对象被创建后既没有被等待，也没有被安排运行，Python 可能在回收该对象时提示 `RuntimeWarning: coroutine '...' was never awaited`。每次调用协程函数都会创建新对象；等待其中一个，不会执行另一个。已经执行完成的协程对象不能再次等待，需要重新调用函数。
 
-与 JavaScript 不同，Python 调用异步函数只返回协程对象，函数体要等它被驱动后才执行。
+`async def` 函数体如果含有 `yield`，定义的则是**异步生成器函数**；调用后得到异步生成器，使用方式见第 5 节。
 
-### 5. 异步迭代器协议：async for 的底层
+### 3. 事件循环与任务
 
-#### 一句话本质
+#### 事件循环如何工作
 
-**异步迭代器 = "取下一个元素"这个动作本身需要 `await` 的迭代器。**
+事件循环是 `asyncio` 运行和协调异步任务的机制。它在当前线程中推进可以运行的任务，并在任务等待的操作准备好后安排其继续执行。
 
-普通迭代器的数据已经在手边（如列表），问一下就立刻给；异步迭代器的数据往往"在路上"（如网络流），取值过程中可能要等网络、等模型生成——"要等"就意味着取值动作是异步的，必须 `await`。
+一个典型过程是：任务 A 运行 → A 等待尚未完成的操作并暂停 → 任务 B 运行 → A 等待的操作完成 → A 在之后的调度中继续运行。只有已经安排的其他任务才能在等待期间运行。
 
-#### 同步迭代器 vs 异步迭代器
+这种协作式切换通常发生在同一线程中，不意味着每个任务都有独立线程；也不是每遇到 `await` 就必然切换。
 
-| 同步迭代器 | 异步迭代器 | 说明 |
-| --- | --- | --- |
-| `__iter__()` | `__aiter__()` | 迭代开始时调用，返回迭代器自身 |
-| `__next__()` | `async def __anext__()` | 取下一个元素；异步版的取值是可等待的 |
-| 抛出 `StopIteration` | 抛出 `StopAsyncIteration` | 表示没有更多元素，循环结束 |
-| `for x in ...` | `async for x in ...` | 遍历语法 |
+#### 协程对象与 `Task`
 
-唯一的区别就是 `__anext__` 前面多了个 `async`——**取值这个动作变成了可等待的**。
-
-#### `async for` 的等价展开
-
-`async for` 是语法糖，它自动帮你反复 `await __anext__()`，直到抛出 `StopAsyncIteration`：
+协程对象表示一次协程调用；`asyncio.Task` 将协程包装为由事件循环调度的任务。下面的例子安排两个任务并发等待：
 
 ```python
-async for chunk in model.astream("天空是什么颜色？"):
-    print(chunk.content)
+import asyncio
+
+async def work(name):
+    print(f"{name} 开始")
+    await asyncio.sleep(1)  # 等待期间，另一个任务可以运行
+    print(f"{name} 完成")
+    return name
+
+async def main():
+    first = asyncio.create_task(work("任务 A"))
+    second = asyncio.create_task(work("任务 B"))
+    results = await asyncio.gather(first, second)
+    print(results)
+
+asyncio.run(main())
 ```
 
-等价于手动写：
+两个任务都被安排后，可以在等待期间交替推进；理想情况下总耗时约为 1 秒，而不是两次等待时间之和。`gather` 等待两个任务并按传入顺序返回结果；实际输出顺序和耗时可能受调度影响。对比之下，依次写 `await work("任务 A")`、`await work("任务 B")` 会先等 A 完成再开始 B。
+
+#### 阻塞代码的影响
+
+在事件循环所在的线程中直接执行阻塞操作，例如 `time.sleep()`、同步网络请求或长时间计算，会阻止该线程中的其他异步任务及时运行。优先使用对应的异步接口；必要时可根据任务性质将阻塞 I/O 放到线程中、将 CPU 密集工作交给进程处理。
+
+### 4. 异步代码的运行环境
+
+| 环境 | 常见运行方式 | 说明 |
+| --- | --- | --- |
+| 普通 Python 脚本 | `asyncio.run(main())` | 创建事件循环，运行入口协程，结束后关闭事件循环 |
+| 已在协程中 | `await operation()` | 在已有任务和事件循环中等待操作 |
+| 异步 Web 应用 | 由 ASGI 服务器管理 | 服务器运行事件循环并调用异步请求处理函数 |
+
+`asyncio.run()` 通常用于脚本入口；同一线程已有正在运行的事件循环时不能再次调用。交互环境是否支持顶层 `await` 取决于具体环境；常见的 Jupyter 环境支持。
+
+FastAPI 等异步 Web 应用通常由 Uvicorn 等 ASGI 服务器运行。ASGI 是 Python Web 应用与异步服务器之间的接口规范；请求处理函数中可以直接 `await` 异步操作，无需再调用 `asyncio.run()`。
+
+### 5. 异步迭代与流式数据
+
+#### 为什么需要异步迭代
+
+有些数据会陆续到达。例如，模型回答可能分成多个片段，程序可以收到一段就显示一段，不必等完整回答结束。
+
+`async for` 用来逐项接收异步数据。获取下一项时，如果数据还没准备好，当前任务可以等待；拿到数据后执行循环体，然后再请求下一项。
+
+#### 先看一个完整示例
 
 ```python
-aiter = model.astream("天空是什么颜色？").__aiter__()
+import asyncio
+
+async def get_text(text):
+    await asyncio.sleep(0.5)  # 模拟等待数据到达
+    return text
+
+async def produce():
+    for text in ("天空", "是蓝色的"):
+        chunk = await get_text(text)  # 等待本次异步调用的结果
+        yield chunk                   # 产出一段，暂停在这里
+
+async def main():
+    stream = produce()                # 创建异步生成器对象
+    async for chunk in stream:        # 逐项等待并接收
+        print(chunk, end="", flush=True)
+    print()
+
+asyncio.run(main())
+```
+
+运行后，程序约每隔半秒显示一段，最终输出“天空是蓝色的”。示例中，对象的关系和获取下一项的过程如下：
+
+```mermaid
+flowchart TD
+    S[异步生成器对象 stream<br/>（是一种异步迭代器）] -->|调用 __anext__| A[可等待对象 A<br/>Python 创建，用于推进生成器并获取下一项]
+    A -->|等待 A，生成器开始或继续执行| B[协程对象 B<br/>get_text 调用的结果，是一种可等待对象]
+    B -->|生成器内部 await B| Y[yield 产出数据片段]
+    Y -->|A 完成| C[async for 得到数据片段]
+```
+
+执行过程如下：
+
+| 步骤 | 操作 | 结果 |
+| --- | --- | --- |
+| 1. 启动 | `asyncio.run(main())` 运行 `main`；`produce()` 创建异步生成器 `stream` | `produce` 的函数体尚未执行 |
+| 2. 请求第一项 | `async for` 在内部调用异步生成器的 `__anext__()` | Python 创建一个可等待对象，用于推进该生成器并获取下一项；此时还没有得到数据 |
+| 3. 等待数据 | 循环等待该对象，生成器开始执行；`await get_text("天空")` 等待新创建的协程对象 | 协程完成后返回字符串“天空” |
+| 4. 产出并处理 | `yield chunk` 产出字符串并暂停生成器 | 取值操作完成，循环体接收并打印“天空” |
+| 5. 继续直到结束 | 循环再次调用并等待 `__anext__()`，生成器从暂停处继续 | 产出并打印“是蓝色的”；再次取值时生成器结束，循环随之结束 |
+
+图中的 A 和 B 是不同的可等待对象：A 用于获取下一项，B 是 `get_text` 返回的协程对象。对于其他异步迭代器，取下一项时返回的可等待对象也可以是协程对象；`yield` 交出的 `chunk` 则是字符串数据。
+
+也可以直接写 `async for chunk in produce():`。括号不能省略：`produce` 是函数，`produce()` 才会创建异步生成器对象。
+
+#### `async for` 如何获取下一项
+
+普通 `for` 和 `async for` 都先获取迭代器，再逐项取值；区别在于异步取值返回的是可等待对象。
+
+| 操作 | 普通 `for` | `async for` |
+| --- | --- | --- |
+| 获取迭代器 | `__iter__()` 返回迭代器 | `__aiter__()` 返回异步迭代器 |
+| 获取下一项 | `__next__()` 返回元素 | `__anext__()` 返回可等待对象，等待后得到元素 |
+| 结束信号 | `StopIteration` | `StopAsyncIteration` |
+
+**为什么先调用 `__aiter__()`？** 因为 `async for` 接收的是异步可迭代对象，它提供 `__aiter__()` 获取异步迭代器；这个对象不一定本身就是迭代器。这类似普通 `for` 先从列表这样的可迭代对象获取迭代器。
+
+在本例中，`produce()` 返回的异步生成器已经是异步迭代器，所以 `stream.__aiter__()` 返回 `stream` 自身：
+
+```python
+iterator = stream.__aiter__()
+print(iterator is stream)  # True
+```
+
+这一步不会创建新的生成器或取出数据。之后调用 `__anext__()` 会返回一个用于获取下一项的可等待对象；等待它时，生成器开始或继续执行，直到产出一项数据或结束。
+
+`async for` 可以看作异步迭代的语法糖：它先获取迭代器，再反复等待下一项，直到取值时抛出 `StopAsyncIteration`。以前面的 `stream` 为例，下面展示核心过程；它应放在异步函数中，替代原来的 `async for`，且省略了特殊方法查找等细节：
+
+```python
+iterator = stream.__aiter__()
 while True:
     try:
-        chunk = await aiter.__anext__()   # 每次取值都可能异步等待
-        print(chunk.content)
+        next_item = iterator.__anext__()  # 创建用于获取下一项的可等待对象
+        chunk = await next_item           # 推进 produce，直到 yield 产出片段
+        # produce 内部：
+        # chunk = await get_text(text)   # 等待字符串
+        # yield chunk                    # 产出字符串并暂停生成器
     except StopAsyncIteration:
         break
+    print(chunk, end="", flush=True)
 ```
 
-注意：它是"拿一个 → 处理一个 → 再拿下一个"，**串行**的。异步体现在"等数据"期间事件循环可以去跑别的任务，而不是几个 chunk 同时到达。
+- **等待与产出**：`await next_item` 推进 `produce`。生成器先等待 `get_text(text)` 获取字符串，再通过 `yield chunk` 产出；外部等待完成后，`chunk` 得到该字符串。
+- **继续与结束**：下一轮等待从上次 `yield` 暂停的位置继续；生成器结束时抛出 `StopAsyncIteration`。
+- **异常范围**：`try` 只捕获取下一项时的结束信号；循环体中的异常不会被这里误当成迭代结束。
+- **返回对象的类型**：如果 `__anext__()` 使用普通协程函数实现，调用它返回协程对象；异步生成器返回的取值对象也是可等待的，但不一定是普通协程对象。
 
-#### 手写一个最小的异步迭代器
+#### 顺序消费与并发
 
-实际开发中很少手写协议（通常用异步生成器，见第 7 节），但手写一次能彻底理解机制：
+一次 `async for` 按“等待一项 → 处理一项 → 请求下一项”的顺序运行，不会自动为每个元素创建独立任务。等待时，如果当前任务实际暂停，事件循环可以运行其他已安排的任务；如果没有其他任务，就继续等待。
+
+异步等待为并发提供机会，但不等于自动并发。循环体中的同步阻塞操作仍会阻塞事件循环；需要并发处理时，应明确安排任务并考虑任务数量和结果顺序。
+
+### 6. SSE 流式接口
+
+#### SSE 的基本工作方式
+
+SSE（Server-Sent Events，服务器发送事件）通过 HTTP 连接让服务器向客户端持续发送文本事件，适合逐步展示模型输出或任务进度。客户端先发起请求；之后这条事件流的方向是服务器到客户端。
+
+SSE 响应的媒体类型为 `text/event-stream`。事件由文本字段组成，空行表示一个事件结束，例如：
+
+```text
+data: 你好
+
+data: 世界
+
+```
+
+浏览器可使用 `EventSource` 接收事件。连接意外中断后它通常会自动重连；客户端不再需要接收时应调用 `close()`。实际请求若需要其他方法或自定义请求头，可根据客户端需求选择其他支持解析 SSE 的方案。
+
+#### FastAPI 中的生产与发送
+
+下面是最小示例：异步生成器逐个产生事件，`EventSourceResponse` 将它们编码为 SSE 响应并发送。运行需安装 `fastapi`、`uvicorn` 和 `sse-starlette`；具体安装版本以项目依赖为准。
 
 ```python
 import asyncio
+from fastapi import FastAPI
+from sse_starlette.sse import EventSourceResponse
 
-class SlowCounter:
-    def __init__(self, n):
-        self.n = n
-        self.i = 0
+app = FastAPI()
 
-    def __aiter__(self):          # 迭代开始时调用
-        return self
-
-    async def __anext__(self):    # 每次要下一个元素时调用
-        if self.i >= self.n:
-            raise StopAsyncIteration   # 没数据了，结束循环
-        await asyncio.sleep(0.5)       # 模拟"取数据要等"（真实场景=等网络）
-        self.i += 1
-        return self.i
-
-async def main():
-    async for num in SlowCounter(3):
-        print("拿到", num)
-
-asyncio.run(main())
-# 每隔 0.5 秒打印：拿到 1 / 拿到 2 / 拿到 3
-```
-
-#### 与 JavaScript 的对照
-
-| JavaScript | Python |
-| --- | --- |
-| `Symbol.asyncIterator` | `__aiter__` / `__anext__` |
-| `for await (const chunk of stream)` | `async for chunk in stream:` |
-| `async function* gen() { yield ... }` | `async def gen(): yield ...`（异步生成器） |
-
-JS 的 `for await` 底层调用 `Symbol.asyncIterator`，Python 的 `async for` 底层调用 `__aiter__`/`__anext__`。**机制完全同构，只是名字不同。**
-
-### 6. async/await 语法与三种启动方式
-
-#### `await` 的作用
-
-`await` 用于等待一个可等待对象完成：
-
-```python
-async def chat():
-	response = await get_answer()
-	return response
-```
-
-等待期间，当前异步任务暂停，事件循环可以执行其他任务。
-
-#### 与 JavaScript 的对比
-
-Python 的 `async/await` 和 JavaScript 几乎一样：
-
-| JavaScript | Python |
-| --- | --- |
-| `async function getAnswer() {}` | `async def get_answer():` |
-| `await fetch(url)` | `await get_answer()` |
-| `for await (const chunk of stream)` | `async for chunk in stream:` |
-
-区别在于运行方式：JS 的异步由浏览器或 Node.js 的事件循环自动驱动；Python 的协程对象需要事件循环调度，通常通过 `asyncio.run()` 或 Web 框架启动（见下文三种启动方式）。
-
-#### 方式一：普通脚本用 `asyncio.run()`
-
-普通脚本一般没有正在运行的事件循环，因此需要手动启动：
-
-```python
-import asyncio
-
-async def main():
-		print("开始执行")
-
-asyncio.run(main())
-```
-
-`asyncio.run()` 会在当前线程中创建事件循环，运行 `main()`，结束后关闭事件循环。它通常不会创建新线程。
-
-#### 方式二：FastAPI 由 ASGI 服务器管理
-
-FastAPI 运行在 Uvicorn、Hypercorn 等 ASGI 服务器中。ASGI 是 Python 异步 Web 应用与服务器之间的接口规范，Uvicorn 是常用的 ASGI 服务器实现。ASGI 服务器负责启动和管理事件循环，并将异步请求处理函数交给事件循环执行：
-
-```text
-Uvicorn Worker
-	└── 事件循环
-				└── FastAPI 请求任务
-```
-
-异步路由的写法：
-
-```python
-@router.post("/stream")
-async def chat_stream(req: ChatRequest):
-		result = await service.chat(req.message)
-		return result
-```
-
-请求到达后，ASGI 服务器会在已有事件循环中调度 `chat_stream()`。因此 FastAPI 异步路由中不需要再次调用 `asyncio.run()`——在正在运行的事件循环中再次调用它，可能产生事件循环嵌套错误。
-
-#### 方式三：已在事件循环中，直接 `await`
-
-如果代码本身已经运行在事件循环里（例如异步函数内部、Jupyter Notebook），直接使用 `await` 即可，不需要再启动事件循环。
-
-#### 注意：阻塞代码的影响
-
-如果异步函数中直接执行耗时的同步阻塞代码，事件循环会被卡住，其他异步任务也无法及时运行。阻塞任务应根据情况放入线程池或进程池。
-
-### 7. 流式数据：生产与消费
-
-流式场景中，异步生成器和异步迭代器是一对搭档：**生成器负责生产数据，`async for` 负责消费数据**。
-
-#### 生产：`async def` + `yield`（异步生成器）
-
-异步函数中使用 `yield`，就会形成异步生成器：
-
-```python
 async def event_generator():
-    yield {"event": "started"}
-    yield {"event": "finished"}
+    for text in ("天空", "是蓝色的"):
+        await asyncio.sleep(0.5)  # 模拟异步获取下一段内容
+        yield {"data": text}      # 交给响应对象编码为 SSE 事件
+
+@app.get("/events")
+async def events():
+    return EventSourceResponse(event_generator())
 ```
 
-它不会一次性返回全部数据，而是可以逐个产生结果。**异步生成器自动实现了异步迭代器协议**（`__aiter__`/`__anext__`），所以可以直接被 `async for` 遍历——这是实际开发中创建异步迭代器最常用的方式，很少手写协议。
+使用 `uvicorn 文件名:app` 启动服务后，浏览器可以通过以下代码接收该示例的事件：
 
-#### 消费：`async for` 遍历异步迭代器
-
-`async for` 用于遍历异步迭代器：
-
-```python
-async for chunk in model.astream("天空是什么颜色？"):
-    print(chunk.content)
+```javascript
+const source = new EventSource("http://127.0.0.1:8000/events");
+source.onmessage = (event) => console.log(event.data);
+// 不再接收时调用 source.close()；服务器结束后 EventSource 可能重连。
 ```
 
-每次获取下一个元素时，都可能发生异步等待。底层机制见第 5 节。
+在实际业务中，生成器也可以通过 `async for` 获取上游异步流，再用 `yield` 将每个事件交给响应对象。若生成器持有需要释放的资源，可使用 `try/finally` 在生成器结束或被关闭时清理；具体断连和取消处理应遵循所用服务器与响应库的行为。
 
-#### 与 JavaScript 的对照
+参考资料：
 
-| JavaScript | Python |
-| --- | --- |
-| `async function* gen() { yield ... }` | `async def gen(): yield ...` |
-| `for await (const chunk of stream)` | `async for chunk in stream:` |
-
-#### 两个常见误区
-
-1. **`async for` ≠ 并发**。它只是"逐个等待式"消费。想并发处理多个流，要用 `asyncio.create_task()` 跑多个 `async for`。
-2. **不能用普通 `for` 遍历**。`for chunk in model.astream(...)` 会报错，因为普通 `for` 调用的是 `__next__`（同步的），而这里只有异步的 `__anext__`。
-
-#### 与 SSE 的衔接
-
-这正是后面 SSE 流式接口的基础：服务端用异步生成器逐个产生事件，客户端用 `async for` 逐个接收。
-
-### 8. SSE 流式接口
-
-#### SSE 是什么
-
-SSE（Server-Sent Events）是一种由服务器向客户端持续推送文本事件的机制。客户端建立连接后，服务器可以不断发送事件，直到流结束或连接断开。
-
-#### `EventSourceResponse`
-
-`EventSourceResponse` 将生成器产生的事件转换成 `text/event-stream` 响应，并按照 SSE 格式持续发送给客户端。
-
-```
- # EventSourceResponse 是 sse-starlette 提供的 SSE（Server-Sent Events）流式响应类。
-    # 它会持续读取迭代器产生的数据，并通过 HTTP text/event-stream 响应逐条发送给客户端。
-    return EventSourceResponse(
-        stream_chat_events(
-            message=req.message,
-            model=req.model,
-            conversation_id=req.conversation_id,
-            client_request_id=req.client_request_id,
-        ),
-        sep="\n",
-    )
-```
-
-
-
-#### 服务端如何持续推送事件
-
-服务端可以使用生成器逐个产生事件：
-
-```python
-async def event_generator():
-	async for event in stream_chat_events():
-		yield event
-```
-
-#### 客户端如何接收事件
-
-客户端保持 HTTP 连接，并在收到新的 SSE 事件时触发处理逻辑。与普通 HTTP 请求等待完整响应不同，SSE 可以及时显示服务端已经生成的内容。
-
-#### FastAPI SSE 实现
-
-##### `event_generator()`
-
-`event_generator()` 是异步生成器，负责包装底层事件流，并在流结束或连接断开时执行清理逻辑。
-
-##### `stream_chat_events()`
-
-`stream_chat_events()` 负责产生聊天过程中的事件，例如创建流、开始消息、输出内容和结束消息。
-
-##### `async for` 获取事件
-
-```python
-async for event in stream_chat_events(...):
-		yield event
-```
-
-路由不会一次性等待全部事件，而是异步获取一个、转发一个。
-
-##### `yield event` 发送事件
-
-`yield event` 将当前事件交给 `EventSourceResponse`。响应对象再将它编码为 SSE 数据并发送给客户端。
-
-##### `finally` 执行清理逻辑
-
-```python
-finally:
-		await idempotency_store.mark_completed(request_id)
-```
-
-无论流正常结束、发生异常还是客户端断开，只要生成器被关闭，就会执行 `finally` 中的清理逻辑。
-
-完整关系如下：
-
-```text
-客户端请求
-	↓
-FastAPI 异步路由
-	↓
-EventSourceResponse
-	↓
-event_generator()
-	↓
-async for 获取事件
-	↓
-yield event
-	↓
-SSE 推送给客户端
-```
+- [Python 3.11：协程和任务](https://docs.python.org/3.11/library/asyncio-task.html)
+- [Python 3.11：运行 asyncio 程序](https://docs.python.org/3.11/library/asyncio-runner.html)
+- [Python 3.11：异步迭代器协议](https://docs.python.org/3.11/reference/datamodel.html#asynchronous-iterators)
+- [Python 3.11：`async for` 语句](https://docs.python.org/3.11/reference/compound_stmts.html#the-async-for-statement)
+- [MDN：使用服务器发送事件](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events)
+- [sse-starlette 项目文档](https://github.com/sysid/sse-starlette)
 
 ## 使用 uv 搭建和运行 Python 项目
 
@@ -3445,15 +3300,20 @@ print(answer)
 
 ## Runnable 与 LCEL
 
+本节以 LangChain 官方 Python API 参考中的 `langchain-core 1.8.4` 为基准；模型调用示例还需要相应的模型集成包和服务配置。
+
 ### 1. 概念与关系
 
-| 概念                        | 说明                          |
-| ------------------------- | --------------------------- |
-| 组件                        | 执行具体任务的对象，例如提示模板、模型或输出解析器，并提供 `invoke`、`stream`、`batch` 等调用方法 |
-| `Runnable`                | 组件遵循的统一调用协议                 |
-| LCEL                      | 用于组合多个 `Runnable` 的声明式表达式语法 |
+LangChain 中，提示模板、聊天模型和输出解析器等组件各自完成一项任务。`Runnable` 提供统一的调用方式，LCEL 则描述如何将这些组件组合起来。
 
-LCEL 全称为 LangChain Expression Language（LangChain 表达式语言），用 `|` 连接 Runnable 组件。组合后的链本身仍是 Runnable，可以继续使用 `invoke` 等方法。
+| 概念 | 含义 | 示例 |
+| --- | --- | --- |
+| `Runnable` | LangChain 的统一执行接口，实现该接口的组件可以通过一致的方法调用 | 使用 `invoke` 处理单次输入，或使用 `batch`、`stream` |
+| LCEL | LangChain Expression Language，LangChain 表达式语言，用于声明组件的组合方式 | 使用 `|` 将组件依次连接 |
+
+例如，`prompt | model | parser` 组成一条链：提示模板生成提示，模型根据提示生成响应，解析器再处理响应。前一个组件的输出会传给下一个组件，因此相邻组件的输入和输出需要兼容；调用方式统一，并不代表各组件接受相同的数据类型。
+
+组合后的链本身也是 `Runnable`。调用 `chain.invoke(输入)` 时，输入依次经过各组件，最终返回最后一个组件的输出；也可以根据需要调用 `batch` 或 `stream`。这些方法的具体行为和适用条件见后文“Runnable 调用方法”。
 
 #### 案例
 
@@ -3488,19 +3348,7 @@ parser：提取文本
 "苹果"
 ```
 
-每个组件都可以单独调用，也可以组合调用：
-
-```python
-prompt_result = prompt.invoke({"text": "Apple"})
-model_result = model.invoke(prompt_result)
-result = parser.invoke(model_result)
-```
-
-分步调用和链式调用的数据处理顺序相同；分别运行时会各自请求模型，回答不一定完全相同：
-
-```python
-result = (prompt | model | parser).invoke({"text": "Apple"})
-```
+各组件也可以分别调用；分步调用与链式调用的处理顺序相同。分别运行时会各自请求模型，回答不一定完全相同。
 
 ### 2. Runnable 调用方法
 
@@ -3518,15 +3366,13 @@ result = (prompt | model | parser).invoke({"text": "Apple"})
 | `batch` | 多个输入分别经过同一个 Runnable 或同一条链 | 对 `["hello", "hi"]` 分别处理，得到 `["HELLO", "HI"]` |
 | `RunnableParallel` | 同一个输入分别传给多个分支 | 对 `"hello"` 同时计算大写和长度，得到 `{"upper": "HELLO", "length": 5}` |
 
-并行组合的代码见第 5 节。异步调用适合网络请求等 I/O 等待，有助于并发处理，但不会自动加快单次请求。
+并行组合的代码见第 3 节。异步调用适合网络请求等 I/O 等待，有助于并发处理，但不会自动加快单次请求。
 
 对应的异步方法包括：
 
 - `ainvoke`：异步调用一次并返回完整结果。
 - `astream`：异步流式返回结果。
 - `abatch`：异步处理一组输入。
-- `astream_log`：流式返回中间步骤和最终结果。
-- `astream_events`：流式返回链执行过程中的事件。
 
 不同组件的输入和输出类型不同：
 
@@ -3593,35 +3439,17 @@ async for chunk in model.astream(messages):
 
 `stream` 和 `astream` 用于获取链的最终输出；`astream_events` 和 `astream_log` 用于观察执行事件或中间步骤。
 
-### 3. 自定义逻辑与数据转换
+### 3. LCEL 组合方式
 
-`RunnableLambda` 将普通函数包装成 Runnable，适合字段提取、格式转换和轻量清洗，不必为每个简单函数编写 Runnable 子类。
-
-```python
-from langchain_core.runnables import RunnableLambda
-
-def normalize_text(text):
-    return text.strip().lower()
-
-chain = RunnableLambda(normalize_text) | RunnableLambda(
-    lambda text: {"text": text, "length": len(text)}
-)
-
-print(chain.invoke(" HELLO "))
-# {'text': 'hello', 'length': 5}
-```
-
-需要维护组件配置或定制调用行为时，可以使用后面的自定义 Runnable 类。普通 RunnableLambda 不会自动将函数结果拆成增量流；流式链路中的转换节点需要注意是否会等待上游收集完成。
-
-### 4. LCEL 顺序组合
+#### 顺序组合
 
 `RunnableSequence` 表示按顺序执行多个步骤，通常通过 `|` 创建。前一步的输出直接成为后一步的输入，连接时应确保类型和字段匹配。
 
 Chain 是把多个处理步骤组织起来的工作流，不是所有 Chain 都通过 LCEL 实现。前面的 `prompt | model | parser` 就是一条顺序链；使用 LangSmith 可以查看各步骤的输入、输出和耗时。
 
-### 5. LCEL 并行组合
+#### 并行组合
 
-`RunnableParallel` 将同一份输入传给多个分支并发处理，最后按分支名称汇总为字典。与 `batch()` 对多份输入运行同一组件不同，它对一份输入运行多个分支。
+`RunnableParallel` 将同一份输入传给多个分支并发处理，最后按分支名称汇总为字典。与 `batch()` 对多份输入运行同一组件不同，它对一份输入运行多个分支。示例中的 `RunnableLambda` 用于把普通函数包装成 Runnable，详见下一节。
 
 ```python
 from langchain_core.runnables import RunnableLambda, RunnableParallel
@@ -3649,11 +3477,35 @@ print(chain.invoke(" hello "))
 
 裸字典本身不是 Runnable，不能脱离组合语境直接调用 `.invoke()`。并发也不等于 CPU 密集型计算一定更快。
 
-### 6. 自定义 Runnable
+### 4. 自定义 Runnable
+
+自定义处理逻辑可以通过 `RunnableLambda` 包装普通函数，也可以通过继承 `Runnable` 创建类。前者适合简单的数据转换；后者适合需要保存配置或定制调用行为的场景。
+
+#### 使用 RunnableLambda 包装函数
+
+`RunnableLambda` 将普通函数包装成 Runnable，适合字段提取、格式转换和轻量清洗，不必为每个简单函数编写 Runnable 子类。
+
+```python
+from langchain_core.runnables import RunnableLambda
+
+def normalize_text(text):
+    return text.strip().lower()
+
+chain = RunnableLambda(normalize_text) | RunnableLambda(
+    lambda text: {"text": text, "length": len(text)}
+)
+
+print(chain.invoke(" HELLO "))
+# {'text': 'hello', 'length': 5}
+```
+
+两个函数依次处理输入：先清洗文本，再生成包含文本和长度的字典。普通 `RunnableLambda` 不会自动将函数结果拆成增量流；在流式链路中，需要注意转换节点是否会等待上游输出收集完成。
+
+#### 继承 Runnable 创建类
 
 需要保存配置或定制调用行为时，可以继承 `Runnable[Input, Output]` 并实现 `invoke()`。泛型表示预期的输入和输出类型；例如 `Runnable[str, str]` 表示输入和输出都是字符串。
 
-#### 最小可运行示例
+以下示例保存前缀，并在调用时将其添加到输入前：
 
 ```python
 from typing import Any
@@ -3703,7 +3555,7 @@ print(chain.invoke("苹果"))
 
 只实现 `invoke()` 时，框架也提供 `batch()`、`ainvoke()` 和默认 `stream()`。默认 `stream()` 调用 `invoke()` 并一次返回结果；要逐块输出，需要提供流式实现。底层支持原生异步或批量接口时，也可以按需重写对应方法。
 
-### 7. 数据透传与字段扩展
+### 5. 数据透传与字段扩展
 
 `RunnablePassthrough()` 原样传递输入，常用于在并行分支中保留原始问题；`RunnablePassthrough.assign()` 接收字典输入，保留原字段并合并新计算出的字段。
 
@@ -3727,7 +3579,7 @@ print(chain.invoke(" hello "))
 
 `assign()` 中的计算读取进入该节点的字典；同一次 assign 内的多个字段不能依赖彼此的新计算结果。有先后依赖时，应串联多个 assign 节点。同名字段会被新结果覆盖。
 
-### 8. 条件路由
+### 6. 条件路由
 
 `RunnableBranch` 按声明顺序判断条件，只执行第一个满足条件的分支；全部不满足时执行最后指定的默认分支。
 
@@ -3748,9 +3600,9 @@ print(router.invoke({"kind": "other", "text": "hello"}))
 # hello
 ```
 
-条件路由不是自动的模型意图识别：上例由明确的字段规则决定分支。需要模型分类时，应先生成分类结果，再将该结果传入路由。
+条件路由不是自动的模型意图识别：上例由明确的字段规则决定分支。需要模型分类时，应先生成分类结果，再将该结果传入路由。更复杂的有状态工作流可参考 [LangGraph 工作流与 Agent](https://docs.langchain.com/oss/python/langgraph/workflows-agents)。
 
-### 9. 运行配置、重试与降级
+### 7. 运行配置、重试与降级
 
 这些能力属于 Runnable 通用能力，对单个组件和组合后的链都适用。
 
