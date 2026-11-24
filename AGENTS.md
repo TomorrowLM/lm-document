@@ -38,7 +38,7 @@ applyTo: "**/*"
 		  - `tavily_tool.invoke(input)`：执行搜索并返回搜索结果。
 		    - 输入参数
 		      - `input`：字典；其中 `query` 为必填项，表示自然语言搜索内容。
-		    - 响应属性
+		    - 响应参数
 		      - `results`：搜索结果列表；每项包含网页标题、链接和内容摘要等信息。
 		- **实例属性**
 		  - `tavily_tool.max_results`：实例配置的最多返回结果数。

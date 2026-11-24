@@ -2749,9 +2749,7 @@ messages = prompt_template.invoke({
 
 **Few-shot 就是“先给几个示范，再让模型做新题”。`FewShotPromptTemplate` 负责把这些文字拼好，不负责回答问题，也不会训练模型。**
 
-###### 接口概述
-
-可以先把它理解为一个“提示词拼接器”：
+它会按顺序组合开头说明、参考示例和本次的新问题：
 
 ```text
 开头说明（prefix）
@@ -2760,22 +2758,7 @@ messages = prompt_template.invoke({
     = 最终提示词
 ```
 
-先学固定示例：把准备好的题全部放进去。示例多了以后，再使用 `example_selector` 自动挑几道相关的题，后面会讲这个过程。
-
-###### 请求参数
-
-这些是创建模板时传入的 Python 参数，不是发送 HTTP 请求的参数：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `examples` | `list[dict]` | 参考题列表，每个字典保存一道题及其答案 |
-| `example_prompt` | `PromptTemplate` | 一道参考题怎么排版，例如“问题：…\n答案：…” |
-| `prefix` | `str` | 写在最前面的说明，例如“请把中文翻译成英文” |
-| `suffix` | `str` | 写在最后的新题格式，例如 `"问题：{input}\n答案："` |
-| `input_variables` | `list[str]` | 调用时需要填写的变量名；上述新题使用 `{input}`，所以填 `["input"]` |
-| `example_selector` | 示例选择器对象 | 自动从候选参考题中挑选示例；与 `examples` 二选一，初学时可以先不用 |
-
-下面是一个完整例子，只拼接并打印提示词，不需要 API Key，也不会调用模型：
+先从固定示例开始：把准备好的题全部放入 `examples`。示例较多时，可以改用 `example_selector` 自动挑选相关示例。
 
 ```python
 from langchain_core.prompts import FewShotPromptTemplate, PromptTemplate
@@ -2801,18 +2784,25 @@ prompt_value = prompt.invoke({"input": "橙子"})
 print(prompt_value.to_string())
 ```
 
-运行后打印的就是本节开头那段文字。重点区分两份数据：
+- **创建实例参数**
+    - `PromptTemplate.from_template(template)`：根据模板字符串创建单道参考题的格式；示例中的 `{question}` 和 `{answer}` 会从每条参考示例中取值。
+    - `FewShotPromptTemplate(...)`：创建 Few-shot 提示模板。
+        - `examples`：预先准备的参考示例列表，每个字典包含 `question` 和 `answer`。
+        - `example_prompt`：指定每条参考示例的排版方式。
+        - `prefix`：放在参考示例之前的说明文字。
+        - `suffix`：放在末尾的新问题格式；示例使用 `{input}` 作为占位符。
+        - `input_variables`：调用时要提供的变量名；此处对应 `suffix` 中的 `input`。
+        - `example_selector`：可选的示例选择器，用于从候选示例中动态挑选；使用它时不再传入 `examples`。
+- **实例调用方法**
+    - `prompt.invoke(input)`：将新问题填入模板并返回 `PromptValue`。
+        - 输入参数
+            - `input`：字典；本例为 `{"input": "橙子"}`，其中的键要与 `input_variables` 和 `suffix` 占位符对应。
+        - 返回值
+            - `PromptValue`：保存拼接后的提示词；调用 `.to_string()` 可将它转换为普通字符串。
 
-- `examples`：你提前写好的参考题，既有 `question`，也有 `answer`。
-- `{"input": "橙子"}`：这次调用传入的新问题，还没有答案。
+运行示例后打印的就是本节开头展示的提示词。`examples` 中的 `question`、`answer` 来自参考示例，`{"input": "橙子"}` 则是本次的新问题；各字段与对应模板占位符匹配即可，不要求示例和新问题使用相同字段名。
 
-`example_prompt` 中的 `{question}`、`{answer}` 从每条参考题中取值；`suffix` 中的 `{input}` 从 `invoke()` 的参数中取值。**字段名与各自的占位符对应即可，不要求参考题和新问题使用同一个字段名。**
-
-###### 响应参数
-
-`prompt.invoke(...)` 返回一个保存了最终提示词的对象。示例中的 `.to_string()` 把它转成普通字符串，方便打印查看。
-
-注意：输出最后仍然是空的“答案：”，不会自动出现 `orange`。要得到答案，还需要把拼好的提示词交给聊天模型。
+输出末尾仍是空的“答案：”，不会自动生成 `orange`；要得到回答，还需把提示词交给聊天模型。上述代码只拼接并打印提示词，不需要 API Key，也不会调用模型。
 
 对照你的自动选例代码：`from_examples(examples, ...)` 接收的是**全部候选参考题**，`k=1` 表示每次最多选一道；`FewShotPromptTemplate(example_selector=example_selector, ...)` 再把选中的题和新问题拼起来。因此，`k=1` 不是“生成一个答案”，而是“挑一条参考示例”。
 
@@ -2857,89 +2847,13 @@ selected_examples = selector.select_examples({"question": "苹果的英文是什
 
 ###### OpenAIEmbeddings 的作用与使用
 
-`OpenAIEmbeddings` 用来调用 OpenAI 的嵌入模型，把文字转换成一组数字，这组数字称为**向量**。
-
-为什么要转换？因为程序不能直接理解两句话的意思，但可以通过比较向量，判断它们在含义上是否接近。例如，“苹果的英文是什么”和“苹果用英语怎么说”表达不同，但意思相近。
-
-可以先这样区分：
-
-- `ChatOpenAI`：接收问题，生成回答。
-- `OpenAIEmbeddings`：接收文字，生成向量，用于相似度比较。
-
-**使用示例**
-
-使用前安装 `langchain-openai`，并配置 `OPENAI_API_KEY`。
-
-```python
-from langchain_openai import OpenAIEmbeddings
-
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-query_vector = embeddings.embed_query("苹果的英文是什么？")
-document_vectors = embeddings.embed_documents(["苹果", "香蕉"])
-```
-
-这段代码分为三步：
-
-1. `OpenAIEmbeddings(...)`：创建一个调用嵌入模型的对象。
-2. `embed_query(...)`：把一条查询转换成向量，返回一个数字列表。
-3. `embed_documents(...)`：把多条文本分别转换成向量，返回多个数字列表。
-
-**这里只是把文字转换成数字，还没有保存数据，也没有执行搜索。** 执行嵌入方法时会请求模型服务，可能产生费用。
+Few-shot 示例选择器会使用 Embedding 将候选示例和当前问题转换为向量，再按相似度挑选示例。`OpenAIEmbeddings` 的通用作用、调用方式和向量返回值见 [RAG：文本向量化中的 OpenAIEmbeddings](#openaiembeddings)。这里关注它在示例选择中的用途；向量化本身不会生成回答、保存数据或执行检索。
 
 ###### Chroma 的作用与使用
 
-Chroma 用来**保存文本及其向量，并根据含义查找相似内容**。`langchain_chroma` 中的 `Chroma` 是在 LangChain 中使用它的集成类。
+在 Few-shot 示例选择中，`SemanticSimilarityExampleSelector.from_examples(..., vectorstore_cls=Chroma)` 会用 Chroma 保存候选示例并按相似度选择示例，因此不需要在这个流程里手动调用 `add_texts()`。
 
-例如，你保存的是“苹果的英文是 apple”，用户问的是“苹果用英语怎么说”。即使文字不完全相同，也可以通过向量相似度找到相关内容。
-
-可以把两者理解为一组搭档：
-
-- `OpenAIEmbeddings`：负责把文字转换成向量。
-- `Chroma`：负责保存数据，并利用向量查找相似内容。
-
-**使用示例**
-
-使用前安装 `langchain-chroma`。下面沿用上一段创建的 `embeddings`：
-
-```python
-from langchain_chroma import Chroma
-
-vector_store = Chroma(
-    collection_name="example_selector_demo",
-    embedding_function=embeddings,
-)
-
-vector_store.add_texts([
-    "苹果的英文是 apple。",
-    "香蕉的英文是 banana。",
-])
-
-documents = vector_store.similarity_search(
-    "苹果用英语怎么说？",
-    k=1,
-)
-
-print(documents[0].page_content)
-```
-
-这段代码分为四步：
-
-1. `Chroma(...)`：创建向量存储。`collection_name` 是集合名称，可以理解为给这组数据起名字。
-2. `embedding_function=embeddings`：告诉 Chroma 使用哪个对象把文字转换成向量，不需要手动传入数字列表。
-3. `add_texts(...)`：将文本转换成向量，并保存文本和向量。
-4. `similarity_search(...)`：将问题转换成向量，查找最相似的内容。`k=1` 表示取一条结果，`page_content` 用来读取结果中的原文。
-
-整个过程可以理解为：
-
-```text
-保存：文字 → OpenAIEmbeddings 转成向量 → Chroma 保存
-查询：问题 → OpenAIEmbeddings 转成向量 → Chroma 查找相似内容
-```
-
-**Chroma 返回的是找到的原文，不是模型新生成的回答。** 本地使用 Chroma 不需要 Chroma 云端密钥，但这里的文字向量化仍需要 OpenAI 密钥。
-
-在前面的 `from_examples(..., vectorstore_cls=Chroma)` 中，选择器会自动完成示例入库和检索，不需要再手动调用 `add_texts()`。
+Chroma 作为向量存储的通用作用和完整写入、查询示例，见 [RAG：向量检索中的 Chroma](#chroma)。这里关注的是它如何配合 Few-shot 选择器；向量检索返回的是已有示例，不会生成答案或训练模型。
 
 ###### 三者协作流程
 
@@ -5059,6 +4973,177 @@ with requests.post(
 **参考资料：**[LangServe 官方仓库](https://github.com/langchain-ai/langserve)、[迁移说明](https://github.com/langchain-ai/langserve/blob/main/MIGRATION.md)、[DeepSeek 旧模型停用公告](https://api-docs.deepseek.com/news/news260424)、[DeepSeek API 接入说明](https://api-docs.deepseek.com/quick_start/pricing)、[Requests 高级用法](https://requests.readthedocs.io/en/latest/user/advanced/)。
 
 
+# RAG
+
+RAG（Retrieval-Augmented Generation，检索增强生成）会先从外部资料中检索与问题相关的内容，再把这些内容提供给模型生成回答。它适合让模型参考内部文档、网页或其他知识库资料，而不必把全部资料都写进提示词。
+
+一个常见的 RAG 流程可以分成两部分：
+
+1. **准备知识库**：加载文档 → 切分文本 → 将文本转换为向量 → 保存到向量库。
+2. **回答问题**：根据问题检索相关文本 → 将检索结果提供给模型 → 生成回答。
+
+本节先介绍从网页准备文档时会用到的 `WebBaseLoader`。它负责加载网页内容；切分、向量化和检索由后续组件完成。
+
+## 网页加载器：`WebBaseLoader`
+
+`WebBaseLoader` 是 `langchain-community` 提供的网页文档加载器。它请求网页并解析 HTML，将网页内容转换为 LangChain 的 `Document` 对象，供文本切分和后续索引使用。它只负责加载与解析网页，不会自动创建向量库或执行检索。
+
+```python
+from langchain_community.document_loaders import WebBaseLoader
+
+# 加载网页并解析为一个或多个 Document。
+loader = WebBaseLoader("https://zh.wikipedia.org/wiki/%E7%8C%AB")
+docs = loader.load()
+
+for doc in docs:
+    print(doc.page_content[:200])  # 查看文档正文的开头
+    print(doc.metadata)            # 查看来源网址、标题等元数据
+```
+
+- **创建实例参数**
+    - `WebBaseLoader(web_path)`：`web_path` 可以是单个网页地址，也可以是多个地址。
+- **实例调用方法**
+    - `loader.load()`：同步加载网页并返回 `Document` 列表。
+        - 输入参数
+            - 无。网页地址在创建 `loader` 时通过 `web_path` 传入。
+        - 响应参数
+            - 返回值：`Document` 列表，每个网页对应一个文档。
+            - `page_content`：网页解析出的文本内容。
+            - `metadata`：网页元数据，通常包含 `source`（来源网址）；页面提供相应信息时还可能包含 `title`、`description` 和 `language`。
+
+加载出的 `Document` 可以继续传给 `RecursiveCharacterTextSplitter.split_documents(docs)` 切分，再交给向量库和 Embedding 模型建立索引。检索时，向量库可创建 Retriever；Retriever 负责按查询取回相关文档，和这里负责获取网页的 Loader 是不同环节。
+
+`WebBaseLoader` 通过 HTTP 获取网页并解析 HTML，适合能直接从网页响应中读取正文的页面。它不会执行网页中的 JavaScript；如果内容需要浏览器运行脚本后才出现，加载结果可能缺少这些内容。请求还可能受到网络、站点访问规则和页面结构变化影响。
+
+本地示例按 `langchain-community 0.4.2` 的 `WebBaseLoader` 实现核对。参考：[WebBaseLoader API](https://reference.langchain.com/python/langchain-community/document_loaders/web_base/WebBaseLoader)。
+
+## 文本向量化：Embedding
+
+Embedding（嵌入）是把文本编码成数字向量的过程。语义相近的文本通常会得到方向或距离相近的向量，因此后续可以用向量相似度查找相关内容。Embedding 模型只负责生成向量，不保存文本，也不负责搜索。
+
+在 RAG 中，通常先切分文档，再用 `embed_documents()` 为各文本块生成向量；用户提问时用同一个 Embedding 模型的 `embed_query()` 生成查询向量。文档向量和查询向量随后交给 Chroma、FAISS 等向量存储进行检索。索引和查询应使用兼容的 Embedding 模型及向量维度。
+
+### OpenAIEmbeddings
+
+```python
+from langchain_openai import OpenAIEmbeddings
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+# 文档通常先切分成多个文本块，再逐块生成向量。
+document_vectors = embeddings.embed_documents([
+    "苹果的英文是 apple。",
+    "香蕉的英文是 banana。",
+])
+
+# 查询文本也要用同一个 Embedding 模型转换为向量。
+query_vector = embeddings.embed_query("苹果用英语怎么说？")
+
+print(len(document_vectors), len(document_vectors[0]))
+print(len(query_vector))
+```
+
+- **创建实例参数**
+    - `OpenAIEmbeddings(model="text-embedding-3-small")`：指定用于生成文本向量的嵌入模型。
+- **实例调用方法**
+    - `embeddings.embed_documents(texts)`：批量将文档文本转换为向量。
+        - 输入参数
+            - `texts`：字符串列表，通常是切分后的文档文本。
+        - 响应参数
+            - 返回值：与输入文本一一对应的浮点数向量列表；每个向量表示一个文本块。
+    - `embeddings.embed_query(text)`：将单条查询文本转换为向量。
+        - 输入参数
+            - `text`：待检索的用户问题或查询文本。
+        - 响应参数
+            - 返回值：表示该查询文本的浮点数向量。
+
+`OpenAIEmbeddings` 调用 OpenAI 的嵌入模型，将文本编码成向量供相似度计算使用。例如，“苹果的英文是什么”和“苹果用英语怎么说”文字不同但含义相近，Embedding 向量可用于检索出相关文本。它与 `ChatOpenAI` 的职责不同：后者根据输入生成回答，前者只生成向量。
+
+运行前安装 `langchain-openai` 并配置 `OPENAI_API_KEY`；调用会请求嵌入模型服务，可能产生费用。
+
+向量是文本的数值表示，不是原文，也不能单独生成自然语言答案。实际使用向量存储时，通常把 Embedding 对象交给存储集成，由它在写入文档和搜索问题时分别调用对应的嵌入方法。示例按本地锁定的 `langchain-openai` 版本核对。参考：[OpenAIEmbeddings API](https://reference.langchain.com/python/langchain-openai/embeddings/base/OpenAIEmbeddings)。
+
+## 向量检索
+
+向量存储负责保存文本及其向量，并按相似度查找相关内容。写入文档时，Embedding 模型先把文本转换为向量；查询时，同一个 Embedding 模型再把问题转换为向量，向量存储据此找出相近的文档。
+
+LangChain 为不同的向量存储提供统一接口。下面分别用 Chroma 和 FAISS 演示写入与相似度搜索；示例使用相同的文档和 Embedding 模型，便于比较。运行前安装 `langchain-chroma`、`langchain-community`、`faiss-cpu` 和 `langchain-openai`，并配置 `OPENAI_API_KEY`。嵌入和查询会请求模型服务，可能产生费用。
+
+### Chroma
+
+```python
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings
+
+documents = [
+    Document(page_content="苹果的英文是 apple。"),
+    Document(page_content="香蕉的英文是 banana。"),
+]
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+# Chroma 保存文档及其向量，并按相似度查找相关文档。
+vector_store = Chroma.from_documents(
+    documents=documents,
+    embedding=embeddings,
+    collection_name="fruit_demo",
+)
+results = vector_store.similarity_search("苹果用英语怎么说？", k=1)
+print(results[0].page_content)
+```
+
+- **创建实例参数**
+    - `Chroma.from_documents(documents, embedding, collection_name)`：根据文档列表和 Embedding 对象创建向量存储；`collection_name` 用于标识 Chroma 集合。
+- **实例调用方法**
+    - `vector_store.similarity_search(query, k=1)`：按查询文本查找最相似的文档。
+        - 输入参数
+            - `query`：用于搜索的文本；内部会使用创建向量存储时提供的 Embedding 对象转换为查询向量。
+            - `k`：最多返回的文档数量。
+        - 响应参数
+            - 返回值：按相关程度排序的 `Document` 列表；`page_content` 是文档文本，`metadata` 是文档元数据。
+
+Chroma 是向量数据库；`langchain_chroma.Chroma` 是 LangChain 对它的集成。默认示例在本地运行，不需要 Chroma 云端密钥；如需在应用重启后保留数据，应按 Chroma 的持久化配置创建存储。
+
+### FAISS
+
+```python
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings
+
+documents = [
+    Document(page_content="苹果的英文是 apple。"),
+    Document(page_content="香蕉的英文是 banana。"),
+]
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+# FAISS.from_documents 会生成文档向量并建立相似度索引。
+vector_store = FAISS.from_documents(documents, embeddings)
+results = vector_store.similarity_search("苹果用英语怎么说？", k=1)
+print(results[0].page_content)
+```
+
+- **创建实例参数**
+    - `FAISS.from_documents(documents, embedding)`：根据文档列表和 Embedding 对象创建 FAISS 向量存储；Embedding 维度必须与向量索引相匹配。
+- **实例调用方法**
+    - `vector_store.similarity_search(query, k=1)`：将查询文本转换为向量，并返回最相似的文档。
+        - 输入参数
+            - `query`：用于搜索的文本。
+            - `k`：最多返回的文档数量。
+        - 响应参数
+            - 返回值：按相似度搜索得到的 `Document` 列表，可通过 `page_content` 读取文本、通过 `metadata` 读取元数据。
+
+FAISS 是用于向量相似度搜索的库；`langchain_community.vectorstores.FAISS` 将它接入 LangChain 的向量存储接口，并在本地索引之外管理对应的文档。使用前需安装 `faiss-cpu`。如果要把检索接入链或 Agent，可调用 `vector_store.as_retriever()` 将向量存储转换为 Retriever。
+
+| 对比项 | Chroma | FAISS |
+| --- | --- | --- |
+| 定位 | 向量数据库 | 向量相似度搜索库；LangChain 集成封装为向量存储 |
+| LangChain 集成 | `langchain_chroma.Chroma` | `langchain_community.vectorstores.FAISS` |
+| 常见用途 | 管理向量集合并执行检索 | 在应用本地建立和查询向量索引 |
+| 创建依赖 | `langchain-chroma` | `langchain-community` 和 `faiss-cpu` |
+
+两者都可通过 LangChain 的向量存储接口执行相似度搜索，并可转换为 Retriever。它们不是同一个产品，也不代表数据格式或持久化方式可以直接互换。示例按本地锁定的 `langchain-chroma 1.1.0`、`langchain-community 0.4.2` 和 `langchain-core 1.6.1` 核对。参考：[Chroma 集成 API](https://reference.langchain.com/python/langchain-chroma/vectorstores/Chroma)、[FAISS 集成 API](https://reference.langchain.com/python/langchain-community/vectorstores/faiss/FAISS)。
+
 # LangChain 实战
 
 ## 概念
@@ -5090,57 +5175,9 @@ OPENAI_MULTIMODAL_MODEL=gpt-6.1-terra
 
 ```python
 import base64
-import os
+在 Few-shot 示例选择中，`SemanticSimilarityExampleSelector.from_examples(..., vectorstore_cls=Chroma)` 会用 Chroma 保存候选示例并按相似度选择示例，因此不需要在这个流程里手动调用 `add_texts()`。
 
-import core.config
-from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
-
-model = ChatOpenAI(
-    model=os.environ["OPENAI_MULTIMODAL_MODEL"],
-    use_responses_api=True,
-    output_version="responses/v1",
-)
-
-image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-```
-
-### 传入一张图片
-
-一种方式是传入图片 URL。消息中的 `content` 列表将问题文字和图片分别作为内容块：
-
-```python
-message = HumanMessage(
-    content=[
-        {"type": "text", "text": "用中文描述这张图片中的天气。"},
-        {"type": "image_url", "image_url": {"url": image_url}},
-    ],
-)
-response = model.invoke([message])
-print(response.text)
-```
-
-图片 URL 必须是模型服务可读取的完整地址。另一种方式是把本地图片编码为 Base64 Data URL，适合图片不适合公开托管的场景：
-
-```python
-with open("image.jpg", "rb") as image_file:
-    image_data = base64.b64encode(image_file.read()).decode("utf-8")
-
-message = HumanMessage(
-    content=[
-        {"type": "text", "text": "用中文描述这张图片中的天气。"},
-        {
-            "type": "image_url",
-            # Data URL 要标明图片类型；Base64 是编码，不是加密。
-            "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
-        },
-    ],
-)
-response = model.invoke([message])
-print(response.text)
-```
-
-这里的 `image.jpg` 应替换为实际图片路径；如果图片是 PNG，Data URL 中的 MIME 类型也要改为 `image/png`。Base64 的基本概念见[Base64](#base64)。
+Chroma 作为向量存储的通用作用和完整写入、查询示例，见 [RAG：向量检索中的 Chroma](#chroma)。这里关注的是它如何配合 Few-shot 选择器；向量检索返回的是已有示例，不会生成答案或训练模型。
 
 ### 传入多张图片
 
