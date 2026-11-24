@@ -1,0 +1,32 @@
+{
+  "folders": [
+    {
+      "path": "yqa-core"
+    },
+    {
+      "path": "pro-demo"
+    },
+    {
+      "path": "yqa-g/yqa-g-web-safety-next"
+    },
+    {
+      "path": "yqa-g/yqa-g-h5-safety"
+    },
+    {
+      "path": "yqa-b/yqa-b-web-safety-next"
+    },
+    {
+      "path": "yqa-b/yqa-b-h5-safety"
+    },
+    {
+      "path": "../../LM/lm-skills"
+    },
+    {
+      "path": "yqa-g/yqa-g-web-urban"
+    },
+    {
+      "path": "yqa-g/yqa-g-h5-hub"
+    }
+  ],
+  "settings": {}
+}

@@ -4077,43 +4077,198 @@ for handler in (True, "没找到这个城市", handle_error):
 
 工具包用于组织和提供工具；例如 `get_tools()` 返回工具列表，创建工具包本身不会自动查询数据库。工具和工具包中的工具都可以由代码直接调用，或提供给模型及 Agent 使用。
 
-#### 6.2 使用集成工具
+#### 6.2 搜索与检索工具
 
-集成工具通常需要安装对应的集成包，并按服务要求配置网络或凭据。工具的输入字段取决于具体实现；配置名称、描述或 `args_schema` 时，也应保证参数与底层工具兼容。
+搜索与检索工具都能帮 Agent 找资料，区别在于资料从哪里来、是否要事先整理：
 
-##### Wikipedia 查询
+- `WikipediaQueryRun`：直接向 Wikipedia 查询百科内容。
+- `TavilySearch`：搜索当前可访问的在线网页。
+- Retriever：从事先整理好的文档中找相关内容。
 
-`WikipediaAPIWrapper` 负责查询 Wikipedia，`WikipediaQueryRun` 将查询能力包装为工具，适合获取百科条目内容。`top_k_results` 限制结果数量，`doc_content_chars_max` 限制内容长度；工具通过 `invoke()` 接收包含 `query` 的字典。下面的示例不需要先创建 Agent：
+这里的 Agent 是能根据问题选择工具的程序。下面先分别看三种工具，再比较它们的适用场景。
 
-准备：运行 `python -m pip install langchain-community wikipedia` 安装依赖，并确认能够访问 Wikipedia。此示例需要网络，不需要模型或模型 API 密钥。
+##### 6.2.1 Wikipedia 查询工具：`WikipediaQueryRun`
+
+`WikipediaQueryRun` 适合直接查询百科条目。它使用 `WikipediaAPIWrapper` 配置查询；可以把 Wrapper（封装查询细节的对象）理解为查询工具使用的设置。
+
+注意：查询词最多使用 300 个字符；中文查询需要在 Wrapper 中设置 `lang="zh"`。
+
+**运行前准备**：安装 `langchain-community` 和 `wikipedia`，并确认网络能够访问 Wikipedia。此示例不需要模型 API 密钥。
 
 ```python
 from langchain_community.tools import WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
 
-api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=100)
-wiki_tool = WikipediaQueryRun(api_wrapper=api_wrapper)
-print(wiki_tool.invoke({"query": "LangChain"}))
-print(wiki_tool.name, wiki_tool.description, wiki_tool.args)
+wiki_tool = WikipediaQueryRun(
+    api_wrapper=WikipediaAPIWrapper(
+        top_k_results=1,
+        doc_content_chars_max=1000,
+        lang="zh",
+    )
+)
+# 使用配置好的中文 Wrapper 查询百科条目。
+result = wiki_tool.invoke({"query": "猫的特征"})
+print(result)
 ```
 
-查询结果会随百科内容和版本变化。
+- **创建实例参数**
+    - `WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=1000, lang="zh")` 配置查询：最多查 1 个条目、摘要最多 1000 个字符，并使用中文 Wikipedia。
+    - `WikipediaQueryRun(api_wrapper=...)` 将 Wrapper 配置包装为可调用工具。
+- **实例调用方法**
+    - `wiki_tool.invoke({"query": "猫的特征"})`：调用 Wikipedia 查询工具。
+        - 输入参数：
+            - `query`：必填字符串，表示要查询的主题。
+        - 响应属性：
+            - 返回查询摘要文本；无匹配结果时返回提示文本。该调用返回字符串，没有需要单独说明的响应字段。
 
-##### Tavily 搜索
+**维护状态**：该工具属于 `langchain-community` 集成；项目已宣布 sunset（停止积极维护），仓库已归档。参考：[sunset 公告](https://github.com/langchain-ai/langchain-community/issues/674)。
 
-`TavilySearch` 适合搜索网页：通过 `invoke()` 传入包含 `query` 的字典，返回搜索结果；`max_results` 用于限制结果数量。
+##### 6.2.2 网页搜索工具：`TavilySearch`
 
-准备：安装 `langchain-tavily` 并配置 `TAVILY_API_KEY`。运行需要联网，可能产生服务费用。
+`TavilySearch` 调用 Tavily 搜索服务，从在线网页中找信息，适合查询新闻、天气等可能变化的内容。
+
+搜索类别和返回内容可在创建工具时配置；单次调用也可按需调整搜索时间范围或限定网站。
+
+**运行前准备**：安装 `langchain-tavily`，配置 `TAVILY_API_KEY`，并确保网络能访问 Tavily。服务套餐和计费以 Tavily 当前说明为准。
 
 ```python
 from langchain_tavily import TavilySearch
 
-search_tool = TavilySearch(max_results=1)
-result = search_tool.invoke({"query": "LangChain 是什么"})
+tavily_tool = TavilySearch(max_results=1, topic="general")
+# 搜索在线网页获取实时信息。
+result = tavily_tool.invoke({"query": "今天上海天气怎么样"})
 print(result)
 ```
 
-返回内容取决于服务和版本。旧版 `TavilySearchResults` 已弃用。参考：[Tavily 搜索集成指南](https://docs.langchain.com/oss/python/integrations/tools/tavily_search)；具体适用版本待核实。
+- **创建实例参数**
+    - `TavilySearch(max_results=1, topic="general")` 创建网页搜索工具。
+    - `max_results`：限制返回网页数；`topic`：选择搜索类别，本例使用通用搜索。
+    - `include_answer` 和 `include_raw_content` 等影响响应内容的选项应在创建工具时配置。
+- **实例调用方法**
+    - `tavily_tool.invoke({"query": "今天上海天气怎么样"})`：执行网页搜索。
+        - 输入参数
+            - `query`：必填字符串，表示搜索问题；也可按需传入 `time_range` 或 `include_domains` 限定时间范围或网站。
+        - 响应属性
+            - 返回搜索结果字典，通常包含 `results`；其中每项提供网页标题、URL 和摘要。是否附带答案或网页正文取决于创建时的配置。
+- **实例属性**
+    - `tavily_tool.max_results` 和 `tavily_tool.topic`：分别表示实例配置的最多返回网页数和搜索类别。
+
+如果 `results` 为空，表示没有找到可用网页。旧版 `TavilySearchResults` 已弃用。参考：[Tavily Search 集成指南](https://docs.langchain.com/oss/python/integrations/tools/tavily_search) 和 [TavilySearch API](https://reference.langchain.com/python/langchain-tavily/tavily_search/TavilySearch)。
+
+##### 6.2.3 知识库检索工具：Retriever
+
+Retriever（检索器）会从应用自己的文档中找出与问题相关的内容。先理解这几个词：
+
+- **Document（文档）**：一段文本及其附带信息。
+- **切分**：把长文档拆成较短的文本块，便于检索。
+- **Embedding（嵌入）**：把文本转换成数字，供计算机比较文本含义。
+- **向量库**：保存文本及其数字表示，并按相似度查找内容的数据库。
+- **Retriever**：根据问题从向量库中取回相关文档的检索器。
+
+建立知识库的过程可以按以下顺序理解：
+
+1. 准备文档并切分成文本块。
+2. 用 Embedding 把文本块转换为向量，存入向量库。
+3. 从向量库创建 Retriever。
+4. 用 `create_retriever_tool()` 把 Retriever 包装成 Agent 可调用的工具。
+
+**为什么还要 Retriever？** Chroma 本身就能做相似度搜索，不一定要经过 Retriever。**Retriever 是 LangChain 提供的通用检索接口，方便把不同向量库接入相同的链或工具；**本例使用它，是因为 `create_retriever_tool()` 接收 Retriever。
+
+下面用两段固定文本演示完整流程，不需要现场抓取网页。实际资料可以来自 Wikipedia 页面、产品手册或内部文档。示例使用项目中的 GLM Embedding 适配器；运行前需配置 `GLM_API_KEY` 和 `GLM_BASE_URL`。
+
+```python
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_core.tools import create_retriever_tool
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from core import GLMEmbeddings
+
+docs = [
+    Document(page_content="猫具有灵敏的听觉和嗅觉。"),
+    Document(page_content="猫是肉食性动物，常通过气味辨认环境。"),
+]
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=50,
+)
+chunks = text_splitter.split_documents(docs)
+
+# 用同一个 Embedding 模型保存文档并在查询时比较文本含义。
+vector_store = Chroma.from_documents(
+    documents=chunks,
+    embedding=GLMEmbeddings(model="embedding-2"),
+)
+retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+
+retriever_tool = create_retriever_tool(
+    retriever,
+    name="wiki_search",
+    description="从猫知识库中查找与问题相关的资料。",
+)
+# 将检索结果作为工具输出，供 Agent 使用。
+print(retriever_tool.invoke({"query": "猫的感官特点是什么？"}))
+```
+
+- **创建实例参数**
+    - `RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)` 设置文本块目标长度和相邻块重叠长度；`GLMEmbeddings(model="embedding-2")` 选择用于文本向量化的嵌入模型。
+    - `Chroma.from_documents(documents=chunks, embedding=...)` 根据文档和嵌入模型创建向量库；`vector_store.as_retriever(search_kwargs={"k": 2})` 创建最多取回 2 段文档的 Retriever。
+    - `create_retriever_tool(retriever, name, description)` 将 Retriever 包装为 Agent 工具；名称和说明用于描述工具的用途。
+- **实例调用方法**
+    - `retriever_tool.invoke({"query": "猫的感官特点是什么？"})`：通过工具检索相关文档。
+        - 输入参数
+            - `query`：必填字符串，表示检索问题。
+        - 响应属性
+            - 默认返回相关文档文本；若配置 `response_format="content_and_artifact"`，还可保留原始文档对象。
+
+工具名称和说明会展示给模型，帮助它决定是否调用。文档更新后需重新写入向量库，检索才能找到新内容。参考：[文本切分 API](https://reference.langchain.com/python/langchain-text-splitters)、[Chroma.from_documents API](https://reference.langchain.com/python/langchain-chroma/vectorstores/Chroma/from_documents)、[VectorStore.as_retriever API](https://reference.langchain.com/python/langchain-core/vectorstores/base/VectorStore/as_retriever) 和 [create_retriever_tool API](https://reference.langchain.com/python/langchain-core/tools/create_retriever_tool)。
+
+##### 6.2.4 三种工具的区别与联系
+
+| 工具 | 信息来源 | 是否需要预先准备资料 | 适合的问题 |
+| --- | --- | --- | --- |
+| `WikipediaQueryRun` | Wikipedia | 否，调用时直接查询 | 百科定义、人物或历史背景 |
+| `TavilySearch` | 在线网页 | 否，调用时搜索 | 最新消息、天气或广泛网页信息 |
+| Retriever 工具 | 应用预先建立的知识库 | 是，需要整理、切分并索引文档 | 内部资料、指定文档或稳定的专题知识 |
+
+可以把 Wikipedia 页面下载后放入自己的知识库，再由 Retriever 查询；此时 Wikipedia 是资料来源，Retriever 是从已保存资料中查找内容的工具。两者可能使用相同资料，但查询方式不同。Tavily 则搜索在线网页，结果受网页和搜索服务影响。
+
+##### 6.2.5 将搜索与检索工具交给 Agent
+
+下面假设前面已经创建好 `wiki_tool`、`tavily_tool`、`retriever_tool`，并准备好支持工具调用的聊天模型 `model`。聊天模型是能理解问题并生成回答的程序；支持工具调用的模型还能提出调用哪个工具。
+
+```python
+from langchain.agents import create_agent
+
+tools = [wiki_tool, tavily_tool, retriever_tool]
+agent = create_agent(
+    model=model,
+    tools=tools,
+    system_prompt="结合百科、在线搜索和知识库检索结果回答问题。",
+)
+
+result = agent.invoke({
+    "messages": [{
+        "role": "user",
+        "content": "介绍猫的感官特点，并查询今天上海天气。",
+    }]
+})
+print(result["messages"][-1].content)
+```
+
+- **创建实例参数**
+    - `create_agent(model=model, tools=tools, system_prompt=...)` 创建 Agent。
+    - `model`：支持工具调用的聊天模型；`tools`：Agent 可使用的工具列表；`system_prompt`：提供回答规则。
+- **实例调用方法**
+    - `agent.invoke({"messages": [...]})`：根据对话调用模型和可用工具，并返回包含执行消息的结果字典。
+        - 输入参数
+            - `messages`：对话消息列表；本例包含一条用户消息。
+        - 响应属性
+            - `result["messages"]`：执行过程中的消息列表；示例读取最后一条消息的 `content` 作为最终回答。
+
+这个问题可能需要 Retriever 或 Wikipedia 查询猫的特点，并由 Tavily 搜索当天的天气。Agent 根据问题和工具说明选择要调用的工具，再用结果组织回答；模型可能只调用其中一部分工具，实际选择受模型和搜索结果影响。
+
+`create_agent()` 的参数和返回值参考 [LangChain API](https://reference.langchain.com/python/langchain/agents/factory/create_agent)（2026-11-24 查阅）。Tavily 参数和返回结构参考 [集成指南](https://docs.langchain.com/oss/python/integrations/tools/tavily_search) 与 [TavilySearch API](https://reference.langchain.com/python/langchain-tavily/tavily_search/TavilySearch)（2026-11-24 查阅）。Retriever 相关 API 参考本节链接（2026-11-24 查阅）。Wikipedia 示例的 API 按项目使用的 `langchain-community 0.4.2` 源码核对；该包的维护状态参见 sunset 公告。
 
 #### 6.3 使用工具包
 
