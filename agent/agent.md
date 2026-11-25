@@ -2726,6 +2726,33 @@ messages = prompt_template.invoke({
 
 最终消息会按照以下顺序插入：系统消息、用户消息、助手消息、用户消息。`msgs` 必须是消息列表，不能直接传入单条字符串。
 
+#### 从 LangSmith Hub 拉取提示模板
+
+```python
+from langsmith import Client
+
+client = Client()
+
+# 公开提示模板应先确认来源可信，再允许拉取。
+prompt = client.pull_prompt(
+    "hwchase17/openai-functions-agent",
+    dangerously_pull_public_prompt=True,
+)
+print(prompt.messages)
+```
+
+- **创建实例参数**
+    - `Client()`：创建 LangSmith 客户端；本例使用默认连接配置。访问私有提示模板时还需要相应的身份凭据和权限。
+- **实例调用方法**
+    - `client.pull_prompt(prompt_identifier, dangerously_pull_public_prompt=True)`：从 Prompt Hub 拉取提示模板并返回 LangChain 提示模板对象。
+        - 输入参数
+            - `prompt_identifier`：提示模板标识；本例使用公开模板 `hwchase17/openai-functions-agent`。
+            - `dangerously_pull_public_prompt`：允许通过所有者和名称拉取公开模板的开关；默认为 `False`，本例显式设为 `True`。
+        - 返回值
+            - 提示模板对象。本例拉取的是聊天提示模板，因此可以通过 `prompt.messages` 查看消息模板列表；其他类型的模板应使用相应的接口查看或调用。
+
+拉取的提示应视为可执行配置，而不是普通文本。只拉取并审核可信来源的公开模板；生产环境应固定到已审核的具体版本，避免上游模板更新后行为意外改变。API 按本地锁定的 `langsmith 0.11.2` 核对。参考：[Client.pull_prompt API](https://reference.langchain.com/python/langsmith/client/Client/pull_prompt)。
+
 #### Few-shot 模板与示例选择
 
 ##### FewShotPromptTemplate
