@@ -4300,7 +4300,9 @@ Agent 是一种能够根据用户目标自主决策并执行任务的程序。�
 | **中断/恢复** | `interrupt_before` / `interrupt_after` 支持人工审批 |
 | **子图嵌套** | 可作为子图嵌入多 Agent 系统 |
 
-#### 基本用法
+#### 示例
+
+下面创建 Agent，并分别演示一次完整调用和流式读取执行更新。示例中的 `search_tool`、`calculator_tool`、`MySchema` 和 `...` 是占位写法；运行前需替换为真实工具、Schema 和检查点保存器，不需要的可选参数可以删除。
 
 ```python
 from langchain.agents import create_agent
@@ -4313,27 +4315,38 @@ graph = create_agent(
     response_format=MySchema,  # 可选：结构化输出
     checkpointer=...,          # 可选：持久化
 )
-```
 
-参数说明：
+inputs = {"messages": [{"role": "user", "content": "你好"}]}
+config = {"configurable": {"thread_id": "conversation-1"}}
 
-- `model`（必填）：指定 Agent 使用的聊天模型，可传模型标识字符串或聊天模型实例；具体模型标识取决于所用的模型集成。
-- `tools`（可选）：传入 Agent 可以调用的工具列表，元素可以是工具对象、可调用函数或工具定义字典；省略或传空列表时，Agent 不会执行工具调用循环。
-- `system_prompt`（可选）：设置系统提示词，用于规定模型的角色、行为和回答要求；可以传字符串或 `SystemMessage`。
-- `middleware`（可选）：传入中间件实例，在 Agent 执行的相应阶段拦截或调整行为；不需要中间件时可以省略。
-- `response_format`（可选）：指定结构化响应的格式，例如 Pydantic 模型或结构化输出策略；`MySchema` 需要替换为实际定义的 schema。
-- `checkpointer`（可选）：传入检查点保存器，用于持久化单个线程（通常对应一段会话）的 Agent 状态；后续调用需使用相同的线程 ID 才能恢复该状态。
-- 示例中的 `[...]` 和 `...` 是占位写法，不是可直接运行的值；使用时应替换为真实对象，不需要的可选参数可以删除。
+# 等待 Agent 执行结束后取得完整状态。
+result = graph.invoke(inputs, config=config)
 
-```python
-# 同步调用
-result = graph.invoke({"messages": [{"role": "user", "content": "你好"}]})
-
-
-# 流式调用
-for chunk in graph.stream({"messages": [...]}, stream_mode="updates"):
+# 逐步读取节点状态更新。
+for chunk in graph.stream(inputs, config=config, stream_mode="updates"):
     print(chunk)
 ```
+
+- **创建实例参数**
+    - `model`（必填）：指定 Agent 使用的聊天模型，可传模型标识字符串或聊天模型实例；模型标识取决于所用的模型集成。
+    - `tools`（可选）：Agent 可调用的工具列表，元素可以是工具对象、可调用函数或工具定义字典；省略或传空列表时，Agent 不会执行工具调用循环。
+    - `system_prompt`（可选）：规定模型角色和回答要求，可传字符串或 `SystemMessage`。
+    - `middleware`（可选）：中间件实例，可在 Agent 执行阶段拦截或调整行为。
+    - `response_format`（可选）：指定结构化响应格式，例如 Pydantic 模型或结构化输出策略；示例中的 `MySchema` 需替换为实际定义的 Schema。
+    - `checkpointer`（可选）：保存单个线程（通常对应一段会话）的 Agent 状态；后续调用需使用相同的线程 ID 才能恢复状态。
+- **实例调用方法**
+    - `graph.invoke(inputs, config=config)`：同步执行 Agent，完成后返回最终状态字典；常用字段 `messages` 包含对话及工具调用过程中的消息。
+        - 输入参数
+            - `inputs`：包含 `messages` 的状态字典；示例中传入一条用户消息。
+            - `config`：运行配置；启用 `checkpointer` 时通过 `configurable.thread_id` 指定要保存或恢复的会话。
+    - `graph.stream(inputs, config=config, stream_mode="updates")`：流式返回各执行节点产生的状态更新，适合观察 Agent 的执行过程。
+        - 输入参数
+            - `inputs`：Agent 初始状态；本例与同步调用使用相同输入。
+            - `stream_mode="updates"`：按节点返回状态更新；每个 `chunk` 通常是以节点名为键的字典。
+        - 返回值
+            - 返回可迭代对象，循环逐项得到节点更新；最终完整结果仍可通过 `invoke()` 获取。
+
+API 参考：[create_agent](https://reference.langchain.com/python/langchain/agents/factory/create_agent)。
 
 #### 执行流程
 
