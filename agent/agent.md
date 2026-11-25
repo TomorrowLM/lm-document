@@ -4113,7 +4113,7 @@ Retriever（检索器）会从应用自己的文档中找出与问题相关的�
 3. 从向量库创建 Retriever。
 4. 用 `create_retriever_tool()` 把 Retriever 包装成 Agent 可调用的工具。
 
-**为什么还要 Retriever？** Chroma 本身就能做相似度搜索，不一定要经过 Retriever。**Retriever 是 LangChain 提供的通用检索接口，方便把不同向量库接入相同的链或工具；**本例使用它，是因为 `create_retriever_tool()` 接收 Retriever。
+**为什么还要 Retriever？** Chroma 本身可以执行相似度搜索；Retriever 则提供统一的检索接口，使不同数据源都能按相似的方式接入链或工具。本例先从 Chroma 创建 Retriever，再用 `create_retriever_tool()` 将它包装成 Agent 工具。该函数负责适配工具调用，不负责创建向量库或向量化文档。
 
 下面用两段固定文本演示完整流程，不需要现场抓取网页。实际资料可以来自 Wikipedia 页面、产品手册或内部文档。示例使用项目中的 GLM Embedding 适配器；运行前需配置 `GLM_API_KEY` 和 `GLM_BASE_URL`。
 
@@ -4151,18 +4151,33 @@ retriever_tool = create_retriever_tool(
 print(retriever_tool.invoke({"query": "猫的感官特点是什么？"}))
 ```
 
-- **创建实例参数**
-    - `RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)` 设置文本块目标长度和相邻块重叠长度；`GLMEmbeddings(model="embedding-2")` 选择用于文本向量化的嵌入模型。
-    - `Chroma.from_documents(documents=chunks, embedding=...)` 根据文档和嵌入模型创建向量库；`vector_store.as_retriever(search_kwargs={"k": 2})` 创建最多取回 2 段文档的 Retriever。
-    - `create_retriever_tool(retriever, name, description)` 将 Retriever 包装为 Agent 工具；名称和说明用于描述工具的用途。
-- **实例调用方法**
-    - `retriever_tool.invoke({"query": "猫的感官特点是什么？"})`：通过工具检索相关文档。
-        - 输入参数
-            - `query`：必填字符串，表示检索问题。
-        - 响应属性
-            - 默认返回相关文档文本；若配置 `response_format="content_and_artifact"`，还可保留原始文档对象。
+- **文本切分：`RecursiveCharacterTextSplitter`**
+    - **创建实例参数**
+        - `chunk_size=500`：文本块的目标长度。
+        - `chunk_overlap=50`：相邻文本块重叠的长度，有助于保留跨块的上下文。
+    - **实例调用方法**
+        - `text_splitter.split_documents(docs)`：将文档切分为较短的文档块，返回文档列表 `chunks`。
+- **创建向量库：`Chroma.from_documents()`**
+    - **创建实例参数**
+        - `documents=chunks`：要写入向量库的文档块。
+        - `embedding=GLMEmbeddings(model="embedding-2")`：指定用于文档和查询向量化的 Embedding 实例；`model` 选择嵌入模型。
+- **创建检索器：`VectorStore.as_retriever()`**
+    - **实例调用方法**
+        - `vector_store.as_retriever(search_kwargs={"k": 2})`：从向量库创建 Retriever；`k=2` 表示每次检索最多返回 2 个相关文档块。
+- **包装为 Agent 工具：`create_retriever_tool()`**
+    - **创建实例参数**
+        - `retriever`：执行实际文档检索的 Retriever。
+        - `name="wiki_search"`：工具名称，应简洁且能区分用途。
+        - `description`：工具用途说明，会提供给模型，帮助它判断何时调用。
+        - `response_format`：可选响应格式；默认 `"content"` 返回文档文本，`"content_and_artifact"` 还会将原始文档作为 artifact 保留。
+    - **实例调用方法**
+        - `retriever_tool.invoke({"query": "猫的感官特点是什么？"})`：通过工具检索相关文档。
+            - 输入参数
+                - `query`：必填字符串，表示检索问题。
+            - 返回值
+                - 默认返回相关文档文本；使用 `response_format="content_and_artifact"` 时，工具输出还包含原始文档对象。
 
-工具名称和说明会展示给模型，帮助它决定是否调用。文档更新后需重新写入向量库，检索才能找到新内容。参考：[文本切分 API](https://reference.langchain.com/python/langchain-text-splitters)、[Chroma.from_documents API](https://reference.langchain.com/python/langchain-chroma/vectorstores/Chroma/from_documents)、[VectorStore.as_retriever API](https://reference.langchain.com/python/langchain-core/vectorstores/base/VectorStore/as_retriever) 和 [create_retriever_tool API](https://reference.langchain.com/python/langchain-core/tools/create_retriever_tool)。
+文档更新后需重新写入向量库，Retriever 才能检索到新内容。参考：[文本切分 API](https://reference.langchain.com/python/langchain-text-splitters)、[Chroma.from_documents API](https://reference.langchain.com/python/langchain-chroma/vectorstores/Chroma/from_documents)、[VectorStore.as_retriever API](https://reference.langchain.com/python/langchain-core/vectorstores/base/VectorStore/as_retriever) 和 [create_retriever_tool API](https://reference.langchain.com/python/langchain-core/tools/create_retriever_tool)。
 
 ##### 6.2.4 三种工具的区别与联系
 
